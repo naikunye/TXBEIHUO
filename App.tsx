@@ -45,7 +45,6 @@ function App() {
   // --- Cloud & Workspace State ---
   const [workspaceId, setWorkspaceId] = useState<string | null>(() => {
     // Safety check: if we have an ID but no DB config, ignore the ID and clear it
-    // This prevents the "stuck on workspace ID input" loop if config was cleared
     const savedId = localStorage.getItem('tanxing_current_workspace');
     if (savedId && !isSupabaseConfigured()) {
         localStorage.removeItem('tanxing_current_workspace');
@@ -129,18 +128,61 @@ function App() {
     loadData();
   }, [workspaceId]);
 
-  // 2. Save Data (LocalStorage Only - Auto Backup)
+  // 2. Real-time Subscription (NEW: This enables multi-device sync)
+  useEffect(() => {
+    if (!workspaceId || !isSupabaseConfigured()) return;
+
+    // Subscribe to changes for this workspace
+    const channel = supabase
+      .channel(`workspace_${workspaceId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*', // Listen to INSERT, UPDATE, DELETE
+          schema: 'public',
+          table: 'replenishment_data',
+          filter: `workspace_id=eq.${workspaceId}`,
+        },
+        (payload) => {
+           console.log("Realtime update received:", payload);
+           
+           if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+               const newRecord = payload.new.json_content as ReplenishmentRecord;
+               if (newRecord && newRecord.id) {
+                   setRecords(prev => {
+                       const exists = prev.some(r => r.id === newRecord.id);
+                       if (exists) {
+                           // Update existing record
+                           return prev.map(r => r.id === newRecord.id ? newRecord : r);
+                       } else {
+                           // Insert new record
+                           const newList = [newRecord, ...prev];
+                           return newList.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+                       }
+                   });
+               }
+           }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [workspaceId]);
+
+
+  // 3. Save Data (LocalStorage Only - Auto Backup)
   useEffect(() => {
     if (!isDataLoaded) return;
     
     // Only auto-save entire array to local storage if NOT in cloud mode
-    // If in cloud mode, we trust Supabase + manual sync or atomic updates
     if (!workspaceId) {
         localStorage.setItem('tanxing_records', JSON.stringify(records));
     }
   }, [records, workspaceId, isDataLoaded]);
 
-  // 3. Persist Workspace Selection
+  // 4. Persist Workspace Selection
   useEffect(() => {
       if (workspaceId) {
           localStorage.setItem('tanxing_current_workspace', workspaceId);
@@ -201,7 +243,6 @@ function App() {
 
             if (error) {
                 console.error("Supabase save error:", error);
-                // Optionally revert UI state here if critical
                 alert("云端同步失败，请检查网络连接");
             }
         } catch (err) {

@@ -14,7 +14,11 @@ create table if not exists replenishment_data (
 -- 2. 创建索引
 create index if not exists idx_workspace_id on replenishment_data(workspace_id);
 
--- 3. 关闭 RLS (允许读写)
+-- 3. 开启 Realtime (关键步骤)
+-- 确保 supabase_realtime Publication 包含此表
+alter publication supabase_realtime add table replenishment_data;
+
+-- 4. 关闭 RLS (允许读写)
 alter table replenishment_data disable row level security;`;
 
 interface CloudConnectProps {
