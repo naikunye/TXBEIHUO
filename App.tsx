@@ -32,7 +32,12 @@ import {
   WifiOff,
   Zap,
   AlertTriangle,
-  Hourglass
+  Hourglass,
+  Sparkles,
+  Bot,
+  Megaphone,
+  Compass,
+  Wand2
 } from 'lucide-react';
 import { ReplenishmentRecord } from './types';
 import { MOCK_DATA_INITIAL } from './constants';
@@ -44,10 +49,13 @@ import { CalculatorTool } from './components/CalculatorTool';
 import { LogisticsTools } from './components/LogisticsTools';
 import { HomeOverview } from './components/HomeOverview'; 
 import { CloudConnect } from './components/CloudConnect'; 
-import { analyzeInventory } from './services/geminiService';
+import { AiChatModal } from './components/AiChatModal'; 
+import { MarketingModal } from './components/MarketingModal'; 
+import { MarketingDashboard } from './components/MarketingDashboard'; // New Dashboard
+import { analyzeInventory, generateAdStrategy, generateSelectionStrategy, generateMarketingContent } from './services/geminiService';
 import { supabase, isSupabaseConfigured } from './lib/supabaseClient';
 
-type ViewState = 'overview' | 'inventory' | 'analytics' | 'calculator' | 'logistics';
+type ViewState = 'overview' | 'inventory' | 'analytics' | 'calculator' | 'logistics' | 'marketing';
 
 function App() {
   // --- Cloud & Workspace State ---
@@ -68,8 +76,17 @@ function App() {
   const [editingRecord, setEditingRecord] = useState<ReplenishmentRecord | null>(null);
   
   const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
+  const [analysisTitle, setAnalysisTitle] = useState<string>('供应链 AI 诊断报告');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [currentView, setCurrentView] = useState<ViewState>('overview'); 
+
+  // --- AI Chat State ---
+  const [isAiChatOpen, setIsAiChatOpen] = useState(false);
+
+  // --- Marketing Modal State ---
+  const [marketingModalOpen, setMarketingModalOpen] = useState(false);
+  const [marketingContent, setMarketingContent] = useState<string | null>(null);
+  const [marketingProduct, setMarketingProduct] = useState('');
 
   // Search and Filter State
   const [searchQuery, setSearchQuery] = useState('');
@@ -302,12 +319,70 @@ function App() {
   const handleSmartAnalysis = async () => {
     setIsAnalyzing(true);
     setAiAnalysis(null);
+    setAnalysisTitle('供应链 AI 诊断报告');
     const recordsToAnalyze = filteredRecords.length > 0 ? filteredRecords : records;
-    const result = await analyzeInventory(recordsToAnalyze);
+    const targetRecords = currentView === 'inventory' ? recordsToAnalyze : records;
+
+    const result = await analyzeInventory(targetRecords);
     const cleanResult = result.replace(/^```html/, '').replace(/```$/, '');
     setAiAnalysis(cleanResult);
     setIsAnalyzing(false);
+    
+    if (currentView !== 'inventory') {
+        setCurrentView('inventory');
+    }
   };
+
+  const handleAdStrategy = async () => {
+    setIsAnalyzing(true);
+    setAiAnalysis(null);
+    setAnalysisTitle('TikTok 广告投放策略');
+    const recordsToAnalyze = filteredRecords.length > 0 ? filteredRecords : records;
+    const targetRecords = currentView === 'inventory' ? recordsToAnalyze : records;
+
+    const result = await generateAdStrategy(targetRecords);
+    const cleanResult = result.replace(/^```html/, '').replace(/```$/, '');
+    setAiAnalysis(cleanResult);
+    setIsAnalyzing(false);
+
+    if (currentView !== 'inventory') {
+        setCurrentView('inventory');
+    }
+  };
+
+  const handleSelectionStrategy = async () => {
+    setIsAnalyzing(true);
+    setAiAnalysis(null);
+    setAnalysisTitle('美区选品策略报告');
+    const recordsToAnalyze = filteredRecords.length > 0 ? filteredRecords : records;
+    const targetRecords = currentView === 'inventory' ? recordsToAnalyze : records;
+
+    const result = await generateSelectionStrategy(targetRecords);
+    const cleanResult = result.replace(/^```html/, '').replace(/```$/, '');
+    setAiAnalysis(cleanResult);
+    setIsAnalyzing(false);
+
+    if (currentView !== 'inventory') {
+        setCurrentView('inventory');
+    }
+  };
+
+  // --- New Marketing Handler (Wrapped) ---
+  const handleGenerateMarketing = async (record: ReplenishmentRecord) => {
+      setMarketingProduct(record.productName);
+      setMarketingContent(null);
+      setMarketingModalOpen(true);
+      
+      const content = await generateMarketingContent(record);
+      const cleanContent = content.replace(/^```html/, '').replace(/```$/, '');
+      setMarketingContent(cleanContent);
+  };
+
+  // Wrapper for table click event
+  const handleTableMarketingClick = (e: React.MouseEvent, record: ReplenishmentRecord) => {
+      e.stopPropagation();
+      handleGenerateMarketing(record);
+  }
 
   const handleExportCSV = () => {
     const headers = ['Date', 'Product', 'SKU', 'Lifecycle', 'Qty', 'DOS', 'Method', 'Unit Cost(CNY)', 'Sales Price(USD)', 'Total Cost(USD)', 'Profit(USD)', 'Margin(%)', 'ROI(%)', 'Status'];
@@ -379,6 +454,8 @@ function App() {
         return <LogisticsTools />;
       case 'analytics':
         return <AnalyticsDashboard records={records} />;
+      case 'marketing':
+        return <MarketingDashboard records={records} onGenerate={handleGenerateMarketing} />;
       case 'inventory':
       default:
         return (
@@ -390,10 +467,20 @@ function App() {
                     <div className="relative z-10">
                       <div className="flex items-center justify-between mb-4 pb-4 border-b border-purple-50">
                         <div className="flex items-center gap-3">
-                          <div className="bg-purple-100 p-2 rounded-lg">
-                            <BrainCircuit className="text-purple-600 h-5 w-5" />
+                          <div className={`p-2 rounded-lg ${
+                              analysisTitle.includes('TikTok') ? 'bg-pink-100' : 
+                              analysisTitle.includes('选品') ? 'bg-orange-100' :
+                              'bg-purple-100'
+                          }`}>
+                            {analysisTitle.includes('TikTok') ? (
+                                <Megaphone className="text-pink-600 h-5 w-5" />
+                            ) : analysisTitle.includes('选品') ? (
+                                <Compass className="text-orange-600 h-5 w-5" />
+                            ) : (
+                                <BrainCircuit className="text-purple-600 h-5 w-5" />
+                            )}
                           </div>
-                          <h3 className="font-bold text-lg text-gray-800">供应链 AI 诊断报告</h3>
+                          <h3 className="font-bold text-lg text-gray-800">{analysisTitle}</h3>
                         </div>
                         <button 
                           onClick={() => setAiAnalysis(null)}
@@ -464,7 +551,7 @@ function App() {
                           <th scope="col" className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">物流 (Vol & Wgt)</th>
                           <th scope="col" className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">库存状态 (DOS)</th>
                           <th scope="col" className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">销售表现</th>
-                          <th scope="col" className="px-6 py-4 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">利润与回报</th>
+                          <th scope="col" className="px-6 py-4 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">操作</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100">
@@ -569,21 +656,27 @@ function App() {
                                 </div>
                               </td>
                               <td className="px-6 py-4 whitespace-nowrap text-right">
-                                <div className="flex flex-col items-end">
-                                    <div className={`text-base font-bold font-mono ${m.estimatedProfitUSD > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                                    {m.estimatedProfitUSD > 0 ? '+' : ''}{m.estimatedProfitUSD.toFixed(2)}
-                                    </div>
-                                    <div className="flex justify-end mt-1">
+                                <div className="flex flex-col items-end gap-2">
+                                    {/* Action Buttons */}
+                                    <button 
+                                        onClick={(e) => handleTableMarketingClick(e, record)}
+                                        className="bg-gradient-to-r from-indigo-500 to-purple-500 text-white text-[10px] px-2 py-1 rounded flex items-center gap-1 hover:shadow-md transition-all active:scale-95"
+                                        title="生成 TikTok 脚本与文案"
+                                    >
+                                        <Wand2 size={10} /> 生成内容
+                                    </button>
+                                    
+                                    <div className="flex items-center gap-2">
                                         <div className={`text-xs px-2 py-0.5 rounded-full font-bold inline-flex items-center gap-1 ${m.roi > 30 ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-600'}`}>
                                             ROI: {m.roi.toFixed(0)}%
                                         </div>
+                                        <button 
+                                            onClick={(e) => { e.stopPropagation(); handleDeleteRecord(record.id); }}
+                                            className="text-[10px] text-gray-300 hover:text-red-500 underline"
+                                        >
+                                            删除
+                                        </button>
                                     </div>
-                                    <button 
-                                        onClick={(e) => { e.stopPropagation(); handleDeleteRecord(record.id); }}
-                                        className="text-[10px] text-gray-300 hover:text-red-500 mt-2 underline"
-                                    >
-                                        删除
-                                    </button>
                                 </div>
                               </td>
                             </tr>
@@ -618,6 +711,7 @@ function App() {
       case 'analytics': return '经营数据分析';
       case 'calculator': return '智能运费试算';
       case 'logistics': return '物流查询中心';
+      case 'marketing': return 'AI 营销内容引擎';
     }
   };
 
@@ -628,6 +722,7 @@ function App() {
       case 'analytics': return '可视化您的利润结构与物流成本分布';
       case 'calculator': return '快速测算材积重、体积与货型分析';
       case 'logistics': return 'UPS与海运实时追踪查询';
+      case 'marketing': return '自动生成 TikTok 脚本、Listing 文案与直播话术';
     }
   };
 
@@ -675,6 +770,18 @@ function App() {
             <span className="font-medium">数据分析</span>
           </button>
 
+          {/* New AI Hub Section */}
+          <div className="px-4 py-2 mt-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">
+            AI 赋能中心
+          </div>
+          <button 
+             onClick={() => setCurrentView('marketing')}
+             className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all group ${currentView === 'marketing' ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
+          >
+            <Sparkles size={20} className={currentView === 'marketing' ? 'text-yellow-300' : 'group-hover:text-purple-400'} />
+            <span className="font-medium">AI 营销中心</span>
+          </button>
+
           <div className="px-4 py-2 mt-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">
             实用工具
           </div>
@@ -707,14 +814,22 @@ function App() {
 
         </nav>
 
+        {/* AI Sidebar Button (Updated) */}
         <div className="p-4 border-t border-slate-800">
-          <div className="bg-slate-800 rounded-xl p-4">
+          <div 
+            onClick={() => setIsAiChatOpen(true)}
+            className="bg-slate-800 rounded-xl p-4 cursor-pointer hover:bg-slate-700 transition-all group relative overflow-hidden"
+          >
+             <div className="absolute top-0 right-0 w-20 h-20 bg-purple-500 rounded-full mix-blend-overlay filter blur-xl opacity-20 -translate-y-10 translate-x-10 group-hover:opacity-40 transition-opacity"></div>
+             
              <div className="flex items-center gap-2 mb-2">
-               <BrainCircuit className="text-purple-400 h-5 w-5" />
-               <span className="text-xs font-bold text-purple-200">AI 助手已就绪</span>
+               <div className="bg-purple-900/50 p-1.5 rounded-lg">
+                  <Bot className="text-purple-400 h-5 w-5" />
+               </div>
+               <span className="text-xs font-bold text-purple-200">AI Copilot</span>
              </div>
-             <p className="text-xs text-slate-400 leading-relaxed">
-               点击分析按钮，让 AI 帮您优化物流成本和选品策略。
+             <p className="text-xs text-slate-400 leading-relaxed group-hover:text-slate-300 transition-colors">
+               点击开启智能对话，分析库存或查询利润数据。
              </p>
           </div>
         </div>
@@ -766,22 +881,53 @@ function App() {
                    </div>
                 )}
 
-                {currentView === 'inventory' && (
+                {/* Updated Button Visibility Logic */}
+                {(currentView === 'inventory' || currentView === 'overview' || currentView === 'marketing') && (
                   <>
-                    <button 
-                      onClick={handleSmartAnalysis}
-                      className="flex items-center gap-2 bg-white text-purple-700 px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-purple-50 transition-colors border border-purple-200 shadow-sm"
-                    >
-                      {isAnalyzing ? <Loader2 className="animate-spin h-4 w-4" /> : <BrainCircuit className="h-4 w-4" />}
-                      {isAnalyzing ? '正在分析...' : '智能诊断'}
-                    </button>
-                    <button 
-                      onClick={openAddModal}
-                      className="flex items-center gap-2 bg-blue-600 text-white px-5 py-2.5 rounded-xl hover:bg-blue-700 transition shadow-lg shadow-blue-200 font-bold active:scale-95 transform"
-                    >
-                      <Plus size={18} />
-                      添加产品
-                    </button>
+                    {/* Only show strategy buttons in Inventory/Overview to avoid clutter, or if user wants them everywhere we can remove condition */}
+                    {currentView !== 'marketing' && (
+                        <>
+                            <button 
+                            onClick={handleAdStrategy}
+                            disabled={isAnalyzing}
+                            className="flex items-center gap-2 bg-pink-50 text-pink-700 px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-pink-100 transition-colors border border-pink-200 shadow-sm"
+                            >
+                            {isAnalyzing && analysisTitle.includes('TikTok') ? <Loader2 className="animate-spin h-4 w-4" /> : <Megaphone className="h-4 w-4" />}
+                            TikTok 投放建议
+                            </button>
+
+                            <button 
+                            onClick={handleSelectionStrategy}
+                            disabled={isAnalyzing}
+                            className="flex items-center gap-2 bg-orange-50 text-orange-700 px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-orange-100 transition-colors border border-orange-200 shadow-sm"
+                            >
+                            {isAnalyzing && analysisTitle.includes('选品') ? <Loader2 className="animate-spin h-4 w-4" /> : <Compass className="h-4 w-4" />}
+                            美区选品策略
+                            </button>
+                        </>
+                    )}
+
+                    {currentView === 'inventory' && (
+                        <button 
+                          onClick={handleSmartAnalysis}
+                          disabled={isAnalyzing}
+                          className="flex items-center gap-2 bg-white text-purple-700 px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-purple-50 transition-colors border border-purple-200 shadow-sm"
+                        >
+                          {isAnalyzing && !analysisTitle.includes('TikTok') && !analysisTitle.includes('选品') ? <Loader2 className="animate-spin h-4 w-4" /> : <BrainCircuit className="h-4 w-4" />}
+                          {isAnalyzing && !analysisTitle.includes('TikTok') && !analysisTitle.includes('选品') ? '正在分析...' : '智能诊断'}
+                        </button>
+                    )}
+
+                    {/* Add Product only on Inventory view to avoid confusion */}
+                    {currentView === 'inventory' && (
+                        <button 
+                          onClick={openAddModal}
+                          className="flex items-center gap-2 bg-blue-600 text-white px-5 py-2.5 rounded-xl hover:bg-blue-700 transition shadow-lg shadow-blue-200 font-bold active:scale-95 transform"
+                        >
+                          <Plus size={18} />
+                          添加产品
+                        </button>
+                    )}
                   </>
                 )}
               </div>
@@ -809,6 +955,21 @@ function App() {
         onClose={closeModal} 
         onSave={handleSaveRecord} 
         initialData={editingRecord}
+      />
+      
+      {/* AI Chat Modal (Global) */}
+      <AiChatModal 
+         isOpen={isAiChatOpen}
+         onClose={() => setIsAiChatOpen(false)}
+         records={records}
+      />
+
+      {/* AI Marketing Modal (New) */}
+      <MarketingModal
+         isOpen={marketingModalOpen}
+         onClose={() => setMarketingModalOpen(false)}
+         content={marketingContent}
+         productName={marketingProduct}
       />
     </div>
   );

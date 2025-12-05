@@ -30,7 +30,11 @@ export interface ReplenishmentRecord {
   // Logistics Data (First Leg / Head Haul)
   shippingMethod: ShippingMethod;
   shippingUnitPriceCNY: number; // 海运/空运单价 (RMB/kg)
-  materialCostCNY: number; // 头程耗材费
+  
+  // Fixed Logistics Costs (Batch Level)
+  materialCostCNY: number; // 耗材费
+  customsFeeCNY: number;   // 报关费
+  portFeeCNY: number;      // 港口操作费/港杂费
   
   // Last Mile & Sales (USD)
   salesPriceUSD: number; // 销售价格 ($)
@@ -40,6 +44,8 @@ export interface ReplenishmentRecord {
   // TikTok Specific Fees (New)
   platformFeeRate: number; // TikTok Shop 平台佣金率 (e.g., 2.0 for 2%)
   affiliateCommissionRate: number; // 达人带货佣金率 (e.g., 15.0 for 15%)
+  additionalFixedFeeUSD: number; // 每单固定交易费 (e.g. $0.30)
+  returnRate: number; // 预估退货率 (%)
 
   // Warehouse Info
   warehouse: string;
@@ -61,6 +67,7 @@ export interface CalculatedMetrics {
   // Fee Amounts (USD)
   platformFeeUSD: number;
   affiliateCommissionUSD: number;
+  returnLossProvisionUSD: number; // Cost provision for returns
 
   totalCostPerUnitUSD: number; // Landed Cost (Product + Ship + Last Mile + Ad + Fees)
   estimatedProfitUSD: number; // Sales - Total Cost

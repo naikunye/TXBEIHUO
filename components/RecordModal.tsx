@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { ReplenishmentRecord } from '../types';
-import { X, Upload, Image as ImageIcon, Plane, Ship, RefreshCcw, Package, Box, Percent, Zap, BarChart, Tag, Calculator } from 'lucide-react';
+import { X, Upload, Image as ImageIcon, Plane, Ship, RefreshCcw, Package, Box, Percent, Zap, BarChart, Tag, Calculator, DollarSign, RotateCcw } from 'lucide-react';
 import { EXCHANGE_RATE } from '../constants';
 
 interface RecordModalProps {
@@ -31,6 +31,8 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
     shippingMethod: 'Air' as const,
     shippingUnitPriceCNY: 0,
     materialCostCNY: 0,
+    customsFeeCNY: 0, 
+    portFeeCNY: 0,    
     
     salesPriceUSD: 0,
     lastMileCostUSD: 0,
@@ -39,6 +41,8 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
     // TikTok Defaults
     platformFeeRate: 2.0, // Default 2%
     affiliateCommissionRate: 0, // Default 0
+    additionalFixedFeeUSD: 0.30, // Default $0.30
+    returnRate: 0, // Default 0%
     
     warehouse: '火星/休斯顿/美中',
     imageUrl: '',
@@ -170,9 +174,7 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const status = initialData ? initialData.status : 'Planning';
-    // If totalCartons is 0, maybe we should auto-calc it to prevent error? 
-    // Or we assume 0 is intentional (e.g. digital goods or error).
-    // Let's safe guard it slightly: if 0, try to calc.
+    // If totalCartons is 0, try to calc.
     let finalCartons = formData.totalCartons;
     if (finalCartons === 0 && formData.quantity > 0 && formData.itemsPerBox > 0) {
         finalCartons = Math.ceil(formData.quantity / formData.itemsPerBox);
@@ -481,8 +483,9 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
                         />
                     </div>
                  </div>
+                 {/* Material Cost */}
                  <div>
-                    <label className={labelClass}>耗材/杂费 (¥)</label>
+                    <label className={labelClass}>耗材/贴标费 (¥)</label>
                     <div className="relative mt-1">
                         <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-gray-400">¥</span>
                         <input 
@@ -491,6 +494,42 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
                             step="1" 
                             name="materialCostCNY" 
                             value={formData.materialCostCNY} 
+                            onChange={handleChange} 
+                            className={`${inputClass} pl-7`} 
+                            placeholder="0"
+                        />
+                    </div>
+                 </div>
+             </div>
+             
+             {/* New Fees Grid */}
+             <div className="grid grid-cols-2 gap-4">
+                 <div>
+                    <label className={labelClass}>报关费 (¥)</label>
+                    <div className="relative mt-1">
+                        <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-gray-400">¥</span>
+                        <input 
+                            required 
+                            type="number" 
+                            step="1" 
+                            name="customsFeeCNY" 
+                            value={formData.customsFeeCNY} 
+                            onChange={handleChange} 
+                            className={`${inputClass} pl-7`} 
+                            placeholder="0"
+                        />
+                    </div>
+                 </div>
+                 <div>
+                    <label className={labelClass}>港口/操作费 (¥)</label>
+                    <div className="relative mt-1">
+                        <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-gray-400">¥</span>
+                        <input 
+                            required 
+                            type="number" 
+                            step="1" 
+                            name="portFeeCNY" 
+                            value={formData.portFeeCNY} 
                             onChange={handleChange} 
                             className={`${inputClass} pl-7`} 
                             placeholder="0"
@@ -529,6 +568,26 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
                         <input required type="number" step="1" name="affiliateCommissionRate" value={formData.affiliateCommissionRate} onChange={handleChange} className={inputClass} placeholder="15.0" />
                    </div>
                    <p className="text-[10px] text-gray-400 mt-0.5">联盟推广费</p>
+                </div>
+
+                {/* NEW: Transaction Fee */}
+                <div>
+                   <label className={labelClass}>每单固定费 ($)</label>
+                   <div className="relative">
+                        <DollarSign className="absolute right-3 top-3 text-gray-400" size={14} />
+                        <input required type="number" step="0.01" name="additionalFixedFeeUSD" value={formData.additionalFixedFeeUSD} onChange={handleChange} className={inputClass} placeholder="0.30" />
+                   </div>
+                   <p className="text-[10px] text-gray-400 mt-0.5">交易定额费 (如 $0.3)</p>
+                </div>
+
+                {/* NEW: Return Rate */}
+                <div>
+                   <label className={labelClass}>预估退货率 (%)</label>
+                   <div className="relative">
+                        <RotateCcw className="absolute right-3 top-3 text-gray-400" size={14} />
+                        <input required type="number" step="0.1" name="returnRate" value={formData.returnRate} onChange={handleChange} className={inputClass} placeholder="5.0" />
+                   </div>
+                   <p className="text-[10px] text-gray-400 mt-0.5">用于计算退货损耗</p>
                 </div>
 
                 <div>

@@ -7,27 +7,27 @@ export const calculateMetrics = (record: ReplenishmentRecord): CalculatedMetrics
   const totalWeightKg = record.quantity * record.unitWeightKg;
 
   // 2. Packing Logic
-  // Fallback for legacy records or missing input: calculate based on itemsPerBox
   const safeItemsPerBox = record.itemsPerBox > 0 ? record.itemsPerBox : 1;
   const calculatedCartons = Math.ceil(record.quantity / safeItemsPerBox);
   
-  // Use manual totalCartons if available (even if 0, though normally >0), otherwise fallback
-  // Checking for undefined/null just in case of data migration issues
   const totalCartons = (record.totalCartons !== undefined && record.totalCartons !== null && !isNaN(record.totalCartons) && record.totalCartons !== 0)
     ? record.totalCartons 
     : calculatedCartons;
   
-  // Volume CBM Calculation: (L * W * H) / 1,000,000 * TotalCartons
   const singleBoxVolumeCbm = (record.boxLengthCm * record.boxWidthCm * record.boxHeightCm) / 1000000;
   const totalVolumeCbm = singleBoxVolumeCbm * totalCartons;
   
   const singleBoxWeightKg = record.unitWeightKg * safeItemsPerBox;
 
   // 3. First Leg Shipping Cost (RMB)
-  // Logic: (Weight * Unit Shipping Price) + Material Fees
-  // Note: Future upgrade -> Compare Actual Weight vs Volumetric Weight (CBM * 167 for Air)
   const shippingFeeCNY = totalWeightKg * record.shippingUnitPriceCNY; 
-  const firstLegCostCNY = shippingFeeCNY + record.materialCostCNY;
+  
+  const fixedLogisticsCostCNY = 
+    (record.materialCostCNY || 0) + 
+    (record.customsFeeCNY || 0) + 
+    (record.portFeeCNY || 0);
+
+  const firstLegCostCNY = shippingFeeCNY + fixedLogisticsCostCNY;
 
   // 4. Convert First Leg to USD
   const firstLegCostUSD = firstLegCostCNY / EXCHANGE_RATE;
@@ -39,31 +39,39 @@ export const calculateMetrics = (record: ReplenishmentRecord): CalculatedMetrics
   const productCostUSD = record.unitPriceCNY / EXCHANGE_RATE;
 
   // 7. Calculate TikTok Specific Fees (USD)
-  // These are based on Sales Price
   const platformFeeUSD = record.salesPriceUSD * (record.platformFeeRate / 100);
   const affiliateCommissionUSD = record.salesPriceUSD * (record.affiliateCommissionRate / 100);
+  const fixedFeeUSD = record.additionalFixedFeeUSD || 0; // New: Fixed Transaction Fee
 
-  // 8. Total Landed Cost Per Unit (USD)
-  // Product + Head Haul + Last Mile + Ad + Platform Fees + Affiliate Commission
+  // 8. Return Loss Provision (New)
+  // Logic: We assume returns result in lost Shipping (Head Haul + Last Mile) + Ad Spend. 
+  // We assume Product Cost is recoverable (optimistic) or partially lost. 
+  // For simplicity and safety in US dropshipping/FBA models, we often calculate it as a % of the Landed Cost or Sales Price.
+  // Here, we calculate it as: (Product + Logistics + Ads) * ReturnRate. Meaning these costs are wasted on returned units.
+  const baseCostForReturn = productCostUSD + singleHeadHaulCostUSD + record.lastMileCostUSD + record.adCostUSD;
+  const returnLossProvisionUSD = baseCostForReturn * ((record.returnRate || 0) / 100);
+
+  // 9. Total Landed Cost Per Unit (USD)
   const totalCostPerUnitUSD = 
     productCostUSD + 
     singleHeadHaulCostUSD + 
     record.lastMileCostUSD + 
     record.adCostUSD +
     platformFeeUSD +
-    affiliateCommissionUSD;
+    affiliateCommissionUSD +
+    fixedFeeUSD +
+    returnLossProvisionUSD; // Add return provision to cost
 
-  // 9. Profit
+  // 10. Profit
   const estimatedProfitUSD = record.salesPriceUSD - totalCostPerUnitUSD;
 
-  // 10. Margin (Profit / Sales Price)
+  // 11. Margin (Profit / Sales Price)
   const marginRate = record.salesPriceUSD > 0 ? (estimatedProfitUSD / record.salesPriceUSD) * 100 : 0;
 
-  // 11. ROI (Profit / Total Cost)
+  // 12. ROI (Profit / Total Cost)
   const roi = totalCostPerUnitUSD > 0 ? (estimatedProfitUSD / totalCostPerUnitUSD) * 100 : 0;
 
-  // 12. Inventory Health (Visual Alerts)
-  // Days of Supply (DOS) = Current Qty / Daily Sales
+  // 13. Inventory Health
   let daysOfSupply = 0;
   let stockStatus: CalculatedMetrics['stockStatus'] = 'Unknown';
   
@@ -86,6 +94,7 @@ export const calculateMetrics = (record: ReplenishmentRecord): CalculatedMetrics
     productCostUSD,
     platformFeeUSD,
     affiliateCommissionUSD,
+    returnLossProvisionUSD,
     totalCostPerUnitUSD,
     estimatedProfitUSD,
     marginRate,

@@ -22,12 +22,16 @@ export const MOCK_DATA_INITIAL: ReplenishmentRecord[] = [
     totalCartons: 5, // Manual entry: 42 / 10 = 4.2 -> 5 cartons
     shippingMethod: 'Air',
     shippingUnitPriceCNY: 62,
-    materialCostCNY: 0,
+    materialCostCNY: 20,
+    customsFeeCNY: 150,
+    portFeeCNY: 50,
     salesPriceUSD: 16.99,
     lastMileCostUSD: 5.46,
     adCostUSD: 1.64,
     platformFeeRate: 2.0, // 2%
     affiliateCommissionRate: 0, // Self-operated
+    additionalFixedFeeUSD: 0.30, // Standard TT US fee
+    returnRate: 5.0, // 5% return rate
     warehouse: '火星/休斯顿/美中',
     status: 'Shipped'
   },
@@ -48,12 +52,16 @@ export const MOCK_DATA_INITIAL: ReplenishmentRecord[] = [
     totalCartons: 4, // 200 / 50 = 4
     shippingMethod: 'Air',
     shippingUnitPriceCNY: 53,
-    materialCostCNY: 292,
+    materialCostCNY: 50,
+    customsFeeCNY: 200,
+    portFeeCNY: 42,
     salesPriceUSD: 39.6, // Adjusted price for better margin example
     lastMileCostUSD: 4.15,
     adCostUSD: 5.00,
     platformFeeRate: 2.0,
     affiliateCommissionRate: 15.0, // 15% to influencer
+    additionalFixedFeeUSD: 0.30,
+    returnRate: 8.0, // Electronics return rate slightly higher
     warehouse: '火星/休斯顿/美中',
     status: 'Planning'
   },
@@ -75,11 +83,15 @@ export const MOCK_DATA_INITIAL: ReplenishmentRecord[] = [
     shippingMethod: 'Air',
     shippingUnitPriceCNY: 62,
     materialCostCNY: 30,
+    customsFeeCNY: 0,
+    portFeeCNY: 0,
     salesPriceUSD: 68.56,
     lastMileCostUSD: 5.44,
     adCostUSD: 10.00,
     platformFeeRate: 2.0,
     affiliateCommissionRate: 10.0, // 10% Affiliate
+    additionalFixedFeeUSD: 0.30,
+    returnRate: 3.0,
     warehouse: '火星/休斯顿/美中',
     status: 'Arrived'
   }

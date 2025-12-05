@@ -88,7 +88,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ records 
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
           <h3 className="text-lg font-bold text-gray-800 mb-6 flex items-center gap-2">
             <TrendingUp className="text-green-600 h-5 w-5" />
-            单品利润分析 (USD)
+            单品净利润分析 (Net Profit)
           </h3>
           <div className="space-y-5">
             {chartData.map((item, idx) => (
@@ -96,7 +96,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ records 
                 <div className="flex justify-between text-sm mb-1.5 font-medium">
                   <span className="text-gray-700 w-32 truncate" title={item.name}>{item.sku}</span>
                   <div className="flex gap-4">
-                     <span className="text-gray-500 text-xs">成本: ${item.cost.toFixed(2)}</span>
+                     <span className="text-gray-500 text-xs">总成本: ${item.cost.toFixed(2)}</span>
                      <span className={item.profit > 0 ? "text-green-600" : "text-red-500"}>
                         利润: ${item.profit.toFixed(2)}
                      </span>
@@ -136,8 +136,11 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ records 
               const p_prod = (m.productCostUSD / total) * 100;
               const p_ship = (m.singleHeadHaulCostUSD / total) * 100;
               const p_last = (r.lastMileCostUSD / total) * 100;
+              const p_fees = ((m.platformFeeUSD + m.affiliateCommissionUSD + (r.additionalFixedFeeUSD || 0)) / total) * 100;
+              const p_loss = (m.returnLossProvisionUSD / total) * 100;
+              // Remaining is Ad or adjust
               const p_ad = (r.adCostUSD / total) * 100;
-              const p_fees = ((m.platformFeeUSD + m.affiliateCommissionUSD) / total) * 100;
+
 
               return (
                 <div key={idx} className="border-b border-gray-100 pb-4 last:border-0 last:pb-0">
@@ -149,14 +152,15 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ records 
                     <div style={{ width: `${p_prod}%` }} className="bg-blue-500" title={`货值: $${m.productCostUSD.toFixed(2)}`}>货</div>
                     <div style={{ width: `${p_ship}%` }} className="bg-orange-400" title={`头程: $${m.singleHeadHaulCostUSD.toFixed(2)}`}>头</div>
                     <div style={{ width: `${p_last}%` }} className="bg-purple-400" title={`尾程: $${r.lastMileCostUSD.toFixed(2)}`}>尾</div>
-                    <div style={{ width: `${p_fees}%` }} className="bg-pink-500" title={`佣金: $${(m.platformFeeUSD + m.affiliateCommissionUSD).toFixed(2)}`}>佣</div>
+                    <div style={{ width: `${p_fees}%` }} className="bg-pink-500" title={`佣金: $${(m.platformFeeUSD + m.affiliateCommissionUSD + (r.additionalFixedFeeUSD||0)).toFixed(2)}`}>佣</div>
+                    <div style={{ width: `${p_loss}%` }} className="bg-red-400" title={`退货损耗: $${m.returnLossProvisionUSD.toFixed(2)}`}>损</div>
                     <div style={{ width: `${p_ad}%` }} className="bg-gray-400" title={`广告: $${r.adCostUSD.toFixed(2)}`}>广</div>
                   </div>
                   <div className="flex gap-3 mt-1.5 text-xs text-gray-400 flex-wrap">
                     <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-blue-500"></div>货值</div>
                     <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-orange-400"></div>头程</div>
-                    <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-purple-400"></div>尾程</div>
-                    <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-pink-500"></div>平台/达人佣金</div>
+                    <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-pink-500"></div>佣金</div>
+                    <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-red-400"></div>退货损耗</div>
                   </div>
                 </div>
               );
