@@ -1,19 +1,25 @@
+
+import { ReplenishmentRecord } from "./types";
+
 // Fixed Exchange Rate from your CSV
 export const EXCHANGE_RATE = 7.3;
 
-export const MOCK_DATA_INITIAL = [
+export const MOCK_DATA_INITIAL: ReplenishmentRecord[] = [
   {
     id: '1',
     date: '2025-03-01',
     productName: 'MAD ACID',
     sku: 'MA-001',
+    lifecycle: 'New',
     quantity: 42,
+    dailySales: 2, // New Product, low velocity
     unitPriceCNY: 11.99,
     unitWeightKg: 0.65,
     boxLengthCm: 40,
     boxWidthCm: 30,
     boxHeightCm: 30,
     itemsPerBox: 10,
+    totalCartons: 5, // Manual entry: 42 / 10 = 4.2 -> 5 cartons
     shippingMethod: 'Air',
     shippingUnitPriceCNY: 62,
     materialCostCNY: 0,
@@ -30,13 +36,16 @@ export const MOCK_DATA_INITIAL = [
     date: '2025-03-06',
     productName: 'Carplay Q1M',
     sku: 'CP-Q1M',
+    lifecycle: 'Growth',
     quantity: 200,
+    dailySales: 15, // High growth
     unitPriceCNY: 64,
     unitWeightKg: 0.03,
     boxLengthCm: 50,
     boxWidthCm: 40,
     boxHeightCm: 35,
     itemsPerBox: 50,
+    totalCartons: 4, // 200 / 50 = 4
     shippingMethod: 'Air',
     shippingUnitPriceCNY: 53,
     materialCostCNY: 292,
@@ -53,13 +62,16 @@ export const MOCK_DATA_INITIAL = [
     date: '2025-03-14',
     productName: 'AI BOX2 (Fan)',
     sku: 'BOX2-NEW',
+    lifecycle: 'Stable',
     quantity: 150,
+    dailySales: 5, // Stable sales
     unitPriceCNY: 130,
     unitWeightKg: 0.085,
     boxLengthCm: 32,
     boxWidthCm: 24,
     boxHeightCm: 18,
     itemsPerBox: 20,
+    totalCartons: 8, // 150 / 20 = 7.5 -> 8 cartons
     shippingMethod: 'Air',
     shippingUnitPriceCNY: 62,
     materialCostCNY: 30,
@@ -71,4 +83,4 @@ export const MOCK_DATA_INITIAL = [
     warehouse: '火星/休斯顿/美中',
     status: 'Arrived'
   }
-] as const;
+];

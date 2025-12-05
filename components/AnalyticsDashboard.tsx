@@ -1,7 +1,8 @@
+
 import React from 'react';
 import { ReplenishmentRecord } from '../types';
 import { calculateMetrics, formatCurrency } from '../utils/calculations';
-import { TrendingUp, TrendingDown, DollarSign, Package } from 'lucide-react';
+import { TrendingUp, TrendingDown, DollarSign, Package, Zap } from 'lucide-react';
 
 interface AnalyticsDashboardProps {
   records: ReplenishmentRecord[];
@@ -36,9 +37,52 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ records 
     return acc;
   }, {} as Record<string, { weight: number, cost: number, count: number }>);
 
+  // Aggregates for Lifecycle
+  const lifecycleCounts = records.reduce((acc, curr) => {
+      const stage = curr.lifecycle || 'New';
+      acc[stage] = (acc[stage] || 0) + 1;
+      return acc;
+  }, {} as Record<string, number>);
+  const totalRecords = records.length;
+
   return (
     <div className="space-y-8 animate-fade-in pb-10">
       
+      {/* Lifecycle Breakdown (New Chart) */}
+      <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
+         <h3 className="text-lg font-bold text-gray-800 mb-6 flex items-center gap-2">
+            <Zap className="text-purple-600 h-5 w-5" />
+            产品生命周期分布
+          </h3>
+          <div className="grid grid-cols-4 gap-4">
+              {['New', 'Growth', 'Stable', 'Clearance'].map((stage) => {
+                  const count = lifecycleCounts[stage] || 0;
+                  const pct = totalRecords > 0 ? (count / totalRecords) * 100 : 0;
+                  let colorClass = '';
+                  let label = '';
+                  switch(stage) {
+                      case 'New': colorClass = 'bg-blue-500'; label = '新品推广'; break;
+                      case 'Growth': colorClass = 'bg-emerald-500'; label = '高速增长'; break;
+                      case 'Stable': colorClass = 'bg-indigo-500'; label = '稳定热卖'; break;
+                      case 'Clearance': colorClass = 'bg-red-500'; label = '尾货清仓'; break;
+                  }
+
+                  return (
+                      <div key={stage} className="flex flex-col gap-2 p-4 bg-gray-50 rounded-xl border border-gray-100">
+                          <span className="text-xs text-gray-500 uppercase font-bold tracking-wide">{label}</span>
+                          <div className="flex items-end gap-2">
+                              <span className="text-2xl font-bold text-gray-800">{count}</span>
+                              <span className="text-xs text-gray-400 mb-1">SKUs</span>
+                          </div>
+                          <div className="w-full bg-gray-200 h-1.5 rounded-full mt-2">
+                              <div className={`h-1.5 rounded-full ${colorClass}`} style={{ width: `${pct}%` }}></div>
+                          </div>
+                      </div>
+                  )
+              })}
+          </div>
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         {/* Chart 1: Profitability Landscape */}
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">

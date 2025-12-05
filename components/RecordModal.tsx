@@ -1,6 +1,7 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { ReplenishmentRecord } from '../types';
-import { X, Upload, Image as ImageIcon, Plane, Ship, RefreshCcw, Package, Box, Percent } from 'lucide-react';
+import { X, Upload, Image as ImageIcon, Plane, Ship, RefreshCcw, Package, Box, Percent, Zap, BarChart, Tag, Calculator } from 'lucide-react';
 import { EXCHANGE_RATE } from '../constants';
 
 interface RecordModalProps {
@@ -15,7 +16,9 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
     date: new Date().toISOString().split('T')[0],
     productName: '',
     sku: '',
+    lifecycle: 'New' as const, // Default
     quantity: 0,
+    dailySales: 0, // Default
     unitPriceCNY: 0,
     unitWeightKg: 0,
     // Packing Defaults
@@ -23,7 +26,8 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
     boxWidthCm: 0,
     boxHeightCm: 0,
     itemsPerBox: 0,
-    
+    totalCartons: 0, // Manual Manual override
+
     shippingMethod: 'Air' as const,
     shippingUnitPriceCNY: 0,
     materialCostCNY: 0,
@@ -42,6 +46,7 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
 
   const [formData, setFormData] = useState<Omit<ReplenishmentRecord, 'id' | 'status'>>(defaultForm);
   const [shippingCurrency, setShippingCurrency] = useState<'CNY' | 'USD'>('CNY');
+  const [skuInput, setSkuInput] = useState(''); // State for pending SKU input
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Effect to populate form when modal opens or initialData changes
@@ -50,10 +55,14 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
       if (initialData) {
         // Destructure to remove id and status, keep the rest for the form
         const { id, status, ...rest } = initialData;
-        setFormData(rest);
+        setFormData({
+            ...defaultForm, // Ensure new fields have defaults if old data is loaded
+            ...rest
+        });
       } else {
         setFormData(defaultForm);
       }
+      setSkuInput(''); // Reset SKU input
       // Reset currency toggle to CNY on open
       setShippingCurrency('CNY');
     }
@@ -65,11 +74,59 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
     const { name, value } = e.target;
     setFormData(prev => ({
       ...prev,
-      [name]: name === 'date' || name === 'productName' || name === 'sku' || name === 'shippingMethod' || name === 'warehouse' || name === 'imageUrl'
+      [name]: name === 'date' || name === 'productName' || name === 'sku' || name === 'shippingMethod' || name === 'warehouse' || name === 'imageUrl' || name === 'lifecycle'
         ? value 
         : parseFloat(value) || 0
     }));
   };
+
+  // Helper to auto-calculate cartons if user wants to (Reverse)
+  const autoCalculateCartons = () => {
+      const safeItemsPerBox = formData.itemsPerBox > 0 ? formData.itemsPerBox : 1;
+      const calcCartons = Math.ceil(formData.quantity / safeItemsPerBox);
+      setFormData(prev => ({ ...prev, totalCartons: calcCartons }));
+  };
+
+  // Helper to auto-calculate quantity from cartons (Forward)
+  const autoCalculateQuantity = () => {
+      const safeItemsPerBox = formData.itemsPerBox > 0 ? formData.itemsPerBox : 0;
+      const calcQty = formData.totalCartons * safeItemsPerBox;
+      setFormData(prev => ({ ...prev, quantity: calcQty }));
+  };
+
+  // --- SKU Tag Logic ---
+  const skuTags = formData.sku ? formData.sku.split(',').map(s => s.trim()).filter(Boolean) : [];
+
+  const handleSkuKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' || e.key === ',') {
+      e.preventDefault();
+      addSkuTag();
+    } else if (e.key === 'Backspace' && !skuInput && skuTags.length > 0) {
+      const newTags = skuTags.slice(0, -1);
+      setFormData(prev => ({ ...prev, sku: newTags.join(', ') }));
+    }
+  };
+
+  const handleSkuBlur = () => {
+      addSkuTag();
+  };
+
+  const addSkuTag = () => {
+      const val = skuInput.trim().replace(/,/g, '');
+      if (val) {
+          if (!skuTags.includes(val)) {
+               const newTags = [...skuTags, val];
+               setFormData(prev => ({ ...prev, sku: newTags.join(', ') }));
+          }
+          setSkuInput('');
+      }
+  };
+
+  const removeSkuTag = (tagToRemove: string) => {
+      const newTags = skuTags.filter(t => t !== tagToRemove);
+      setFormData(prev => ({ ...prev, sku: newTags.join(', ') }));
+  };
+  // ---------------------
 
   const handleShippingPriceChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
@@ -93,8 +150,11 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
 
   // Dynamic Volume Calculation for UI Feedback
   const boxVolCbm = (formData.boxLengthCm * formData.boxWidthCm * formData.boxHeightCm) / 1000000;
-  const totalBoxes = formData.itemsPerBox > 0 ? Math.ceil(formData.quantity / formData.itemsPerBox) : 0;
-  const totalVolCbm = boxVolCbm * totalBoxes;
+  // Use Manual Total Cartons
+  const totalVolCbm = boxVolCbm * formData.totalCartons;
+  
+  // DOS Preview
+  const dos = formData.dailySales > 0 ? (formData.quantity / formData.dailySales).toFixed(1) : '∞';
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -110,7 +170,15 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const status = initialData ? initialData.status : 'Planning';
-    onSave({ ...formData, status });
+    // If totalCartons is 0, maybe we should auto-calc it to prevent error? 
+    // Or we assume 0 is intentional (e.g. digital goods or error).
+    // Let's safe guard it slightly: if 0, try to calc.
+    let finalCartons = formData.totalCartons;
+    if (finalCartons === 0 && formData.quantity > 0 && formData.itemsPerBox > 0) {
+        finalCartons = Math.ceil(formData.quantity / formData.itemsPerBox);
+    }
+
+    onSave({ ...formData, totalCartons: finalCartons, status });
     onClose();
   };
 
@@ -120,12 +188,12 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
   const isAir = formData.shippingMethod === 'Air';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 backdrop-blur-sm p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 backdrop-blur-sm p-4 animate-fade-in">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
         <div className="flex justify-between items-center p-6 border-b border-gray-100 bg-gray-50 rounded-t-2xl">
           <div>
             <h2 className="text-xl font-bold text-gray-800">
-              {initialData ? `编辑: ${initialData.sku}` : '新增备货计划'}
+              {initialData ? `编辑: ${initialData.productName}` : '新增备货计划'}
             </h2>
             <p className="text-sm text-gray-500">
               {initialData ? '完善箱规信息以获得更准确的体积计算' : '填写详细信息以计算精准利润'}
@@ -182,17 +250,60 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
                     <label className={labelClass}>日期</label>
                     <input required type="date" name="date" value={formData.date} onChange={handleChange} className={inputClass} />
                   </div>
-                  <div>
-                    <label className={labelClass}>目的仓库</label>
-                    <input type="text" name="warehouse" value={formData.warehouse} onChange={handleChange} className={inputClass} />
+                   <div>
+                    <label className={labelClass}>生命周期阶段</label>
+                    <div className="relative">
+                        <Zap className="absolute left-3 top-3 text-gray-400" size={16} />
+                        <select 
+                            name="lifecycle" 
+                            value={formData.lifecycle} 
+                            onChange={handleChange} 
+                            className={`${inputClass} pl-10`}
+                        >
+                            <option value="New">🌱 新品推广 (New)</option>
+                            <option value="Growth">🚀 高速增长 (Growth)</option>
+                            <option value="Stable">⚖️ 稳定热卖 (Stable)</option>
+                            <option value="Clearance">📉 尾货清仓 (Clearance)</option>
+                        </select>
+                    </div>
                   </div>
-                  <div className="md:col-span-2">
+                  <div className="md:col-span-1">
                     <label className={labelClass}>产品名称</label>
                     <input required type="text" placeholder="例如: MAD ACID" name="productName" value={formData.productName} onChange={handleChange} className={inputClass} />
                   </div>
+                  
+                  {/* Enhanced SKU Input */}
+                  <div className="md:col-span-1">
+                    <label className={labelClass}>SKU (支持多标签，按回车添加)</label>
+                    <div className="flex flex-wrap items-center gap-2 p-2 rounded-md border border-gray-300 bg-white shadow-sm focus-within:border-blue-500 focus-within:ring-1 focus-within:ring-blue-500 min-h-[42px] transition-all">
+                        {skuTags.map((tag, index) => (
+                            <span key={index} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 text-xs font-bold border border-blue-100 animate-fade-in">
+                                <Tag size={10} className="opacity-50" />
+                                {tag}
+                                <button
+                                    type="button"
+                                    onClick={() => removeSkuTag(tag)}
+                                    className="text-blue-400 hover:text-blue-600 focus:outline-none ml-0.5 hover:bg-blue-100 rounded"
+                                >
+                                    <X size={12} />
+                                </button>
+                            </span>
+                        ))}
+                        <input
+                            type="text"
+                            placeholder={skuTags.length === 0 ? "输入SKU (如 MA-001)" : ""}
+                            value={skuInput}
+                            onChange={(e) => setSkuInput(e.target.value)}
+                            onKeyDown={handleSkuKeyDown}
+                            onBlur={handleSkuBlur}
+                            className="flex-1 min-w-[80px] outline-none text-sm bg-transparent"
+                        />
+                    </div>
+                  </div>
+
                   <div className="md:col-span-2">
-                    <label className={labelClass}>SKU</label>
-                    <input required type="text" placeholder="例如: MA-001" name="sku" value={formData.sku} onChange={handleChange} className={inputClass} />
+                    <label className={labelClass}>目的仓库</label>
+                    <input type="text" name="warehouse" value={formData.warehouse} onChange={handleChange} className={inputClass} />
                   </div>
               </div>
             </div>
@@ -204,15 +315,28 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
              <div className="space-y-4 p-5 bg-gray-50 rounded-xl border border-gray-100">
                 <div className="flex items-center gap-2 mb-2">
                   <span className="w-6 h-6 rounded-full bg-gray-200 text-gray-600 flex items-center justify-center font-bold text-xs">2</span>
-                  <h3 className="text-sm font-bold text-gray-700">采购信息 (CNY)</h3>
+                  <h3 className="text-sm font-bold text-gray-700">采购与库存 (CNY)</h3>
                 </div>
-                <div>
-                    <label className={labelClass}>备货数量 (个)</label>
-                    <input required type="number" name="quantity" value={formData.quantity} onChange={handleChange} className={inputClass} />
+                <div className="grid grid-cols-2 gap-4">
+                    {/* SWAPPED FIELD: Total Cartons is now here */}
+                    <div>
+                        <label className={labelClass}>备货箱数 (Box)</label>
+                        <input required type="number" name="totalCartons" value={formData.totalCartons} onChange={handleChange} className={inputClass} />
+                    </div>
+                    <div>
+                        <label className={labelClass}>预估日销 (Daily Sales)</label>
+                        <div className="relative">
+                            <BarChart className="absolute left-3 top-3 text-gray-400" size={16} />
+                            <input required type="number" step="0.1" name="dailySales" value={formData.dailySales} onChange={handleChange} className={`${inputClass} pl-10`} />
+                        </div>
+                        <p className="text-[10px] text-gray-500 mt-1">
+                            可售天数 (DOS): <span className={formData.dailySales > 0 ? (formData.quantity/formData.dailySales < 30 ? 'text-red-500 font-bold' : 'text-green-600') : ''}>{dos} 天</span>
+                        </p>
+                    </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                     <div>
-                        <label className={labelClass}>采购单价 (¥)</label>
+                        <label className={labelClass}>采购单价 (¥/pcs)</label>
                         <input required type="number" step="0.01" name="unitPriceCNY" value={formData.unitPriceCNY} onChange={handleChange} className={inputClass} />
                     </div>
                     <div>
@@ -230,7 +354,7 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
                         <h3 className="text-sm font-bold text-amber-800">箱规设置</h3>
                     </div>
                     <div className="text-xs text-amber-700 bg-amber-100 px-2 py-1 rounded">
-                        {totalBoxes} 箱 | {totalVolCbm.toFixed(3)} CBM
+                        {formData.totalCartons} 箱 | {totalVolCbm.toFixed(3)} CBM
                     </div>
                 </div>
                 
@@ -248,11 +372,28 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
                         <input type="number" name="boxHeightCm" value={formData.boxHeightCm} onChange={handleChange} className={inputClass} />
                     </div>
                 </div>
-                <div>
-                    <label className={labelClass}>每箱数量 (Pcs/Box)</label>
-                    <div className="relative">
-                        <Package className="absolute left-3 top-3 text-gray-400" size={16} />
-                        <input required type="number" name="itemsPerBox" value={formData.itemsPerBox} onChange={handleChange} className={`${inputClass} pl-10`} placeholder="例如: 20" />
+                <div className="grid grid-cols-2 gap-4">
+                    <div>
+                        <label className={labelClass}>每箱数量 (Items/Box)</label>
+                        <div className="relative">
+                            <Package className="absolute left-3 top-3 text-gray-400" size={16} />
+                            <input required type="number" name="itemsPerBox" value={formData.itemsPerBox} onChange={handleChange} className={`${inputClass} pl-10`} placeholder="20" />
+                        </div>
+                    </div>
+                    {/* SWAPPED FIELD: Quantity (Units) is now here */}
+                    <div>
+                        <div className="flex justify-between items-center mb-1">
+                            <label className="block text-sm font-medium text-gray-700">备货总数 (Total Pcs)</label>
+                            <button 
+                                type="button"
+                                onClick={autoCalculateQuantity}
+                                className="text-[10px] text-blue-600 hover:underline flex items-center gap-1"
+                                title="点击根据箱数自动计算"
+                            >
+                                <Calculator size={10} /> 自动计算
+                            </button>
+                        </div>
+                        <input required type="number" name="quantity" value={formData.quantity} onChange={handleChange} className={`${inputClass} font-bold text-amber-700`} placeholder="0" />
                     </div>
                 </div>
              </div>

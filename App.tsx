@@ -1,3 +1,4 @@
+
 import React, { useState, useMemo, useEffect } from 'react';
 import { 
   LayoutDashboard, 
@@ -28,7 +29,10 @@ import {
   Settings,
   Database,
   Wifi,
-  WifiOff
+  WifiOff,
+  Zap,
+  AlertTriangle,
+  Hourglass
 } from 'lucide-react';
 import { ReplenishmentRecord } from './types';
 import { MOCK_DATA_INITIAL } from './constants';
@@ -127,9 +131,6 @@ function App() {
         return;
     }
 
-    // IMPORTANT: We listen to the WHOLE table and filter in JS. 
-    // This avoids issues where DELETE events don't carry the filter column (workspace_id)
-    // if 'REPLICA IDENTITY FULL' isn't set (although we try to set it in SQL).
     const channel = supabase
       .channel('table-db-changes') 
       .on(
@@ -161,10 +162,6 @@ function App() {
                    });
                }
            } else if (payload.eventType === 'DELETE') {
-               // For DELETE, we might check payload.old.id
-               // If Replica Identity is DEFAULT, we only get ID.
-               // We can't verify workspace_id easily unless we store a map of ID->Workspace locally or query.
-               // SAFE STRATEGY: If we have this ID in our local state, delete it.
                const deletedId = payload.old.id;
                if (deletedId) {
                    setRecords(prev => {
@@ -313,14 +310,16 @@ function App() {
   };
 
   const handleExportCSV = () => {
-    const headers = ['Date', 'Product', 'SKU', 'Qty', 'Method', 'Unit Cost(CNY)', 'Sales Price(USD)', 'Total Cost(USD)', 'Profit(USD)', 'Margin(%)', 'ROI(%)', 'Status'];
+    const headers = ['Date', 'Product', 'SKU', 'Lifecycle', 'Qty', 'DOS', 'Method', 'Unit Cost(CNY)', 'Sales Price(USD)', 'Total Cost(USD)', 'Profit(USD)', 'Margin(%)', 'ROI(%)', 'Status'];
     const rows = filteredRecords.map(r => {
       const m = calculateMetrics(r);
       return [
         r.date,
         `"${r.productName.replace(/"/g, '""')}"`,
         r.sku,
+        r.lifecycle || 'New',
         r.quantity,
+        m.daysOfSupply.toFixed(1),
         r.shippingMethod,
         r.unitPriceCNY,
         r.salesPriceUSD,
@@ -356,6 +355,17 @@ function App() {
       case 'Shipped': return '已发货';
       case 'Arrived': return '已到仓';
       default: return status;
+    }
+  };
+
+  const getLifecycleBadge = (status: string | undefined) => {
+    const s = status || 'New';
+    switch (s) {
+        case 'New': return { color: 'bg-blue-50 text-blue-600 border-blue-100', icon: '🌱', label: '新品' };
+        case 'Growth': return { color: 'bg-emerald-50 text-emerald-600 border-emerald-100', icon: '🚀', label: '成长' };
+        case 'Stable': return { color: 'bg-indigo-50 text-indigo-600 border-indigo-100', icon: '⚖️', label: '稳定' };
+        case 'Clearance': return { color: 'bg-red-50 text-red-600 border-red-100', icon: '📉', label: '清仓' };
+        default: return { color: 'bg-gray-50 text-gray-500', icon: '?', label: s };
     }
   };
 
@@ -449,10 +459,10 @@ function App() {
                     <table className="min-w-full divide-y divide-gray-100">
                       <thead className="bg-gray-50">
                         <tr>
-                          <th scope="col" className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">日期 / SKU</th>
+                          <th scope="col" className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">SKU / 阶段</th>
                           <th scope="col" className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">产品信息</th>
                           <th scope="col" className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">物流 (Vol & Wgt)</th>
-                          <th scope="col" className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">成本结构 (USD)</th>
+                          <th scope="col" className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">库存状态 (DOS)</th>
                           <th scope="col" className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">销售表现</th>
                           <th scope="col" className="px-6 py-4 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">利润与回报</th>
                         </tr>
@@ -460,6 +470,7 @@ function App() {
                       <tbody className="divide-y divide-gray-100">
                         {filteredRecords.map((record) => {
                           const m = calculateMetrics(record);
+                          const lifecycle = getLifecycleBadge(record.lifecycle);
                           return (
                             <tr 
                                 key={record.id} 
@@ -467,15 +478,15 @@ function App() {
                             >
                               <td className="px-6 py-4 whitespace-nowrap" onClick={() => openEditModal(record)}>
                                 <div className="text-sm text-gray-900 font-bold flex items-center gap-2">
-                                    {record.date}
+                                    <span className="font-mono">{record.sku}</span>
                                     <Edit className="w-3 h-3 text-gray-300 group-hover:text-blue-500 opacity-0 group-hover:opacity-100 transition-all" />
                                 </div>
-                                <div className="mt-2 flex items-center gap-2">
+                                <div className="mt-2 flex flex-col items-start gap-1.5">
+                                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium border ${lifecycle.color}`}>
+                                    {lifecycle.icon} {lifecycle.label}
+                                  </span>
                                   <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium border ${getStatusBadge(record.status)}`}>
                                     {getStatusLabel(record.status)}
-                                  </span>
-                                  <span className="text-xs text-gray-500 truncate max-w-[120px]" title={record.warehouse}>
-                                    {record.warehouse.split('/')[1] || record.warehouse}
                                   </span>
                                 </div>
                               </td>
@@ -493,7 +504,7 @@ function App() {
                                   </div>
                                   <div>
                                     <div className="text-sm font-medium text-gray-900">{record.productName}</div>
-                                    <div className="text-xs text-gray-500 font-mono mt-0.5">{record.sku}</div>
+                                    <div className="text-xs text-gray-400 mt-0.5">{record.date}</div>
                                     <div className="inline-flex items-center gap-2 mt-1.5 bg-gray-100 px-2 py-0.5 rounded text-xs text-gray-600">
                                        <span>Qty: {record.quantity}</span>
                                     </div>
@@ -520,18 +531,34 @@ function App() {
                               </td>
                               <td className="px-6 py-4 whitespace-nowrap" onClick={() => openEditModal(record)}>
                                 <div className="space-y-1">
-                                  <div className="flex justify-between w-36 text-xs text-gray-500">
-                                    <span>货值</span> <span className="font-mono">${m.productCostUSD.toFixed(2)}</span>
-                                  </div>
-                                  <div className="flex justify-between w-36 text-xs text-gray-500">
-                                    <span>头程</span> <span className="font-mono">${m.singleHeadHaulCostUSD.toFixed(2)}</span>
-                                  </div>
-                                  <div className="flex justify-between w-36 text-xs text-gray-500">
-                                    <span>尾+广</span> <span className="font-mono">${(record.lastMileCostUSD + record.adCostUSD).toFixed(2)}</span>
-                                  </div>
-                                  <div className="w-36 h-px bg-gray-100 my-1"></div>
-                                  <div className="flex justify-between w-36 text-xs font-bold text-gray-700">
-                                    <span>Total</span> <span>${m.totalCostPerUnitUSD.toFixed(2)}</span>
+                                  {m.stockStatus !== 'Unknown' ? (
+                                    <>
+                                        <div className="flex items-center gap-2">
+                                            {m.stockStatus === 'Critical' && <AlertTriangle size={14} className="text-red-500" />}
+                                            {m.stockStatus === 'Low' && <Hourglass size={14} className="text-yellow-500" />}
+                                            {m.stockStatus === 'Healthy' && <div className="w-2 h-2 rounded-full bg-green-500"></div>}
+                                            {m.stockStatus === 'Overstock' && <AlertTriangle size={14} className="text-orange-500" />}
+                                            
+                                            <span className={`text-xs font-bold ${
+                                                m.stockStatus === 'Critical' ? 'text-red-600' :
+                                                m.stockStatus === 'Low' ? 'text-yellow-700' :
+                                                m.stockStatus === 'Overstock' ? 'text-orange-600' :
+                                                'text-green-600'
+                                            }`}>
+                                                {m.daysOfSupply.toFixed(0)} 天周转
+                                            </span>
+                                        </div>
+                                        <div className="text-[10px] text-gray-400">
+                                            日销: {record.dailySales} / 现货: {record.quantity}
+                                        </div>
+                                    </>
+                                  ) : (
+                                    <span className="text-xs text-gray-400 italic">待输入日销量</span>
+                                  )}
+                                  
+                                  <div className="w-24 h-px bg-gray-100 my-1"></div>
+                                  <div className="flex justify-between w-24 text-xs text-gray-500">
+                                    <span>成本</span> <span className="font-mono">${m.totalCostPerUnitUSD.toFixed(1)}</span>
                                   </div>
                                 </div>
                               </td>
@@ -615,7 +642,7 @@ function App() {
            </div>
            <div>
              <h1 className="font-bold text-lg tracking-tight">探行科技</h1>
-             <p className="text-xs text-slate-400">智能备货系统 v2.1</p>
+             <p className="text-xs text-slate-400">智能备货系统 v2.2</p>
            </div>
         </div>
         

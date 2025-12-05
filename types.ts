@@ -1,4 +1,7 @@
+
 export type ShippingMethod = 'Sea' | 'Air';
+
+export type LifecycleStatus = 'New' | 'Growth' | 'Stable' | 'Clearance';
 
 // Core data model matching your business logic
 export interface ReplenishmentRecord {
@@ -8,8 +11,12 @@ export interface ReplenishmentRecord {
   sku: string;
   imageUrl?: string;
   
+  // Lifecycle Management (New)
+  lifecycle: LifecycleStatus;
+  
   // Base Product Data
   quantity: number;
+  dailySales: number; // 预估日均销量 (用于计算库存周转)
   unitPriceCNY: number; // 采购单价 (RMB)
   unitWeightKg: number; // 单个重量
   
@@ -17,7 +24,8 @@ export interface ReplenishmentRecord {
   boxLengthCm: number;
   boxWidthCm: number;
   boxHeightCm: number;
-  itemsPerBox: number; // 每箱装多少个
+  itemsPerBox: number; // 每箱装多少个 (Reference only)
+  totalCartons: number; // 总箱数 (Manual override)
 
   // Logistics Data (First Leg / Head Haul)
   shippingMethod: ShippingMethod;
@@ -58,4 +66,8 @@ export interface CalculatedMetrics {
   estimatedProfitUSD: number; // Sales - Total Cost
   marginRate: number; // Profit / Sales (Gross Margin)
   roi: number; // Profit / Total Cost (Return on Investment)
+  
+  // Inventory Health Metrics
+  daysOfSupply: number; // Quantity / Daily Sales
+  stockStatus: 'Critical' | 'Low' | 'Healthy' | 'Overstock' | 'Unknown';
 }

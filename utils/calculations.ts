@@ -1,3 +1,4 @@
+
 import { ReplenishmentRecord, CalculatedMetrics } from '../types';
 import { EXCHANGE_RATE } from '../constants';
 
@@ -6,9 +7,15 @@ export const calculateMetrics = (record: ReplenishmentRecord): CalculatedMetrics
   const totalWeightKg = record.quantity * record.unitWeightKg;
 
   // 2. Packing Logic
-  // Avoid division by zero
+  // Fallback for legacy records or missing input: calculate based on itemsPerBox
   const safeItemsPerBox = record.itemsPerBox > 0 ? record.itemsPerBox : 1;
-  const totalCartons = Math.ceil(record.quantity / safeItemsPerBox);
+  const calculatedCartons = Math.ceil(record.quantity / safeItemsPerBox);
+  
+  // Use manual totalCartons if available (even if 0, though normally >0), otherwise fallback
+  // Checking for undefined/null just in case of data migration issues
+  const totalCartons = (record.totalCartons !== undefined && record.totalCartons !== null && !isNaN(record.totalCartons) && record.totalCartons !== 0)
+    ? record.totalCartons 
+    : calculatedCartons;
   
   // Volume CBM Calculation: (L * W * H) / 1,000,000 * TotalCartons
   const singleBoxVolumeCbm = (record.boxLengthCm * record.boxWidthCm * record.boxHeightCm) / 1000000;
@@ -55,6 +62,19 @@ export const calculateMetrics = (record: ReplenishmentRecord): CalculatedMetrics
   // 11. ROI (Profit / Total Cost)
   const roi = totalCostPerUnitUSD > 0 ? (estimatedProfitUSD / totalCostPerUnitUSD) * 100 : 0;
 
+  // 12. Inventory Health (Visual Alerts)
+  // Days of Supply (DOS) = Current Qty / Daily Sales
+  let daysOfSupply = 0;
+  let stockStatus: CalculatedMetrics['stockStatus'] = 'Unknown';
+  
+  if (record.dailySales > 0) {
+      daysOfSupply = record.quantity / record.dailySales;
+      if (daysOfSupply < 15) stockStatus = 'Critical';
+      else if (daysOfSupply < 30) stockStatus = 'Low';
+      else if (daysOfSupply > 90) stockStatus = 'Overstock';
+      else stockStatus = 'Healthy';
+  }
+
   return {
     totalWeightKg,
     totalVolumeCbm,
@@ -69,7 +89,9 @@ export const calculateMetrics = (record: ReplenishmentRecord): CalculatedMetrics
     totalCostPerUnitUSD,
     estimatedProfitUSD,
     marginRate,
-    roi
+    roi,
+    daysOfSupply,
+    stockStatus
   };
 };
 
