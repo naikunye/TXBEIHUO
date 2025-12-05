@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { 
   Cloud, 
@@ -58,7 +59,7 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
   currentWorkspaceId, 
   onConnect, 
   onDisconnect, 
-  isSyncing 
+  isSyncing
 }) => {
   const [mode, setMode] = useState<'connect' | 'config'>('connect'); 
   const [configUrl, setConfigUrl] = useState('');
@@ -70,8 +71,6 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
   const [isConfigured, setIsConfigured] = useState(false);
   const [copied, setCopied] = useState(false);
   const [showSql, setShowSql] = useState(false);
-  
-  // 新增状态：保存成功等待刷新
   const [saveSuccess, setSaveSuccess] = useState(false);
 
   // Initialize state when opening
@@ -79,7 +78,7 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
     if (isOpen) {
         const configured = isSupabaseConfigured();
         setIsConfigured(configured);
-        setSaveSuccess(false); // Reset success state
+        setSaveSuccess(false); 
         
         if (!configured) {
             setMode('config');
@@ -123,8 +122,8 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
 
           saveSupabaseConfig(url, key);
           setIsConfigured(true);
-          setSaveSuccess(true); // Show success UI instead of alert/reload
-          setShowSql(true); // Force show SQL for user to see
+          setSaveSuccess(true); 
+          setShowSql(true); 
       } catch (err: any) {
           console.error(err);
           setErrorMsg(err.message || "验证失败，请检查配置");
@@ -170,7 +169,7 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
          <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 flex-shrink-0 bg-white z-20">
              <div className="flex items-center gap-2 text-gray-800">
                  <Settings className="text-gray-500" size={20} />
-                 <h2 className="font-bold text-lg">系统设置</h2>
+                 <h2 className="font-bold text-lg">系统设置 (Settings)</h2>
              </div>
              <button 
                 type="button" 
@@ -370,7 +369,7 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
 
              <div className="border-t border-gray-100"></div>
 
-             {/* Section 2: Logistics Tracking */}
+             {/* Section 3: Logistics Tracking */}
              <div>
                  <div className="flex items-center gap-2 mb-4">
                      <Truck className="text-amber-600" size={20} />

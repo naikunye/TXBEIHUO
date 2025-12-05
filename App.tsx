@@ -37,7 +37,8 @@ import {
   Bot,
   Megaphone,
   Compass,
-  Wand2
+  Wand2,
+  FileJson
 } from 'lucide-react';
 import { ReplenishmentRecord } from './types';
 import { MOCK_DATA_INITIAL } from './constants';
@@ -51,7 +52,9 @@ import { HomeOverview } from './components/HomeOverview';
 import { CloudConnect } from './components/CloudConnect'; 
 import { AiChatModal } from './components/AiChatModal'; 
 import { MarketingModal } from './components/MarketingModal'; 
-import { MarketingDashboard } from './components/MarketingDashboard'; // New Dashboard
+import { MarketingDashboard } from './components/MarketingDashboard';
+import { DataBackupModal } from './components/DataBackupModal';
+import { ToastContainer, ToastMessage, ToastType } from './components/Toast'; // Import Toast
 import { analyzeInventory, generateAdStrategy, generateSelectionStrategy, generateMarketingContent } from './services/geminiService';
 import { supabase, isSupabaseConfigured } from './lib/supabaseClient';
 
@@ -88,9 +91,24 @@ function App() {
   const [marketingContent, setMarketingContent] = useState<string | null>(null);
   const [marketingProduct, setMarketingProduct] = useState('');
 
+  // --- Backup Modal State ---
+  const [isBackupOpen, setIsBackupOpen] = useState(false);
+
   // Search and Filter State
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'All' | 'Planning' | 'Shipped' | 'Arrived'>('All');
+
+  // --- Toast State ---
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
+
+  const addToast = (message: string, type: ToastType = 'info') => {
+    const id = Date.now().toString();
+    setToasts((prev) => [...prev, { id, message, type }]);
+  };
+
+  const removeToast = (id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  };
 
   // --- Storage Effects ---
 
@@ -109,6 +127,7 @@ function App() {
                 if (error) {
                     console.error("Supabase load error:", error);
                     setSyncStatus('disconnected');
+                    addToast(`无法加载云端数据: ${error.message}`, 'error');
                 } else if (data) {
                     const cloudRecords = data.map(row => row.json_content as ReplenishmentRecord);
                     cloudRecords.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
@@ -118,6 +137,7 @@ function App() {
             } catch (err) {
                 console.error("Connection failed:", err);
                 setSyncStatus('disconnected');
+                addToast("连接云端数据库失败，请检查网络", 'error');
             }
         } else {
             // --- Local Storage Load ---
@@ -177,6 +197,8 @@ function App() {
                            return newList.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
                        }
                    });
+                   // Only notify for remote updates (optional, might be too noisy if self-triggered)
+                   // addToast("数据已同步更新", 'info');
                }
            } else if (payload.eventType === 'DELETE') {
                const deletedId = payload.old.id;
@@ -198,6 +220,7 @@ function App() {
              setSyncStatus('connected');
           } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
              setSyncStatus('disconnected');
+             addToast("实时同步连接中断", 'warning');
           }
       });
 
@@ -259,6 +282,7 @@ function App() {
     });
 
     closeModal();
+    addToast(editingRecord ? "产品更新成功" : "新产品已添加", 'success');
 
     // 2. Cloud Persistence
     if (workspaceId && isSupabaseConfigured()) {
@@ -274,7 +298,7 @@ function App() {
             if (error) throw error;
         } catch (err: any) {
             console.error("Supabase save error:", err);
-            alert("保存到云端失败，请检查网络连接");
+            addToast("⚠️ 保存到云端失败，请检查网络", 'error');
         }
     }
   };
@@ -285,6 +309,7 @@ function App() {
 
       // 1. Optimistic Delete
       setRecords(prev => prev.filter(r => r.id !== id));
+      addToast("记录已删除", 'info');
       
       // 2. Cloud Delete
       if (workspaceId && isSupabaseConfigured()) {
@@ -297,6 +322,7 @@ function App() {
               if (error) throw error;
           } catch(err) {
               console.error("Delete failed", err);
+              addToast("⚠️ 云端删除失败，请稍后重试", 'warning');
           }
       }
   };
@@ -316,6 +342,13 @@ function App() {
     setEditingRecord(null);
   };
 
+  // --- Handlers for Data Import ---
+  const handleImportData = (newRecords: ReplenishmentRecord[]) => {
+      setRecords(newRecords);
+      addToast(`成功导入 ${newRecords.length} 条数据`, 'success');
+  };
+
+  // --- Strategy Handlers ---
   const handleSmartAnalysis = async () => {
     setIsAnalyzing(true);
     setAiAnalysis(null);
@@ -330,6 +363,13 @@ function App() {
     
     if (currentView !== 'inventory') {
         setCurrentView('inventory');
+    }
+    
+    // Check if result contains error class
+    if (result.includes("border-red-200") || result.includes("border-amber-200")) {
+        addToast("AI 分析服务遇到问题", 'warning');
+    } else {
+        addToast("AI 诊断报告生成完毕", 'success');
     }
   };
 
@@ -348,6 +388,10 @@ function App() {
     if (currentView !== 'inventory') {
         setCurrentView('inventory');
     }
+    
+    if (result.includes("border-red-200") || result.includes("border-amber-200")) {
+        addToast("AI 服务暂时不可用", 'warning');
+    }
   };
 
   const handleSelectionStrategy = async () => {
@@ -365,6 +409,10 @@ function App() {
     if (currentView !== 'inventory') {
         setCurrentView('inventory');
     }
+    
+    if (result.includes("border-red-200") || result.includes("border-amber-200")) {
+         addToast("AI 服务暂时不可用", 'warning');
+    }
   };
 
   // --- New Marketing Handler (Wrapped) ---
@@ -376,6 +424,10 @@ function App() {
       const content = await generateMarketingContent(record);
       const cleanContent = content.replace(/^```html/, '').replace(/```$/, '');
       setMarketingContent(cleanContent);
+      
+      if (content.includes("border-red-200") || content.includes("border-amber-200")) {
+         addToast("内容生成失败", 'error');
+      }
   };
 
   // Wrapper for table click event
@@ -413,6 +465,7 @@ function App() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    addToast("CSV 报表已下载", 'success');
   };
 
   const getStatusBadge = (status: string) => {
@@ -737,7 +790,7 @@ function App() {
            </div>
            <div>
              <h1 className="font-bold text-lg tracking-tight">探行科技</h1>
-             <p className="text-xs text-slate-400">智能备货系统 v2.2</p>
+             <p className="text-xs text-slate-400">智能备货系统 v3.0 AI Pro</p>
            </div>
         </div>
         
@@ -801,6 +854,14 @@ function App() {
           </button>
           
           <button 
+             onClick={() => setIsBackupOpen(true)}
+             className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all text-slate-400 hover:bg-slate-800 hover:text-white`}
+          >
+            <FileJson size={20} />
+            <span className="font-medium">数据备份</span>
+          </button>
+
+          <button 
              onClick={() => setIsSettingsOpen(true)}
              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
                 isSettingsOpen
@@ -845,7 +906,11 @@ function App() {
         </header>
 
         {/* Scrollable Canvas */}
-        <main className="flex-1 overflow-y-auto p-4 sm:p-8 bg-gray-100">
+        <main className="flex-1 overflow-y-auto p-4 sm:p-8 bg-gray-100 relative">
+          
+          {/* TOAST CONTAINER - Global Notification */}
+          <ToastContainer toasts={toasts} removeToast={removeToast} />
+
           <div className="max-w-7xl mx-auto">
             
             {/* Header Area */}
@@ -970,6 +1035,14 @@ function App() {
          onClose={() => setMarketingModalOpen(false)}
          content={marketingContent}
          productName={marketingProduct}
+      />
+
+      {/* Backup Modal */}
+      <DataBackupModal
+         isOpen={isBackupOpen}
+         onClose={() => setIsBackupOpen(false)}
+         records={records}
+         onImportData={handleImportData}
       />
     </div>
   );

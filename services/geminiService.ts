@@ -5,8 +5,49 @@ import { calculateMetrics } from "../utils/calculations";
 
 const getAiClient = () => {
   // Use a fallback or env key. Ideally, this comes from process.env.API_KEY
-  // For this demo environment, we assume process.env.API_KEY is available via the build system or mapped.
   return new GoogleGenAI({ apiKey: process.env.API_KEY });
+};
+
+// Helper to format error messages
+const formatErrorHtml = (error: any, serviceName: string) => {
+    const errString = error.toString();
+    let title = "分析服务暂时中断";
+    let message = "AI 响应超时或连接不稳定，请稍后重试。";
+    let solution = "请检查网络连接或 API Key 配置。";
+    let colorClass = "red";
+
+    if (errString.includes("401") || errString.includes("API key not valid")) {
+        title = "API Key 无效或未配置";
+        message = "系统无法连接到 Google Gemini 服务。";
+        solution = "请确认环境变量 API_KEY 已正确设置且未过期。";
+    } else if (errString.includes("429") || errString.includes("quota")) {
+        title = "AI 调用额度已耗尽";
+        message = "当前 API Key 的调用配额已达上限 (Quota Exceeded)。";
+        solution = "请升级 API 套餐或等待配额重置。";
+        colorClass = "amber";
+    } else if (errString.includes("503") || errString.includes("overloaded")) {
+        title = "AI 服务繁忙";
+        message = "Google Gemini 服务当前负载过高。";
+        solution = "请稍等 1-2 分钟后再次尝试。";
+        colorClass = "orange";
+    } else if (errString.includes("500")) {
+        title = "AI 服务内部错误";
+        message = "模型处理请求时发生未知错误。";
+        solution = "请尝试减少请求的数据量重试。";
+    }
+
+    // Return a styled HTML card
+    return `
+      <div class="bg-${colorClass}-50 p-6 rounded-xl border border-${colorClass}-200 text-${colorClass}-800 shadow-sm">
+        <div class="flex items-center gap-3 mb-2">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-${colorClass}-600"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
+            <h4 class="font-bold text-lg">${title}</h4>
+        </div>
+        <p class="text-sm font-medium mb-1">${message}</p>
+        <p class="text-xs opacity-80 bg-${colorClass}-100/50 p-2 rounded inline-block">💡 建议: ${solution}</p>
+        <p class="text-[10px] text-${colorClass}-400 mt-2 font-mono">Service: ${serviceName}</p>
+      </div>
+    `;
 };
 
 // Simplify data for AI token limit efficiency
@@ -81,12 +122,7 @@ export const analyzeInventory = async (records: ReplenishmentRecord[]) => {
     return response.text;
   } catch (error) {
     console.error("Gemini Analysis Failed:", error);
-    return `
-      <div class="bg-red-50 p-4 rounded-xl border border-red-100 text-red-700">
-        <h4 class="font-bold">分析服务暂时不可用</h4>
-        <p class="text-sm mt-1">请检查 API_KEY 环境变量配置。</p>
-      </div>
-    `;
+    return formatErrorHtml(error, "Inventory Analysis");
   }
 };
 
@@ -174,7 +210,7 @@ export const generateAdStrategy = async (records: ReplenishmentRecord[]) => {
     return response.text;
   } catch (error) {
     console.error("Gemini Ad Strategy Failed:", error);
-    return "分析服务暂时不可用，请稍后再试。";
+    return formatErrorHtml(error, "Ad Strategy");
   }
 };
 
@@ -247,7 +283,7 @@ export const generateSelectionStrategy = async (records: ReplenishmentRecord[]) 
     return response.text;
   } catch (error) {
     console.error("Gemini Selection Strategy Failed:", error);
-    return "分析服务暂时不可用，请稍后再试。";
+    return formatErrorHtml(error, "Selection Strategy");
   }
 };
 
@@ -300,7 +336,7 @@ export const generateMarketingContent = async (record: ReplenishmentRecord) => {
         return response.text;
     } catch (error) {
         console.error("Marketing Gen Failed", error);
-        return "生成失败，请重试。";
+        return formatErrorHtml(error, "Marketing Content");
     }
 }
 
@@ -310,8 +346,6 @@ export const askAiAssistant = async (message: string, records: ReplenishmentReco
         const dataContext = JSON.stringify(prepareDataContext(records));
 
         // Construct a prompt that includes context and history
-        // Since the SDK is stateless for simple generateContent, we simulate chat by appending history
-        
         let promptConstruction = `
             System: 你是探行科技的供应链 AI 助手 (Copilot)。
             你拥有当前用户的实时备货数据权限。
@@ -340,8 +374,11 @@ export const askAiAssistant = async (message: string, records: ReplenishmentReco
 
         return response.text;
 
-    } catch (error) {
+    } catch (error: any) {
         console.error("AI Chat Failed:", error);
+        // Simple error message for chat, different from HTML cards
+        if (error.toString().includes("401")) return "API Key 无效。请检查设置。";
+        if (error.toString().includes("429")) return "AI 服务繁忙（配额耗尽），请稍后再试。";
         return "抱歉，我现在的连接有点不稳定，请稍后再试。";
     }
 }
