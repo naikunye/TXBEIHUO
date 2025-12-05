@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Cloud, CloudLightning, CloudOff, Users, CheckCircle2, Loader2, LogOut, Database, AlertCircle, Settings, Key, Link } from 'lucide-react';
 import { supabase, saveSupabaseConfig, clearSupabaseConfig, isSupabaseConfigured } from '../lib/supabaseClient';
+import { createClient } from '@supabase/supabase-js';
 
 interface CloudConnectProps {
   currentWorkspaceId: string | null;
@@ -37,19 +38,58 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
     }
   }, []);
 
-  // 1. 保存 Supabase URL/Key
-  const handleSaveConfig = (e: React.FormEvent) => {
+  // 1. 验证并保存 Supabase URL/Key
+  const handleVerifyAndSave = async (e: React.FormEvent) => {
       e.preventDefault();
-      if (!configUrl.trim() || !configKey.trim()) {
+      
+      const url = configUrl.trim();
+      const key = configKey.trim();
+
+      if (!url || !key) {
           setErrorMsg("请输入完整的 URL 和 Anon Key");
           return;
       }
       // 简单验证格式
-      if (!configUrl.startsWith('http')) {
+      if (!url.startsWith('http')) {
           setErrorMsg("URL 必须以 http 或 https 开头");
           return;
       }
-      saveSupabaseConfig(configUrl.trim(), configKey.trim());
+
+      setIsLoading(true);
+      setErrorMsg(null);
+
+      try {
+          // 创建一个临时的 client 来测试连接，不影响全局实例
+          const tempClient = createClient(url, key);
+          
+          // 尝试查询数据表，只取一行，甚至不取数据只检查连接
+          const { error } = await tempClient
+              .from('replenishment_data')
+              .select('id')
+              .limit(1);
+
+          if (error) {
+             console.error("Verification error:", error);
+             
+             // 分析错误类型
+             if (error.code === '42P01' || error.message.includes('does not exist')) {
+                 throw new Error("连接成功，但数据库表 'replenishment_data' 不存在。请在 Supabase SQL Editor 中运行建表代码。");
+             } else if (error.code === 'PGRST301' || error.message.includes('JWT') || error.message.includes('API key') || error.code === '28P01') {
+                 throw new Error("认证失败：API Key 无效或不匹配。请检查 Key 是否正确。");
+             } else if (error.message.includes('FetchError') || error.message.includes('Failed to fetch')) {
+                 throw new Error("网络连接失败：无法访问该 Supabase URL，请检查网址。");
+             } else {
+                 throw new Error(`连接验证失败: ${error.message}`);
+             }
+          }
+
+          // 如果没有抛出错误，说明连接成功且表存在
+          saveSupabaseConfig(url, key);
+          
+      } catch (err: any) {
+          setErrorMsg(err.message || "未知错误，请重试。");
+          setIsLoading(false); // 只有失败时才取消 loading，成功时因为会刷新页面，保持 loading 体验更好
+      }
   };
 
   // 2. 连接特定 Workspace
@@ -61,21 +101,19 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
     setErrorMsg(null);
 
     try {
-        // 尝试连接 Supabase 进行验证
+        // 使用全局 client (已经配置好) 进行连接
         const { error } = await supabase
             .from('replenishment_data')
             .select('id')
             .limit(1);
 
         if (error) {
+            // 这里通常不应该发生，因为 Save 阶段已经验证过了。
+            // 但防止 Save 后数据库被删的情况
             if (error.code === '42P01') {
-                 throw new Error("连接成功，但数据库表不存在。请在 Supabase SQL Editor 中运行建表脚本。");
-            } else if (error.code === 'PGRST301' || error.message.includes('JWT') || error.message.includes('API key')) {
-                 throw new Error("认证失败。请检查配置的 URL 和 Key 是否正确。");
-            } else if (error.message.includes('FetchError') || error.message.includes('Failed to fetch')) {
-                 throw new Error("网络错误，无法连接到 Supabase URL。");
+                 throw new Error("数据库表不存在，请重新配置数据库或运行 SQL。");
             } else {
-                 console.warn("Supabase check warning:", error);
+                 throw new Error("无法读取数据，请检查网络或重新配置数据库。");
             }
         }
 
@@ -202,7 +240,7 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
               <div className="p-6">
                   {/* --- Mode: Config URL/Key --- */}
                   {mode === 'config' && (
-                      <form onSubmit={handleSaveConfig} className="space-y-4">
+                      <form onSubmit={handleVerifyAndSave} className="space-y-4">
                           <div>
                               <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Project URL</label>
                               <div className="relative">
@@ -232,16 +270,31 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
                               </div>
                           </div>
 
-                          {errorMsg && <p className="text-xs text-red-500 bg-red-50 p-2 rounded">{errorMsg}</p>}
+                          {errorMsg && (
+                              <div className="bg-red-50 border border-red-100 p-3 rounded-lg flex gap-2 items-start">
+                                  <AlertCircle size={16} className="text-red-500 flex-shrink-0 mt-0.5" />
+                                  <div className="text-xs text-red-600 leading-tight">
+                                      {errorMsg}
+                                  </div>
+                              </div>
+                          )}
 
                           <button 
                             type="submit" 
-                            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl transition-all shadow-lg shadow-blue-200"
+                            disabled={isLoading}
+                            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl transition-all shadow-lg shadow-blue-200 flex items-center justify-center gap-2"
                           >
-                              保存配置
+                               {isLoading ? (
+                                  <>
+                                    <Loader2 size={18} className="animate-spin" />
+                                    验证连接并保存...
+                                  </>
+                              ) : (
+                                  '验证并保存配置'
+                              )}
                           </button>
                           
-                          {isConfigured && (
+                          {isConfigured && !isLoading && (
                               <button 
                                 type="button" 
                                 onClick={() => setMode('connect')}
@@ -250,7 +303,7 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
                                   返回连接
                               </button>
                           )}
-                          {isConfigured && (
+                          {isConfigured && !isLoading && (
                               <button 
                                 type="button" 
                                 onClick={handleClearConfig}
@@ -275,11 +328,11 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
                                       value={inputId}
                                       onChange={(e) => setInputId(e.target.value)}
                                       className="w-full pl-9 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-100 focus:border-emerald-400 outline-none"
-                                      placeholder="例如: team-alpha"
+                                      placeholder="例如: team-01"
                                   />
                               </div>
                               <p className="text-[10px] text-gray-400 mt-1">
-                                  用于区分同一数据库下的不同团队数据。
+                                  任意输入一个 ID (如 'team-a')，与同事分享此 ID 即可看到相同数据。
                               </p>
                           </div>
                           
