@@ -8,15 +8,17 @@ import {
   Check, 
   Database, 
   Loader2, 
-  LogOut, 
   AlertCircle,
-  Key
+  Key,
+  Terminal,
+  RefreshCw
 } from 'lucide-react';
 import { saveSupabaseConfig, isSupabaseConfigured, getSupabaseConfig } from '../lib/supabaseClient';
 import { createClient } from '@supabase/supabase-js';
 
-const INIT_SQL = `-- 1. 创建数据表
-create table if not exists replenishment_data (
+// 深度优化后的 SQL 脚本
+const INIT_SQL = `-- 1. 创建数据表 (如果不存在)
+create table if not exists public.replenishment_data (
   id text primary key,
   workspace_id text not null,
   json_content jsonb not null,
@@ -24,13 +26,22 @@ create table if not exists replenishment_data (
 );
 
 -- 2. 创建索引
-create index if not exists idx_workspace_id on replenishment_data(workspace_id);
+create index if not exists idx_workspace_id on public.replenishment_data(workspace_id);
 
--- 3. 开启 Realtime (关键步骤)
-alter publication supabase_realtime add table replenishment_data;
+-- 3. [关键] 开启 Realtime 广播
+do $$
+begin
+  alter publication supabase_realtime add table public.replenishment_data;
+exception when duplicate_object then
+  null;
+end;
+$$;
 
--- 4. 关闭 RLS (允许读写)
-alter table replenishment_data disable row level security;`;
+-- 4. [关键] 设置 Replica Identity Full
+alter table public.replenishment_data replica identity full;
+
+-- 5. 关闭 RLS (允许所有读写)
+alter table public.replenishment_data disable row level security;`;
 
 interface CloudConnectProps {
   isOpen: boolean;
@@ -58,21 +69,27 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isConfigured, setIsConfigured] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [showSql, setShowSql] = useState(false);
+  
+  // 新增状态：保存成功等待刷新
+  const [saveSuccess, setSaveSuccess] = useState(false);
 
   // Initialize state when opening
   useEffect(() => {
     if (isOpen) {
         const configured = isSupabaseConfigured();
         setIsConfigured(configured);
-        // If not configured, force config mode. Otherwise default to connect mode.
+        setSaveSuccess(false); // Reset success state
+        
         if (!configured) {
             setMode('config');
+            setShowSql(true); 
         } else {
             setMode('connect');
+            setShowSql(false);
         }
         setErrorMsg(null);
         
-        // Pre-fill existing config if available (for editing)
         if (configured) {
             const current = getSupabaseConfig();
             setConfigUrl(current.url);
@@ -100,17 +117,14 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
           const tempClient = createClient(url, key);
           const { error } = await tempClient.from('replenishment_data').select('id').limit(1);
           
-          // Allow error 42P01 (table undefined) as we provide SQL, but block auth errors
           if (error && (error.code === 'PGRST301' || error.message.includes('JWT') || error.code === '28P01')) {
                throw new Error("认证失败：API Key 无效");
-          } else if (error && error.code !== '42P01') {
-               // Log other errors but might still be connectivity issues
-               console.warn("Connection warning:", error);
-          }
+          } 
 
           saveSupabaseConfig(url, key);
           setIsConfigured(true);
-          setMode('connect');
+          setSaveSuccess(true); // Show success UI instead of alert/reload
+          setShowSql(true); // Force show SQL for user to see
       } catch (err: any) {
           console.error(err);
           setErrorMsg(err.message || "验证失败，请检查配置");
@@ -119,11 +133,15 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
       }
   };
 
+  const handleReload = () => {
+      window.location.reload();
+  };
+
   const handleConnectWorkspace = (e: React.FormEvent) => {
       e.preventDefault();
       if (inputId.trim()) {
           onConnect(inputId.trim());
-          // We intentionally don't close automatically so user sees the "Connected" state
+          onClose(); 
       }
   };
 
@@ -136,7 +154,6 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
   };
 
   const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
-      // Close only if clicking the background overlay, not the modal content
       if (e.target === e.currentTarget) {
           onClose();
       }
@@ -144,13 +161,13 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
 
   return (
     <div 
-        className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40 backdrop-blur-sm p-4 animate-fade-in"
+        className="fixed inset-0 z-[100] flex items-center justify-center bg-black bg-opacity-40 backdrop-blur-sm p-4 animate-fade-in"
         onClick={handleBackdropClick}
     >
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col relative max-h-[90vh]">
          
          {/* Header */}
-         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 flex-shrink-0 bg-white z-10">
+         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 flex-shrink-0 bg-white z-20">
              <div className="flex items-center gap-2 text-gray-800">
                  <Settings className="text-gray-500" size={20} />
                  <h2 className="font-bold text-lg">系统设置</h2>
@@ -158,7 +175,7 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
              <button 
                 type="button" 
                 onClick={onClose} 
-                className="p-2 hover:bg-gray-100 rounded-full text-gray-400 hover:text-gray-600 transition-colors"
+                className="p-2 hover:bg-gray-100 rounded-full text-gray-400 hover:text-gray-600 transition-colors z-30"
              >
                  <X size={20} />
              </button>
@@ -173,8 +190,43 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
                      <h3 className="font-bold text-gray-800">云端协作 (Supabase)</h3>
                  </div>
 
-                 {/* State: Connected */}
-                 {currentWorkspaceId ? (
+                 {saveSuccess ? (
+                     <div className="bg-green-50 border border-green-200 rounded-xl p-6 text-center space-y-4 animate-fade-in">
+                        <div className="flex justify-center">
+                            <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center text-green-600 shadow-sm">
+                                <Check size={24} strokeWidth={3} />
+                            </div>
+                        </div>
+                        <div>
+                            <h4 className="text-green-800 font-bold text-lg">连接验证成功！</h4>
+                            <p className="text-green-700 text-sm mt-2">
+                                请务必复制下方的 SQL 初始化脚本并在 Supabase SQL Editor 中运行，以确保数据同步功能正常。
+                            </p>
+                        </div>
+                        
+                        <div className="bg-slate-900 rounded-lg p-3 text-left relative group my-2">
+                            <button 
+                                type="button"
+                                onClick={() => { navigator.clipboard.writeText(INIT_SQL); alert("SQL 已复制"); }}
+                                className="absolute top-2 right-2 p-1 bg-white/10 hover:bg-white/20 rounded text-white text-xs"
+                            >
+                                复制
+                            </button>
+                            <pre className="text-[10px] text-green-400 overflow-x-auto h-20 custom-scrollbar font-mono">
+                                {INIT_SQL}
+                            </pre>
+                        </div>
+
+                        <button 
+                           onClick={handleReload}
+                           className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded-lg shadow-lg shadow-green-200 flex items-center justify-center gap-2"
+                        >
+                           <RefreshCw size={18} />
+                           完成并重启系统
+                        </button>
+                     </div>
+                 ) : currentWorkspaceId ? (
+                     /* State: Connected */
                      <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-6 text-center space-y-4 animate-fade-in">
                          <div className="flex justify-center">
                             <div className="w-12 h-12 bg-emerald-100 rounded-full flex items-center justify-center text-emerald-600 shadow-sm">
@@ -257,9 +309,34 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
                                      {isLoading ? <Loader2 className="animate-spin" size={16} /> : null}
                                      {isLoading ? '验证中...' : '保存配置'}
                                  </button>
-                                 <div className="text-[10px] text-gray-400 text-center">
-                                     首次使用？请在 Supabase SQL Editor 执行初始化脚本。
-                                     <button type="button" onClick={() => { navigator.clipboard.writeText(INIT_SQL); alert("SQL 已复制到剪贴板"); }} className="text-blue-500 ml-1 hover:underline font-medium">复制 SQL</button>
+                                 
+                                 <div className="pt-2">
+                                    <button 
+                                        type="button" 
+                                        onClick={() => setShowSql(!showSql)}
+                                        className="text-xs text-blue-500 flex items-center gap-1 hover:underline mx-auto mb-2"
+                                    >
+                                        <Terminal size={12} />
+                                        {showSql ? '隐藏 SQL 脚本' : '查看 Supabase 初始化 SQL'}
+                                    </button>
+                                    
+                                    {showSql && (
+                                        <div className="bg-slate-900 rounded-lg p-3 relative group">
+                                            <div className="absolute top-2 right-2 flex gap-2">
+                                                 <button 
+                                                    type="button"
+                                                    onClick={() => { navigator.clipboard.writeText(INIT_SQL); alert("SQL 已复制"); }}
+                                                    className="p-1.5 bg-white/10 hover:bg-white/20 rounded text-white transition-colors text-xs"
+                                                >
+                                                    {copied ? '已复制' : '复制'}
+                                                </button>
+                                            </div>
+                                            <p className="text-[10px] text-gray-400 mb-1">请在 Supabase SQL Editor 中执行：</p>
+                                            <pre className="text-[10px] text-green-400 overflow-x-auto whitespace-pre-wrap font-mono leading-relaxed h-24 custom-scrollbar">
+                                                {INIT_SQL}
+                                            </pre>
+                                        </div>
+                                    )}
                                  </div>
                              </form>
                          ) : (
@@ -270,13 +347,13 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
                                      </div>
                                      <h4 className="font-bold text-gray-800">连接工作区</h4>
                                      <p className="text-xs text-gray-500">
-                                         输入团队 ID (如 "Team-A") 以同步数据，或
+                                         输入团队 ID 以同步数据
                                          <button type="button" onClick={() => setMode('config')} className="text-blue-500 hover:underline ml-1">修改配置</button>
                                      </p>
                                  </div>
                                  <input 
                                     type="text"
-                                    placeholder="输入 Workspace ID..."
+                                    placeholder="输入 Workspace ID (如: Team1)"
                                     className="w-full p-3 rounded-lg border border-gray-300 text-center font-mono text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none transition-all"
                                     value={inputId}
                                     onChange={e => setInputId(e.target.value)}

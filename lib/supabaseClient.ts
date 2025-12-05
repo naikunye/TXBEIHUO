@@ -47,20 +47,16 @@ export const isSupabaseConfigured = () => {
     return !!(config.url && config.key && config.url !== 'https://placeholder.supabase.co');
 };
 
-// 辅助函数：保存配置并刷新页面以生效
+// 辅助函数：保存配置 (由调用者决定是否刷新)
 export const saveSupabaseConfig = (url: string, key: string) => {
     localStorage.setItem(STORAGE_KEY_URL, url);
     localStorage.setItem(STORAGE_KEY_KEY, key);
-    // 关键修复：修改配置时，必须清除当前的工作区 ID，防止连接到新库时出现 ID 不匹配或权限错误
-    localStorage.removeItem(STORAGE_KEY_WORKSPACE);
-    window.location.reload(); 
+    localStorage.removeItem(STORAGE_KEY_WORKSPACE); // 清除旧的工作区，防止错乱
 };
 
-// 辅助函数：清除配置
+// 辅助函数：清除配置 (由调用者决定是否刷新)
 export const clearSupabaseConfig = () => {
     localStorage.removeItem(STORAGE_KEY_URL);
     localStorage.removeItem(STORAGE_KEY_KEY);
-    // 关键修复：清除配置时，同时也清除工作区 ID
     localStorage.removeItem(STORAGE_KEY_WORKSPACE);
-    window.location.reload();
 };

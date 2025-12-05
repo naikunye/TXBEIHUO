@@ -26,7 +26,9 @@ import {
   Filter,
   CloudUpload,
   Settings,
-  Database
+  Database,
+  Wifi,
+  WifiOff
 } from 'lucide-react';
 import { ReplenishmentRecord } from './types';
 import { MOCK_DATA_INITIAL } from './constants';
@@ -49,7 +51,9 @@ function App() {
     const savedId = localStorage.getItem('tanxing_current_workspace');
     return savedId;
   });
-  const [isSyncing, setIsSyncing] = useState(false);
+  
+  // Realtime Connection Status: 'disconnected' | 'connecting' | 'connected'
+  const [syncStatus, setSyncStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   // --- Data State ---
@@ -72,9 +76,8 @@ function App() {
   // 1. Load Data
   useEffect(() => {
     const loadData = async () => {
-        setIsSyncing(true);
-        
         if (workspaceId && isSupabaseConfigured()) {
+            setSyncStatus('connecting');
             // --- Supabase Cloud Load ---
             try {
                 const { data, error } = await supabase
@@ -84,13 +87,16 @@ function App() {
 
                 if (error) {
                     console.error("Supabase load error:", error);
+                    setSyncStatus('disconnected');
                 } else if (data) {
                     const cloudRecords = data.map(row => row.json_content as ReplenishmentRecord);
                     cloudRecords.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
                     setRecords(cloudRecords);
+                    // Don't set 'connected' here, wait for subscription
                 }
             } catch (err) {
                 console.error("Connection failed:", err);
+                setSyncStatus('disconnected');
             }
         } else {
             // --- Local Storage Load ---
@@ -108,66 +114,82 @@ function App() {
         }
         
         setIsDataLoaded(true);
-        setIsSyncing(false);
     };
 
     loadData();
   }, [workspaceId]);
 
-  // 2. Real-time Subscription
+  // 2. Real-time Subscription (Robust Version)
   useEffect(() => {
     // Only subscribe if we are in a valid workspace
-    if (!workspaceId || !isSupabaseConfigured()) return;
+    if (!workspaceId || !isSupabaseConfigured()) {
+        setSyncStatus('disconnected');
+        return;
+    }
 
-    console.log(`[Realtime] Initializing subscription for workspace: ${workspaceId}`);
-
+    // IMPORTANT: We listen to the WHOLE table and filter in JS. 
+    // This avoids issues where DELETE events don't carry the filter column (workspace_id)
+    // if 'REPLICA IDENTITY FULL' isn't set (although we try to set it in SQL).
     const channel = supabase
-      .channel(`workspace_sync_${workspaceId}`)
+      .channel('table-db-changes') 
       .on(
         'postgres_changes',
         {
-          event: '*', // Listen to INSERT, UPDATE, DELETE
+          event: '*',
           schema: 'public',
           table: 'replenishment_data',
-          filter: `workspace_id=eq.${workspaceId}`,
         },
         (payload) => {
-           console.log("[Realtime] Event received:", payload);
-           
+           console.log("Realtime Event:", payload);
+
+           // Filter client-side
            if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
-               // Defensive check for json_content
-               const newRecord = payload.new.json_content as ReplenishmentRecord;
-               
-               if (newRecord && newRecord.id) {
+               const newRecord = payload.new;
+               // Check if this record belongs to our workspace
+               if (newRecord.workspace_id !== workspaceId) return;
+
+               const content = newRecord.json_content as ReplenishmentRecord;
+               if (content && content.id) {
                    setRecords(prev => {
-                       const exists = prev.some(r => r.id === newRecord.id);
+                       const exists = prev.some(r => r.id === content.id);
                        if (exists) {
-                           return prev.map(r => r.id === newRecord.id ? newRecord : r);
+                           return prev.map(r => r.id === content.id ? content : r);
                        } else {
-                           const newList = [newRecord, ...prev];
+                           const newList = [content, ...prev];
                            return newList.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
                        }
                    });
                }
            } else if (payload.eventType === 'DELETE') {
-               // payload.old contains the record ID (pk)
-               const deletedId = payload.old.id; 
+               // For DELETE, we might check payload.old.id
+               // If Replica Identity is DEFAULT, we only get ID.
+               // We can't verify workspace_id easily unless we store a map of ID->Workspace locally or query.
+               // SAFE STRATEGY: If we have this ID in our local state, delete it.
+               const deletedId = payload.old.id;
                if (deletedId) {
-                   setRecords(prev => prev.filter(r => r.id !== deletedId));
+                   setRecords(prev => {
+                       const exists = prev.some(r => r.id === deletedId);
+                       if (exists) {
+                           return prev.filter(r => r.id !== deletedId);
+                       }
+                       return prev;
+                   });
                }
            }
         }
       )
       .subscribe((status) => {
-          console.log(`[Realtime] Subscription status: ${status}`);
+          console.log(`Subscription Status: ${status}`);
           if (status === 'SUBSCRIBED') {
-             setIsSyncing(false);
+             setSyncStatus('connected');
+          } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+             setSyncStatus('disconnected');
           }
       });
 
     return () => {
-      console.log(`[Realtime] Cleaning up subscription for workspace: ${workspaceId}`);
       supabase.removeChannel(channel);
+      setSyncStatus('disconnected');
     };
   }, [workspaceId]);
 
@@ -226,7 +248,6 @@ function App() {
 
     // 2. Cloud Persistence
     if (workspaceId && isSupabaseConfigured()) {
-        setIsSyncing(true);
         try {
             const { error } = await supabase
                 .from('replenishment_data')
@@ -239,9 +260,7 @@ function App() {
             if (error) throw error;
         } catch (err: any) {
             console.error("Supabase save error:", err);
-            // Optionally: Show toast here
-        } finally {
-            setIsSyncing(false);
+            alert("保存到云端失败，请检查网络连接");
         }
     }
   };
@@ -259,8 +278,7 @@ function App() {
               const { error } = await supabase
                   .from('replenishment_data')
                   .delete()
-                  .eq('id', id)
-                  .eq('workspace_id', workspaceId);
+                  .eq('id', id); // We delete by ID, RLS (if enabled) or workspace logic handled by App
                   
               if (error) throw error;
           } catch(err) {
@@ -602,6 +620,7 @@ function App() {
         </div>
         
         <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
+          {/* ... existing nav buttons ... */}
           <div className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">
             主菜单
           </div>
@@ -611,7 +630,6 @@ function App() {
           >
             <Home size={20} />
             <span className="font-medium">系统总览</span>
-            {currentView === 'overview' && <ChevronRight size={16} className="ml-auto opacity-50" />}
           </button>
           
           <button 
@@ -620,7 +638,6 @@ function App() {
           >
             <List size={20} />
             <span className="font-medium">备货清单</span>
-            {currentView === 'inventory' && <ChevronRight size={16} className="ml-auto opacity-50" />}
           </button>
           
           <button 
@@ -629,7 +646,6 @@ function App() {
           >
             <PieChart size={20} />
             <span className="font-medium">数据分析</span>
-            {currentView === 'analytics' && <ChevronRight size={16} className="ml-auto opacity-50" />}
           </button>
 
           <div className="px-4 py-2 mt-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">
@@ -641,7 +657,6 @@ function App() {
           >
             <Calculator size={20} />
             <span className="font-medium">智能试算</span>
-            {currentView === 'calculator' && <ChevronRight size={16} className="ml-auto opacity-50" />}
           </button>
            <button 
              onClick={() => setCurrentView('logistics')}
@@ -649,7 +664,6 @@ function App() {
           >
             <Search size={20} />
             <span className="font-medium">物流查询</span>
-            {currentView === 'logistics' && <ChevronRight size={16} className="ml-auto opacity-50" />}
           </button>
           
           <button 
@@ -707,9 +721,21 @@ function App() {
                 
                 {/* Global Status Indicator for Cloud */}
                 {workspaceId && (
-                   <div className="flex items-center gap-2 px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded-full text-xs font-medium border border-emerald-100">
-                      <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
-                      云端已连接: {workspaceId}
+                   <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
+                      syncStatus === 'connected' 
+                      ? 'bg-emerald-50 text-emerald-700 border-emerald-100' 
+                      : syncStatus === 'connecting'
+                        ? 'bg-yellow-50 text-yellow-700 border-yellow-100'
+                        : 'bg-red-50 text-red-700 border-red-100'
+                   }`}>
+                      {syncStatus === 'connected' ? <Wifi size={14} /> : <WifiOff size={14} />}
+                      <span className="hidden sm:inline">工作区: {workspaceId}</span>
+                      <span className="sm:hidden">{workspaceId}</span>
+                      <div className={`w-2 h-2 rounded-full ${
+                          syncStatus === 'connected' ? 'bg-emerald-500 animate-pulse' : syncStatus === 'connecting' ? 'bg-yellow-500' : 'bg-red-500'
+                      }`}></div>
+                      {syncStatus === 'connecting' && <span className="text-[10px]">连接中...</span>}
+                      {syncStatus === 'disconnected' && <span className="text-[10px]">断开</span>}
                    </div>
                 )}
 
@@ -748,7 +774,7 @@ function App() {
          currentWorkspaceId={workspaceId}
          onConnect={setWorkspaceId}
          onDisconnect={() => setWorkspaceId(null)}
-         isSyncing={isSyncing}
+         isSyncing={syncStatus === 'connecting'}
       />
 
       <RecordModal 
