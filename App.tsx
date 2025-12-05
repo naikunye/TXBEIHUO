@@ -23,7 +23,8 @@ import {
   Download,
   Save,
   Home,
-  Filter
+  Filter,
+  CloudUpload
 } from 'lucide-react';
 import { ReplenishmentRecord } from './types';
 import { MOCK_DATA_INITIAL } from './constants';
@@ -34,11 +35,26 @@ import { AnalyticsDashboard } from './components/AnalyticsDashboard';
 import { CalculatorTool } from './components/CalculatorTool';
 import { LogisticsTools } from './components/LogisticsTools';
 import { HomeOverview } from './components/HomeOverview'; 
+import { CloudConnect } from './components/CloudConnect'; 
 import { analyzeInventory } from './services/geminiService';
+import { supabase, isSupabaseConfigured } from './lib/supabaseClient';
 
 type ViewState = 'overview' | 'inventory' | 'analytics' | 'calculator' | 'logistics';
 
 function App() {
+  // --- Cloud & Workspace State ---
+  const [workspaceId, setWorkspaceId] = useState<string | null>(() => {
+    // Safety check: if we have an ID but no DB config, ignore the ID and clear it
+    // This prevents the "stuck on workspace ID input" loop if config was cleared
+    const savedId = localStorage.getItem('tanxing_current_workspace');
+    if (savedId && !isSupabaseConfigured()) {
+        localStorage.removeItem('tanxing_current_workspace');
+        return null;
+    }
+    return savedId;
+  });
+  const [isSyncing, setIsSyncing] = useState(false);
+
   // --- Data State ---
   const [records, setRecords] = useState<ReplenishmentRecord[]>([]);
   const [isDataLoaded, setIsDataLoaded] = useState(false);
@@ -56,35 +72,83 @@ function App() {
 
   // --- Storage Effects ---
 
-  // 1. Load Data (LocalStorage Only)
+  // 1. Load Data (Supabase OR LocalStorage)
   useEffect(() => {
     const loadData = async () => {
-        // Simulate slight delay for consistency UI
-        await new Promise(r => setTimeout(r, 200));
+        setIsSyncing(true);
         
-        const saved = localStorage.getItem('tanxing_records');
-        if (saved) {
+        if (workspaceId) {
+            // --- Supabase Cloud Load ---
             try {
-                setRecords(JSON.parse(saved));
-            } catch (e) {
-                console.error("Failed to parse local records", e);
-                setRecords([]);
+                // Check if configured before making request to avoid errors
+                if (isSupabaseConfigured()) {
+                    const { data, error } = await supabase
+                        .from('replenishment_data')
+                        .select('json_content')
+                        .eq('workspace_id', workspaceId);
+
+                    if (error) {
+                        console.error("Supabase load error:", error);
+                        if (error.code === 'PGRST301' || error.message.includes('JWT')) {
+                            alert("数据库连接认证失败，请重新配置 API Key。");
+                            setWorkspaceId(null);
+                        }
+                    } else if (data) {
+                        // Extract the JSON content back to Record array
+                        const cloudRecords = data.map(row => row.json_content as ReplenishmentRecord);
+                        // Sort by date desc
+                        cloudRecords.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+                        setRecords(cloudRecords);
+                    }
+                } else {
+                    // Fallback if config missing
+                    setWorkspaceId(null);
+                }
+            } catch (err) {
+                console.error("Connection failed:", err);
             }
         } else {
-            setRecords([...MOCK_DATA_INITIAL]);
+            // --- Local Storage Load ---
+            await new Promise(r => setTimeout(r, 200)); // Simulate UI consistency
+            const saved = localStorage.getItem('tanxing_records');
+            if (saved) {
+                try {
+                    setRecords(JSON.parse(saved));
+                } catch (e) {
+                    setRecords([]);
+                }
+            } else {
+                setRecords([...MOCK_DATA_INITIAL]);
+            }
         }
         
         setIsDataLoaded(true);
+        setIsSyncing(false);
     };
 
     loadData();
-  }, []);
+  }, [workspaceId]);
 
-  // 2. Save Data (LocalStorage Only)
+  // 2. Save Data (LocalStorage Only - Auto Backup)
   useEffect(() => {
     if (!isDataLoaded) return;
-    localStorage.setItem('tanxing_records', JSON.stringify(records));
-  }, [records, isDataLoaded]);
+    
+    // Only auto-save entire array to local storage if NOT in cloud mode
+    // If in cloud mode, we trust Supabase + manual sync or atomic updates
+    if (!workspaceId) {
+        localStorage.setItem('tanxing_records', JSON.stringify(records));
+    }
+  }, [records, workspaceId, isDataLoaded]);
+
+  // 3. Persist Workspace Selection
+  useEffect(() => {
+      if (workspaceId) {
+          localStorage.setItem('tanxing_current_workspace', workspaceId);
+      } else {
+          localStorage.removeItem('tanxing_current_workspace');
+      }
+  }, [workspaceId]);
+
 
   // Filter Logic
   const filteredRecords = useMemo(() => {
@@ -98,7 +162,7 @@ function App() {
     });
   }, [records, searchQuery, statusFilter]);
 
-  // Handle Create or Update (Local State Update)
+  // Handle Create or Update (Supabase Upsert or Local State Update)
   const handleSaveRecord = async (recordData: Omit<ReplenishmentRecord, 'id'>) => {
     let finalRecord: ReplenishmentRecord;
 
@@ -111,6 +175,7 @@ function App() {
         };
     }
 
+    // 1. Optimistic Update (Update UI immediately)
     setRecords(prev => {
         if (editingRecord) {
             return prev.map(r => r.id === editingRecord.id ? finalRecord : r);
@@ -120,6 +185,72 @@ function App() {
     });
 
     closeModal();
+
+    // 2. Cloud Persistence
+    if (workspaceId && isSupabaseConfigured()) {
+        setIsSyncing(true);
+        try {
+            // Use JSONB column to store flexible schema
+            const { error } = await supabase
+                .from('replenishment_data')
+                .upsert({ 
+                    id: finalRecord.id, 
+                    workspace_id: workspaceId, 
+                    json_content: finalRecord 
+                });
+
+            if (error) {
+                console.error("Supabase save error:", error);
+                // Optionally revert UI state here if critical
+                alert("云端同步失败，请检查网络连接");
+            }
+        } catch (err) {
+            console.error("Supabase error:", err);
+        } finally {
+            setIsSyncing(false);
+        }
+    }
+  };
+
+  // --- Manual Sync to Cloud (Bulk Upload) ---
+  const handleManualSync = async () => {
+    if (!workspaceId) {
+        alert("请先连接云端工作区 (Workspace) 才能同步数据。");
+        return;
+    }
+
+    if (!isSupabaseConfigured()) {
+        alert("数据库未配置，请先点击右上角配置数据库。");
+        return;
+    }
+
+    if(records.length === 0) {
+        alert("暂无数据可同步。");
+        return;
+    }
+
+    setIsSyncing(true);
+    try {
+        // Prepare bulk payload
+        const updates = records.map(record => ({
+            id: record.id,
+            workspace_id: workspaceId,
+            json_content: record,
+        }));
+
+        const { error } = await supabase
+            .from('replenishment_data')
+            .upsert(updates);
+
+        if (error) throw error;
+
+        alert(`成功同步 ${records.length} 条记录到云端。`);
+    } catch (err: any) {
+        console.error("Manual sync failed:", err);
+        alert(`同步失败: ${err.message || '未知错误'}`);
+    } finally {
+        setIsSyncing(false);
+    }
   };
 
   const openAddModal = () => {
@@ -170,7 +301,7 @@ function App() {
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `tanxing_replenishment_${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute("download", `tanxing_replenishment_${workspaceId || 'local'}_${new Date().toISOString().split('T')[0]}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -398,10 +529,10 @@ function App() {
                            <Package className="h-8 w-8 text-gray-300" />
                          </div>
                          <h3 className="text-gray-900 font-medium">
-                            暂无数据
+                            {workspaceId ? `云端工作区 (${workspaceId}) 暂无数据` : '没有找到匹配的记录'}
                          </h3>
                          <p className="text-gray-500 text-sm mt-1">
-                            请点击右上角"添加产品"开始。
+                            {workspaceId ? '请点击右上角"添加产品"开始协作。' : '尝试调整搜索词或筛选状态。'}
                          </p>
                        </div>
                     )}
@@ -498,6 +629,19 @@ function App() {
             {currentView === 'logistics' && <ChevronRight size={16} className="ml-auto opacity-50" />}
           </button>
           
+          <button 
+             onClick={handleManualSync}
+             disabled={isSyncing || !workspaceId}
+             className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
+                !workspaceId 
+                  ? 'text-slate-600 cursor-not-allowed opacity-50' 
+                  : 'text-emerald-400 hover:bg-slate-800 hover:text-emerald-300'
+             }`}
+          >
+            <CloudUpload size={20} className={isSyncing ? "animate-pulse" : ""} />
+            <span className="font-medium">{isSyncing ? '正在同步...' : '一键同步云端'}</span>
+          </button>
+
         </nav>
 
         <div className="p-4 border-t border-slate-800">
@@ -539,6 +683,14 @@ function App() {
               
               <div className="flex items-center gap-3">
                 
+                {/* Global Tools: Cloud Connect */}
+                <CloudConnect 
+                   currentWorkspaceId={workspaceId}
+                   onConnect={setWorkspaceId}
+                   onDisconnect={() => setWorkspaceId(null)}
+                   isSyncing={isSyncing}
+                />
+
                 {currentView === 'inventory' && (
                   <>
                     <button 
