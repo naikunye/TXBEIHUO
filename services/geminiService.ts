@@ -68,7 +68,7 @@ export const analyzeInventory = async (records: ReplenishmentRecord[]) => {
     return `
       <div class="bg-red-50 p-4 rounded-xl border border-red-100 text-red-700">
         <h4 class="font-bold">分析服务暂时不可用</h4>
-        <p class="text-sm mt-1">请检查 API Key 配置或网络连接。</p>
+        <p class="text-sm mt-1">请检查 API_KEY 环境变量配置。</p>
       </div>
     `;
   }
