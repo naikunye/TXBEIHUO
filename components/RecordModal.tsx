@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { ReplenishmentRecord } from '../types';
-import { X, Upload, Image as ImageIcon, Plane, Ship, RefreshCcw, Package, Box, Percent, Zap, BarChart, Tag, Calculator, DollarSign, RotateCcw } from 'lucide-react';
+import { X, Upload, Image as ImageIcon, Plane, Ship, RefreshCcw, Package, Box, Percent, Zap, BarChart, Tag, Calculator, DollarSign, RotateCcw, Scale } from 'lucide-react';
 import { EXCHANGE_RATE } from '../constants';
 
 interface RecordModalProps {
@@ -30,6 +30,7 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
 
     shippingMethod: 'Air' as const,
     shippingUnitPriceCNY: 0,
+    manualTotalWeightKg: 0, // New Field
     materialCostCNY: 0,
     customsFeeCNY: 0, 
     portFeeCNY: 0,    
@@ -156,6 +157,9 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
   const boxVolCbm = (formData.boxLengthCm * formData.boxWidthCm * formData.boxHeightCm) / 1000000;
   // Use Manual Total Cartons
   const totalVolCbm = boxVolCbm * formData.totalCartons;
+  
+  // Theoretical Weight
+  const theoreticalWeight = formData.quantity * formData.unitWeightKg;
   
   // DOS Preview
   const dos = formData.dailySales > 0 ? (formData.quantity / formData.dailySales).toFixed(1) : '∞';
@@ -483,7 +487,34 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
                         />
                     </div>
                  </div>
-                 {/* Material Cost */}
+                 
+                 {/* New Field: Manual Total Weight */}
+                 <div>
+                    <div className="flex justify-between items-center mb-1">
+                        <label className="block text-sm font-medium text-gray-700">计费总重 (Manual)</label>
+                    </div>
+                    <div className="relative mt-1">
+                        <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-gray-400">
+                            <Scale size={14} />
+                        </span>
+                        <input 
+                            type="number" 
+                            step="0.01" 
+                            name="manualTotalWeightKg" 
+                            value={formData.manualTotalWeightKg || ''} 
+                            onChange={handleChange} 
+                            className={`${inputClass} pl-9`} 
+                            placeholder="0"
+                        />
+                        <div className="text-[10px] text-gray-400 text-right mt-1">
+                            理论实重: {theoreticalWeight.toFixed(2)} kg
+                        </div>
+                    </div>
+                 </div>
+             </div>
+             
+             {/* New Fees Grid */}
+             <div className="grid grid-cols-2 gap-4">
                  <div>
                     <label className={labelClass}>耗材/贴标费 (¥)</label>
                     <div className="relative mt-1">
@@ -500,10 +531,6 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
                         />
                     </div>
                  </div>
-             </div>
-             
-             {/* New Fees Grid */}
-             <div className="grid grid-cols-2 gap-4">
                  <div>
                     <label className={labelClass}>报关费 (¥)</label>
                     <div className="relative mt-1">

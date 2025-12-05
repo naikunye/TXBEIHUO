@@ -3,8 +3,13 @@ import { ReplenishmentRecord, CalculatedMetrics } from '../types';
 import { EXCHANGE_RATE } from '../constants';
 
 export const calculateMetrics = (record: ReplenishmentRecord): CalculatedMetrics => {
-  // 1. Basic Weight
-  const totalWeightKg = record.quantity * record.unitWeightKg;
+  // 1. Weight Calculation
+  const naturalWeight = record.quantity * record.unitWeightKg;
+  
+  // Use manual override if it exists and is greater than 0, otherwise use calculated weight
+  const totalWeightKg = (record.manualTotalWeightKg && record.manualTotalWeightKg > 0) 
+    ? record.manualTotalWeightKg 
+    : naturalWeight;
 
   // 2. Packing Logic
   const safeItemsPerBox = record.itemsPerBox > 0 ? record.itemsPerBox : 1;
@@ -20,6 +25,7 @@ export const calculateMetrics = (record: ReplenishmentRecord): CalculatedMetrics
   const singleBoxWeightKg = record.unitWeightKg * safeItemsPerBox;
 
   // 3. First Leg Shipping Cost (RMB)
+  // Now uses totalWeightKg which might be the manual billing weight
   const shippingFeeCNY = totalWeightKg * record.shippingUnitPriceCNY; 
   
   const fixedLogisticsCostCNY = 

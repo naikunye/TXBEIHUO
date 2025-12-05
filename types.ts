@@ -1,4 +1,5 @@
 
+
 export type ShippingMethod = 'Sea' | 'Air';
 
 export type LifecycleStatus = 'New' | 'Growth' | 'Stable' | 'Clearance';
@@ -30,6 +31,7 @@ export interface ReplenishmentRecord {
   // Logistics Data (First Leg / Head Haul)
   shippingMethod: ShippingMethod;
   shippingUnitPriceCNY: number; // 海运/空运单价 (RMB/kg)
+  manualTotalWeightKg?: number; // 新增：手动填写的计费总重 (Billing Weight Override)
   
   // Fixed Logistics Costs (Batch Level)
   materialCostCNY: number; // 耗材费
