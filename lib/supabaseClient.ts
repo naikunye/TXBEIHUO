@@ -20,7 +20,7 @@ const getEnv = (key: string) => {
 };
 
 // 获取配置：优先 localStorage，其次环境变量
-const getSupabaseConfig = () => {
+export const getSupabaseConfig = () => {
   const localUrl = typeof window !== 'undefined' ? localStorage.getItem(STORAGE_KEY_URL) : null;
   const localKey = typeof window !== 'undefined' ? localStorage.getItem(STORAGE_KEY_KEY) : null;
 

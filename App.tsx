@@ -24,7 +24,9 @@ import {
   Save,
   Home,
   Filter,
-  CloudUpload
+  CloudUpload,
+  Settings,
+  Database
 } from 'lucide-react';
 import { ReplenishmentRecord } from './types';
 import { MOCK_DATA_INITIAL } from './constants';
@@ -44,15 +46,11 @@ type ViewState = 'overview' | 'inventory' | 'analytics' | 'calculator' | 'logist
 function App() {
   // --- Cloud & Workspace State ---
   const [workspaceId, setWorkspaceId] = useState<string | null>(() => {
-    // Safety check: if we have an ID but no DB config, ignore the ID and clear it
     const savedId = localStorage.getItem('tanxing_current_workspace');
-    if (savedId && !isSupabaseConfigured()) {
-        localStorage.removeItem('tanxing_current_workspace');
-        return null;
-    }
     return savedId;
   });
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   // --- Data State ---
   const [records, setRecords] = useState<ReplenishmentRecord[]>([]);
@@ -71,44 +69,32 @@ function App() {
 
   // --- Storage Effects ---
 
-  // 1. Load Data (Supabase OR LocalStorage)
+  // 1. Load Data
   useEffect(() => {
     const loadData = async () => {
         setIsSyncing(true);
         
-        if (workspaceId) {
+        if (workspaceId && isSupabaseConfigured()) {
             // --- Supabase Cloud Load ---
             try {
-                // Check if configured before making request to avoid errors
-                if (isSupabaseConfigured()) {
-                    const { data, error } = await supabase
-                        .from('replenishment_data')
-                        .select('json_content')
-                        .eq('workspace_id', workspaceId);
+                const { data, error } = await supabase
+                    .from('replenishment_data')
+                    .select('json_content')
+                    .eq('workspace_id', workspaceId);
 
-                    if (error) {
-                        console.error("Supabase load error:", error);
-                        if (error.code === 'PGRST301' || error.message.includes('JWT')) {
-                            alert("数据库连接认证失败，请重新配置 API Key。");
-                            setWorkspaceId(null);
-                        }
-                    } else if (data) {
-                        // Extract the JSON content back to Record array
-                        const cloudRecords = data.map(row => row.json_content as ReplenishmentRecord);
-                        // Sort by date desc
-                        cloudRecords.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-                        setRecords(cloudRecords);
-                    }
-                } else {
-                    // Fallback if config missing
-                    setWorkspaceId(null);
+                if (error) {
+                    console.error("Supabase load error:", error);
+                } else if (data) {
+                    const cloudRecords = data.map(row => row.json_content as ReplenishmentRecord);
+                    cloudRecords.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+                    setRecords(cloudRecords);
                 }
             } catch (err) {
                 console.error("Connection failed:", err);
             }
         } else {
             // --- Local Storage Load ---
-            await new Promise(r => setTimeout(r, 200)); // Simulate UI consistency
+            await new Promise(r => setTimeout(r, 200)); 
             const saved = localStorage.getItem('tanxing_records');
             if (saved) {
                 try {
@@ -128,13 +114,15 @@ function App() {
     loadData();
   }, [workspaceId]);
 
-  // 2. Real-time Subscription (NEW: This enables multi-device sync)
+  // 2. Real-time Subscription
   useEffect(() => {
+    // Only subscribe if we are in a valid workspace
     if (!workspaceId || !isSupabaseConfigured()) return;
 
-    // Subscribe to changes for this workspace
+    console.log(`[Realtime] Initializing subscription for workspace: ${workspaceId}`);
+
     const channel = supabase
-      .channel(`workspace_${workspaceId}`)
+      .channel(`workspace_sync_${workspaceId}`)
       .on(
         'postgres_changes',
         {
@@ -144,43 +132,51 @@ function App() {
           filter: `workspace_id=eq.${workspaceId}`,
         },
         (payload) => {
-           console.log("Realtime update received:", payload);
+           console.log("[Realtime] Event received:", payload);
            
            if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+               // Defensive check for json_content
                const newRecord = payload.new.json_content as ReplenishmentRecord;
+               
                if (newRecord && newRecord.id) {
                    setRecords(prev => {
                        const exists = prev.some(r => r.id === newRecord.id);
                        if (exists) {
-                           // Update existing record
                            return prev.map(r => r.id === newRecord.id ? newRecord : r);
                        } else {
-                           // Insert new record
                            const newList = [newRecord, ...prev];
                            return newList.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
                        }
                    });
                }
+           } else if (payload.eventType === 'DELETE') {
+               // payload.old contains the record ID (pk)
+               const deletedId = payload.old.id; 
+               if (deletedId) {
+                   setRecords(prev => prev.filter(r => r.id !== deletedId));
+               }
            }
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+          console.log(`[Realtime] Subscription status: ${status}`);
+          if (status === 'SUBSCRIBED') {
+             setIsSyncing(false);
+          }
+      });
 
     return () => {
+      console.log(`[Realtime] Cleaning up subscription for workspace: ${workspaceId}`);
       supabase.removeChannel(channel);
     };
   }, [workspaceId]);
 
 
-  // 3. Save Data (LocalStorage Only - Auto Backup)
+  // 3. Save Data (LocalStorage Backup)
   useEffect(() => {
     if (!isDataLoaded) return;
-    
-    // Only auto-save entire array to local storage if NOT in cloud mode
-    if (!workspaceId) {
-        localStorage.setItem('tanxing_records', JSON.stringify(records));
-    }
-  }, [records, workspaceId, isDataLoaded]);
+    localStorage.setItem('tanxing_records', JSON.stringify(records));
+  }, [records, isDataLoaded]);
 
   // 4. Persist Workspace Selection
   useEffect(() => {
@@ -204,7 +200,7 @@ function App() {
     });
   }, [records, searchQuery, statusFilter]);
 
-  // Handle Create or Update (Supabase Upsert or Local State Update)
+  // Handle Create or Update
   const handleSaveRecord = async (recordData: Omit<ReplenishmentRecord, 'id'>) => {
     let finalRecord: ReplenishmentRecord;
 
@@ -217,7 +213,7 @@ function App() {
         };
     }
 
-    // 1. Optimistic Update (Update UI immediately)
+    // 1. Optimistic Update
     setRecords(prev => {
         if (editingRecord) {
             return prev.map(r => r.id === editingRecord.id ? finalRecord : r);
@@ -232,7 +228,6 @@ function App() {
     if (workspaceId && isSupabaseConfigured()) {
         setIsSyncing(true);
         try {
-            // Use JSONB column to store flexible schema
             const { error } = await supabase
                 .from('replenishment_data')
                 .upsert({ 
@@ -241,57 +236,37 @@ function App() {
                     json_content: finalRecord 
                 });
 
-            if (error) {
-                console.error("Supabase save error:", error);
-                alert("云端同步失败，请检查网络连接");
-            }
-        } catch (err) {
-            console.error("Supabase error:", err);
+            if (error) throw error;
+        } catch (err: any) {
+            console.error("Supabase save error:", err);
+            // Optionally: Show toast here
         } finally {
             setIsSyncing(false);
         }
     }
   };
+  
+  // Handle Delete
+  const handleDeleteRecord = async (id: string) => {
+      if(!window.confirm("确定要删除这条记录吗？")) return;
 
-  // --- Manual Sync to Cloud (Bulk Upload) ---
-  const handleManualSync = async () => {
-    if (!workspaceId) {
-        alert("请先连接云端工作区 (Workspace) 才能同步数据。");
-        return;
-    }
-
-    if (!isSupabaseConfigured()) {
-        alert("数据库未配置，请先点击右上角配置数据库。");
-        return;
-    }
-
-    if(records.length === 0) {
-        alert("暂无数据可同步。");
-        return;
-    }
-
-    setIsSyncing(true);
-    try {
-        // Prepare bulk payload
-        const updates = records.map(record => ({
-            id: record.id,
-            workspace_id: workspaceId,
-            json_content: record,
-        }));
-
-        const { error } = await supabase
-            .from('replenishment_data')
-            .upsert(updates);
-
-        if (error) throw error;
-
-        alert(`成功同步 ${records.length} 条记录到云端。`);
-    } catch (err: any) {
-        console.error("Manual sync failed:", err);
-        alert(`同步失败: ${err.message || '未知错误'}`);
-    } finally {
-        setIsSyncing(false);
-    }
+      // 1. Optimistic Delete
+      setRecords(prev => prev.filter(r => r.id !== id));
+      
+      // 2. Cloud Delete
+      if (workspaceId && isSupabaseConfigured()) {
+          try {
+              const { error } = await supabase
+                  .from('replenishment_data')
+                  .delete()
+                  .eq('id', id)
+                  .eq('workspace_id', workspaceId);
+                  
+              if (error) throw error;
+          } catch(err) {
+              console.error("Delete failed", err);
+          }
+      }
   };
 
   const openAddModal = () => {
@@ -470,10 +445,9 @@ function App() {
                           return (
                             <tr 
                                 key={record.id} 
-                                onClick={() => openEditModal(record)}
                                 className="hover:bg-blue-50/50 transition-colors group cursor-pointer relative"
                             >
-                              <td className="px-6 py-4 whitespace-nowrap">
+                              <td className="px-6 py-4 whitespace-nowrap" onClick={() => openEditModal(record)}>
                                 <div className="text-sm text-gray-900 font-bold flex items-center gap-2">
                                     {record.date}
                                     <Edit className="w-3 h-3 text-gray-300 group-hover:text-blue-500 opacity-0 group-hover:opacity-100 transition-all" />
@@ -487,7 +461,7 @@ function App() {
                                   </span>
                                 </div>
                               </td>
-                              <td className="px-6 py-4 whitespace-nowrap">
+                              <td className="px-6 py-4 whitespace-nowrap" onClick={() => openEditModal(record)}>
                                 <div className="flex items-center">
                                   {/* Product Image */}
                                   <div className="flex-shrink-0 h-10 w-10 mr-3">
@@ -508,7 +482,7 @@ function App() {
                                   </div>
                                 </div>
                               </td>
-                              <td className="px-6 py-4 whitespace-nowrap">
+                              <td className="px-6 py-4 whitespace-nowrap" onClick={() => openEditModal(record)}>
                                 <span className={`inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium border mb-1.5 ${record.shippingMethod === 'Air' ? 'bg-sky-50 text-sky-700 border-sky-100' : 'bg-indigo-50 text-indigo-700 border-indigo-100'}`}>
                                   {record.shippingMethod === 'Air' ? <Plane className="w-3 h-3 mr-1.5"/> : <Ship className="w-3 h-3 mr-1.5"/>}
                                   {record.shippingMethod === 'Air' ? '空运' : '海运'}
@@ -526,7 +500,7 @@ function App() {
                                   </div>
                                 </div>
                               </td>
-                              <td className="px-6 py-4 whitespace-nowrap">
+                              <td className="px-6 py-4 whitespace-nowrap" onClick={() => openEditModal(record)}>
                                 <div className="space-y-1">
                                   <div className="flex justify-between w-36 text-xs text-gray-500">
                                     <span>货值</span> <span className="font-mono">${m.productCostUSD.toFixed(2)}</span>
@@ -543,20 +517,28 @@ function App() {
                                   </div>
                                 </div>
                               </td>
-                              <td className="px-6 py-4 whitespace-nowrap">
+                              <td className="px-6 py-4 whitespace-nowrap" onClick={() => openEditModal(record)}>
                                 <div className="text-sm font-bold text-gray-900 font-mono">${record.salesPriceUSD.toFixed(2)}</div>
                                 <div className={`text-xs font-medium mt-1 inline-block px-1.5 py-0.5 rounded ${m.marginRate < 15 ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
                                   毛利: {m.marginRate.toFixed(1)}%
                                 </div>
                               </td>
                               <td className="px-6 py-4 whitespace-nowrap text-right">
-                                <div className={`text-base font-bold font-mono ${m.estimatedProfitUSD > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                                  {m.estimatedProfitUSD > 0 ? '+' : ''}{m.estimatedProfitUSD.toFixed(2)}
-                                </div>
-                                <div className="flex justify-end mt-1">
-                                    <div className={`text-xs px-2 py-0.5 rounded-full font-bold inline-flex items-center gap-1 ${m.roi > 30 ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-600'}`}>
-                                        ROI: {m.roi.toFixed(0)}%
+                                <div className="flex flex-col items-end">
+                                    <div className={`text-base font-bold font-mono ${m.estimatedProfitUSD > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                                    {m.estimatedProfitUSD > 0 ? '+' : ''}{m.estimatedProfitUSD.toFixed(2)}
                                     </div>
+                                    <div className="flex justify-end mt-1">
+                                        <div className={`text-xs px-2 py-0.5 rounded-full font-bold inline-flex items-center gap-1 ${m.roi > 30 ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-600'}`}>
+                                            ROI: {m.roi.toFixed(0)}%
+                                        </div>
+                                    </div>
+                                    <button 
+                                        onClick={(e) => { e.stopPropagation(); handleDeleteRecord(record.id); }}
+                                        className="text-[10px] text-gray-300 hover:text-red-500 mt-2 underline"
+                                    >
+                                        删除
+                                    </button>
                                 </div>
                               </td>
                             </tr>
@@ -671,16 +653,15 @@ function App() {
           </button>
           
           <button 
-             onClick={handleManualSync}
-             disabled={isSyncing || !workspaceId}
+             onClick={() => setIsSettingsOpen(true)}
              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
-                !workspaceId 
-                  ? 'text-slate-600 cursor-not-allowed opacity-50' 
-                  : 'text-emerald-400 hover:bg-slate-800 hover:text-emerald-300'
+                isSettingsOpen
+                  ? 'bg-slate-800 text-white' 
+                  : 'text-slate-400 hover:bg-slate-800 hover:text-white'
              }`}
           >
-            <CloudUpload size={20} className={isSyncing ? "animate-pulse" : ""} />
-            <span className="font-medium">{isSyncing ? '正在同步...' : '一键同步云端'}</span>
+            <Settings size={20} />
+            <span className="font-medium">系统设置</span>
           </button>
 
         </nav>
@@ -724,13 +705,13 @@ function App() {
               
               <div className="flex items-center gap-3">
                 
-                {/* Global Tools: Cloud Connect */}
-                <CloudConnect 
-                   currentWorkspaceId={workspaceId}
-                   onConnect={setWorkspaceId}
-                   onDisconnect={() => setWorkspaceId(null)}
-                   isSyncing={isSyncing}
-                />
+                {/* Global Status Indicator for Cloud */}
+                {workspaceId && (
+                   <div className="flex items-center gap-2 px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded-full text-xs font-medium border border-emerald-100">
+                      <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+                      云端已连接: {workspaceId}
+                   </div>
+                )}
 
                 {currentView === 'inventory' && (
                   <>
@@ -759,6 +740,16 @@ function App() {
           </div>
         </main>
       </div>
+      
+      {/* Cloud Connect Modal (Now acting as System Settings) */}
+      <CloudConnect 
+         isOpen={isSettingsOpen}
+         onClose={() => setIsSettingsOpen(false)}
+         currentWorkspaceId={workspaceId}
+         onConnect={setWorkspaceId}
+         onDisconnect={() => setWorkspaceId(null)}
+         isSyncing={isSyncing}
+      />
 
       <RecordModal 
         isOpen={isModalOpen} 
