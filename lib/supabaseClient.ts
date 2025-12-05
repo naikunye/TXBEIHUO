@@ -3,6 +3,7 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 // 定义存储 Key
 const STORAGE_KEY_URL = 'tanxing_supabase_url';
 const STORAGE_KEY_KEY = 'tanxing_supabase_key';
+const STORAGE_KEY_WORKSPACE = 'tanxing_current_workspace';
 
 // 兼容 Vite (import.meta.env) 和 Webpack/Node (process.env) 的环境变量读取器
 const getEnv = (key: string) => {
@@ -50,12 +51,16 @@ export const isSupabaseConfigured = () => {
 export const saveSupabaseConfig = (url: string, key: string) => {
     localStorage.setItem(STORAGE_KEY_URL, url);
     localStorage.setItem(STORAGE_KEY_KEY, key);
-    window.location.reload(); // 简单粗暴，刷新页面重新初始化 supabase 实例
+    // 关键修复：修改配置时，必须清除当前的工作区 ID，防止连接到新库时出现 ID 不匹配或权限错误
+    localStorage.removeItem(STORAGE_KEY_WORKSPACE);
+    window.location.reload(); 
 };
 
 // 辅助函数：清除配置
 export const clearSupabaseConfig = () => {
     localStorage.removeItem(STORAGE_KEY_URL);
     localStorage.removeItem(STORAGE_KEY_KEY);
+    // 关键修复：清除配置时，同时也清除工作区 ID
+    localStorage.removeItem(STORAGE_KEY_WORKSPACE);
     window.location.reload();
 };

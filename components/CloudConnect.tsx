@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Cloud, CloudLightning, CloudOff, Users, CheckCircle2, Loader2, LogOut, Database, AlertCircle, Settings, Key, Link } from 'lucide-react';
+import { Cloud, CloudLightning, CloudOff, Users, CheckCircle2, Loader2, LogOut, Database, AlertCircle, Settings, Key, Link, RefreshCcw } from 'lucide-react';
 import { supabase, saveSupabaseConfig, clearSupabaseConfig, isSupabaseConfigured } from '../lib/supabaseClient';
 import { createClient } from '@supabase/supabase-js';
 
@@ -42,7 +42,8 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
   const handleVerifyAndSave = async (e: React.FormEvent) => {
       e.preventDefault();
       
-      const url = configUrl.trim();
+      // 自动清理 URL 末尾的斜杠
+      let url = configUrl.trim().replace(/\/$/, "");
       const key = configKey.trim();
 
       if (!url || !key) {
@@ -88,7 +89,7 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
           
       } catch (err: any) {
           setErrorMsg(err.message || "未知错误，请重试。");
-          setIsLoading(false); // 只有失败时才取消 loading，成功时因为会刷新页面，保持 loading 体验更好
+          setIsLoading(false); 
       }
   };
 
@@ -109,7 +110,6 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
 
         if (error) {
             // 这里通常不应该发生，因为 Save 阶段已经验证过了。
-            // 但防止 Save 后数据库被删的情况
             if (error.code === '42P01') {
                  throw new Error("数据库表不存在，请重新配置数据库或运行 SQL。");
             } else {
@@ -129,14 +129,14 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
   };
 
   const handleDisconnect = () => {
-    if (window.confirm('确定要退出当前云端工作区吗？')) {
+    if (window.confirm('确定要退出当前云端工作区吗？(本地缓存将保留)')) {
       onDisconnect();
       setIsOpen(false);
     }
   };
   
   const handleClearConfig = () => {
-      if(window.confirm('确定要清除保存的 Supabase URL 和 Key 吗？')) {
+      if(window.confirm('确定要清除保存的 Supabase URL 和 Key，并退出当前工作区吗？')) {
           clearSupabaseConfig();
       }
   };
@@ -183,13 +183,22 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
                     </div>
                 </div>
 
-                <button 
-                    onClick={handleDisconnect}
-                    className="w-full flex items-center justify-center gap-2 text-red-600 hover:bg-red-50 p-2 rounded-lg text-sm transition-colors"
-                >
-                    <LogOut size={14} />
-                    退出工作区
-                </button>
+                <div className="space-y-2">
+                    <button 
+                        onClick={handleDisconnect}
+                        className="w-full flex items-center justify-center gap-2 text-gray-600 hover:bg-gray-100 p-2 rounded-lg text-sm transition-colors"
+                    >
+                        <LogOut size={14} />
+                        退出工作区
+                    </button>
+                    <button 
+                        onClick={handleClearConfig}
+                        className="w-full flex items-center justify-center gap-2 text-red-500 hover:bg-red-50 p-2 rounded-lg text-sm transition-colors border border-transparent hover:border-red-100"
+                    >
+                        <RefreshCcw size={14} />
+                        重置数据库配置
+                    </button>
+                </div>
             </div>
            </>
         )}
