@@ -37,14 +37,20 @@ import { LogisticsTools } from './components/LogisticsTools';
 import { HomeOverview } from './components/HomeOverview'; 
 import { CloudConnect } from './components/CloudConnect'; 
 import { analyzeInventory } from './services/geminiService';
-import { supabase } from './lib/supabaseClient';
+import { supabase, isSupabaseConfigured } from './lib/supabaseClient';
 
 type ViewState = 'overview' | 'inventory' | 'analytics' | 'calculator' | 'logistics';
 
 function App() {
   // --- Cloud & Workspace State ---
   const [workspaceId, setWorkspaceId] = useState<string | null>(() => {
-    return localStorage.getItem('tanxing_current_workspace');
+    // Safety check: if we have an ID but no DB config, ignore the ID and clear it
+    const savedId = localStorage.getItem('tanxing_current_workspace');
+    if (savedId && !isSupabaseConfigured()) {
+        localStorage.removeItem('tanxing_current_workspace');
+        return null;
+    }
+    return savedId;
   });
   const [isSyncing, setIsSyncing] = useState(false);
 
@@ -80,6 +86,11 @@ function App() {
 
                 if (error) {
                     console.error("Supabase load error:", error);
+                    if (error.code === 'PGRST301' || error.message.includes('JWT')) {
+                        // Token might be invalid or expired.
+                        alert("数据库连接认证失败，请重新配置 API Key。");
+                        setWorkspaceId(null);
+                    }
                 } else if (data) {
                     // Extract the JSON content back to Record array
                     const cloudRecords = data.map(row => row.json_content as ReplenishmentRecord);
@@ -187,7 +198,7 @@ function App() {
 
             if (error) {
                 console.error("Supabase save error:", error);
-                alert("云端同步失败，请检查网络连接");
+                alert("云端同步失败，请检查网络连接或权限");
             }
         } catch (err) {
             console.error("Supabase error:", err);

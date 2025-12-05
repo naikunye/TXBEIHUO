@@ -36,7 +36,7 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
     if (!configured) {
         setMode('config');
     }
-  }, []);
+  }, [isOpen]); // Check every time modal opens
 
   // 1. 验证并保存 Supabase URL/Key
   const handleVerifyAndSave = async (e: React.FormEvent) => {
@@ -86,6 +86,7 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
 
           // 如果没有抛出错误，说明连接成功且表存在
           saveSupabaseConfig(url, key);
+          setMode('connect'); // Switch to connect mode after successful save (though reload usually happens)
           
       } catch (err: any) {
           setErrorMsg(err.message || "未知错误，请重试。");
@@ -113,7 +114,7 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
             if (error.code === '42P01') {
                  throw new Error("数据库表不存在，请重新配置数据库或运行 SQL。");
             } else {
-                 throw new Error("无法读取数据，请检查网络或重新配置数据库。");
+                 throw new Error("无法读取数据，请检查网络或重新配置数据库。可能 Key 已失效。");
             }
         }
 
@@ -137,6 +138,7 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
   
   const handleClearConfig = () => {
       if(window.confirm('确定要清除保存的 Supabase URL 和 Key，并退出当前工作区吗？')) {
+          onDisconnect(); // Disconnect state first
           clearSupabaseConfig();
       }
   };
@@ -176,10 +178,6 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
                     <div className="flex items-center justify-between text-xs text-gray-500">
                         <span>同步状态</span>
                         {isSyncing ? <span className="text-blue-500 font-medium">同步中...</span> : <span className="text-emerald-500 font-medium">已连接</span>}
-                    </div>
-                     <div className="flex items-center justify-between text-xs text-gray-500">
-                        <span>配置模式</span>
-                        <span className="text-gray-400">自定义</span>
                     </div>
                 </div>
 
@@ -313,13 +311,15 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
                               </button>
                           )}
                           {isConfigured && !isLoading && (
-                              <button 
-                                type="button" 
-                                onClick={handleClearConfig}
-                                className="w-full text-center text-red-300 hover:text-red-500 text-xs mt-4"
-                              >
-                                  清除当前配置
-                              </button>
+                               <div className="pt-2">
+                                  <button 
+                                    type="button" 
+                                    onClick={handleClearConfig}
+                                    className="w-full text-center text-red-400 hover:text-red-500 text-xs mt-2 border border-red-100 py-2 rounded-lg bg-red-50/50"
+                                  >
+                                      清除当前配置并重置
+                                  </button>
+                               </div>
                           )}
                       </form>
                   )}
@@ -372,10 +372,20 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
                               )}
                           </button>
                           
+                          {/* Explicit Reconfigure Button */}
+                          <button 
+                            type="button"
+                            onClick={() => setMode('config')}
+                            className="w-full flex items-center justify-center gap-2 bg-gray-50 text-blue-600 hover:bg-blue-50 py-2.5 rounded-lg text-xs font-semibold transition-colors mt-4 border border-gray-100 hover:border-blue-100"
+                          >
+                              <Settings size={14} />
+                              修改数据库连接配置 (URL/Key)
+                          </button>
+
                           <button 
                             type="button"
                             onClick={() => setIsOpen(false)}
-                            className="w-full text-center text-gray-400 text-xs hover:text-gray-600 mt-2"
+                            className="w-full text-center text-gray-400 text-xs hover:text-gray-600 mt-1"
                           >
                               取消
                           </button>
