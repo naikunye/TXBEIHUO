@@ -38,9 +38,11 @@ import {
   Megaphone,
   Compass,
   Wand2,
-  FileJson
+  FileJson,
+  Store as StoreIcon,
+  ChevronDown
 } from 'lucide-react';
-import { ReplenishmentRecord } from './types';
+import { ReplenishmentRecord, Store } from './types';
 import { MOCK_DATA_INITIAL } from './constants';
 import { calculateMetrics, formatCurrency } from './utils/calculations';
 import { StatsCard } from './components/StatsCard';
@@ -54,7 +56,8 @@ import { AiChatModal } from './components/AiChatModal';
 import { MarketingModal } from './components/MarketingModal'; 
 import { MarketingDashboard } from './components/MarketingDashboard';
 import { DataBackupModal } from './components/DataBackupModal';
-import { ToastContainer, ToastMessage, ToastType } from './components/Toast'; // Import Toast
+import { StoreManagerModal } from './components/StoreManagerModal'; // New Component
+import { ToastContainer, ToastMessage, ToastType } from './components/Toast'; 
 import { analyzeInventory, generateAdStrategy, generateSelectionStrategy, generateMarketingContent } from './services/geminiService';
 import { supabase, isSupabaseConfigured } from './lib/supabaseClient';
 
@@ -67,9 +70,16 @@ function App() {
     return savedId;
   });
   
-  // Realtime Connection Status: 'disconnected' | 'connecting' | 'connected'
   const [syncStatus, setSyncStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+
+  // --- Store Management State ---
+  const [stores, setStores] = useState<Store[]>(() => {
+    const savedStores = localStorage.getItem('tanxing_stores');
+    return savedStores ? JSON.parse(savedStores) : [];
+  });
+  const [activeStoreId, setActiveStoreId] = useState<string>('all');
+  const [isStoreManagerOpen, setIsStoreManagerOpen] = useState(false);
 
   // --- Data State ---
   const [records, setRecords] = useState<ReplenishmentRecord[]>([]);
@@ -237,7 +247,12 @@ function App() {
     localStorage.setItem('tanxing_records', JSON.stringify(records));
   }, [records, isDataLoaded]);
 
-  // 4. Persist Workspace Selection
+  // 4. Save Stores
+  useEffect(() => {
+      localStorage.setItem('tanxing_stores', JSON.stringify(stores));
+  }, [stores]);
+
+  // 5. Persist Workspace Selection
   useEffect(() => {
       if (workspaceId) {
           localStorage.setItem('tanxing_current_workspace', workspaceId);
@@ -247,7 +262,7 @@ function App() {
   }, [workspaceId]);
 
 
-  // Filter Logic
+  // Filter Logic (Now includes Store ID)
   const filteredRecords = useMemo(() => {
     return records.filter(record => {
       const q = searchQuery.toLowerCase();
@@ -255,9 +270,33 @@ function App() {
         record.productName.toLowerCase().includes(q) ||
         record.sku.toLowerCase().includes(q);
       const matchesStatus = statusFilter === 'All' || record.status === statusFilter;
-      return matchesSearch && matchesStatus;
+      
+      const matchesStore = activeStoreId === 'all' || record.storeId === activeStoreId;
+
+      return matchesSearch && matchesStatus && matchesStore;
     });
-  }, [records, searchQuery, statusFilter]);
+  }, [records, searchQuery, statusFilter, activeStoreId]);
+
+  // --- Store Management Handlers ---
+  const handleAddStore = (newStore: Omit<Store, 'id'>) => {
+      const store: Store = { ...newStore, id: Date.now().toString() };
+      setStores(prev => [...prev, store]);
+      addToast(`店铺 "${store.name}" 已添加`, 'success');
+  };
+
+  const handleDeleteStore = (id: string) => {
+      if (window.confirm("确定删除该店铺吗？相关的库存记录仍会保留，但会显示为未分配。")) {
+          setStores(prev => prev.filter(s => s.id !== id));
+          if (activeStoreId === id) setActiveStoreId('all');
+          addToast('店铺已删除', 'info');
+      }
+  };
+
+  const getActiveStoreColor = () => {
+      if (activeStoreId === 'all') return 'bg-slate-800';
+      const store = stores.find(s => s.id === activeStoreId);
+      return store ? store.color.replace('bg-', 'text-').replace('500', '600') : 'text-slate-600';
+  }
 
   // Handle Create or Update
   const handleSaveRecord = async (recordData: Omit<ReplenishmentRecord, 'id'>) => {
@@ -437,11 +476,13 @@ function App() {
   }
 
   const handleExportCSV = () => {
-    const headers = ['Date', 'Product', 'SKU', 'Lifecycle', 'Qty', 'DOS', 'Method', 'Unit Cost(CNY)', 'Sales Price(USD)', 'Total Cost(USD)', 'Profit(USD)', 'Margin(%)', 'ROI(%)', 'Status'];
+    const headers = ['Date', 'Store', 'Product', 'SKU', 'Lifecycle', 'Qty', 'DOS', 'Method', 'Unit Cost(CNY)', 'Sales Price(USD)', 'Total Cost(USD)', 'Profit(USD)', 'Margin(%)', 'ROI(%)', 'Status'];
     const rows = filteredRecords.map(r => {
       const m = calculateMetrics(r);
+      const storeName = stores.find(s => s.id === r.storeId)?.name || 'General';
       return [
         r.date,
+        `"${storeName}"`,
         `"${r.productName.replace(/"/g, '""')}"`,
         r.sku,
         r.lifecycle || 'New',
@@ -500,15 +541,15 @@ function App() {
   const renderContent = () => {
     switch (currentView) {
       case 'overview':
-        return <HomeOverview records={records} onNavigateToList={() => setCurrentView('inventory')} />;
+        return <HomeOverview records={filteredRecords} stores={stores} currentStoreId={activeStoreId} onNavigateToList={() => setCurrentView('inventory')} />;
       case 'calculator':
         return <CalculatorTool />;
       case 'logistics':
         return <LogisticsTools />;
       case 'analytics':
-        return <AnalyticsDashboard records={records} />;
+        return <AnalyticsDashboard records={filteredRecords} />;
       case 'marketing':
-        return <MarketingDashboard records={records} onGenerate={handleGenerateMarketing} />;
+        return <MarketingDashboard records={filteredRecords} onGenerate={handleGenerateMarketing} />;
       case 'inventory':
       default:
         return (
@@ -615,6 +656,9 @@ function App() {
                           const productTotalCNY = record.quantity * record.unitPriceCNY;
                           const shippingTotalCNY = m.firstLegCostCNY;
                           const totalInvestCNY = productTotalCNY + shippingTotalCNY;
+                          
+                          // Store matching
+                          const store = stores.find(s => s.id === record.storeId);
 
                           return (
                             <tr 
@@ -622,9 +666,13 @@ function App() {
                                 className="hover:bg-blue-50/50 transition-colors group cursor-pointer relative"
                             >
                               <td className="px-6 py-4 whitespace-nowrap" onClick={() => openEditModal(record)}>
-                                <div className="text-sm text-gray-900 font-bold flex items-center gap-2">
-                                    <span className="font-mono">{record.sku}</span>
-                                    <Edit className="w-3 h-3 text-gray-300 group-hover:text-blue-500 opacity-0 group-hover:opacity-100 transition-all" />
+                                <div className="flex items-center gap-2 mb-1">
+                                    {store ? (
+                                        <span className={`w-2 h-2 rounded-full ${store.color}`} title={store.name}></span>
+                                    ) : (
+                                        <span className="w-2 h-2 rounded-full bg-gray-300" title="未分配"></span>
+                                    )}
+                                    <div className="text-sm text-gray-900 font-bold font-mono">{record.sku}</div>
                                 </div>
                                 <div className="mt-2 flex flex-col items-start gap-1.5">
                                   <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium border ${lifecycle.color}`}>
@@ -767,7 +815,7 @@ function App() {
                             {workspaceId ? `云端工作区 (${workspaceId}) 暂无数据` : '没有找到匹配的记录'}
                          </h3>
                          <p className="text-gray-500 text-sm mt-1">
-                            {workspaceId ? '请点击右上角"添加产品"开始协作。' : '尝试调整搜索词或筛选状态。'}
+                            {activeStoreId !== 'all' ? '该店铺暂无备货记录，请点击右上角添加。' : '尝试调整搜索词或筛选状态。'}
                          </p>
                        </div>
                     )}
@@ -811,9 +859,51 @@ function App() {
            </div>
            <div>
              <h1 className="font-bold text-lg tracking-tight">探行科技</h1>
-             <p className="text-xs text-slate-400">智能备货系统 v3.0 AI Pro</p>
+             <p className="text-xs text-slate-400">智能备货系统 v3.1</p>
            </div>
         </div>
+        
+        {/* Store Switcher */}
+        <div className="px-4 pt-4 pb-2">
+           <div className="relative">
+             <div 
+                className="bg-slate-800 rounded-lg p-2 flex items-center justify-between cursor-pointer hover:bg-slate-700 transition-colors border border-slate-700"
+                onClick={() => setIsStoreManagerOpen(true)}
+             >
+                <div className="flex items-center gap-2 overflow-hidden">
+                    <StoreIcon size={16} className="text-slate-400 shrink-0"/>
+                    <span className="text-sm font-medium truncate">店铺管理</span>
+                </div>
+                <div className="bg-slate-600 text-[10px] px-1.5 rounded">{stores.length}</div>
+             </div>
+
+             {/* Store Filter Buttons */}
+             <div className="mt-2 space-y-1">
+                 <button
+                    onClick={() => setActiveStoreId('all')}
+                    className={`w-full text-left px-2 py-1.5 rounded text-xs font-medium transition-colors flex items-center justify-between ${activeStoreId === 'all' ? 'bg-blue-600/20 text-blue-400' : 'text-slate-500 hover:text-slate-300'}`}
+                 >
+                    <span>全部店铺 (All)</span>
+                    {activeStoreId === 'all' && <div className="w-1.5 h-1.5 rounded-full bg-blue-500"></div>}
+                 </button>
+                 {stores.map(store => (
+                     <button
+                        key={store.id}
+                        onClick={() => setActiveStoreId(store.id)}
+                        className={`w-full text-left px-2 py-1.5 rounded text-xs font-medium transition-colors flex items-center justify-between ${activeStoreId === store.id ? 'bg-slate-800 text-white' : 'text-slate-500 hover:text-slate-300'}`}
+                     >
+                        <div className="flex items-center gap-2">
+                           <span className={`w-2 h-2 rounded-full ${store.color}`}></span>
+                           <span className="truncate max-w-[120px]">{store.name}</span>
+                        </div>
+                        {activeStoreId === store.id && <div className="w-1.5 h-1.5 rounded-full bg-white"></div>}
+                     </button>
+                 ))}
+             </div>
+           </div>
+        </div>
+
+        <div className="px-4 py-2 border-t border-slate-800 mt-2"></div>
         
         <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
           {/* ... existing nav buttons ... */}
@@ -937,8 +1027,15 @@ function App() {
             {/* Header Area */}
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
               <div>
-                <h2 className="text-2xl font-bold text-gray-800">
+                <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-3">
                   {getPageTitle()}
+                  {/* Store Context Badge */}
+                  {activeStoreId !== 'all' && (
+                     <span className="text-sm font-medium bg-slate-800 text-white px-3 py-1 rounded-full flex items-center gap-2">
+                        <span className={`w-2 h-2 rounded-full ${stores.find(s => s.id === activeStoreId)?.color}`}></span>
+                        {stores.find(s => s.id === activeStoreId)?.name}
+                     </span>
+                  )}
                 </h2>
                 <p className="text-sm text-gray-500 mt-1">
                   {getPageSubtitle()}
@@ -1036,11 +1133,22 @@ function App() {
          isSyncing={syncStatus === 'connecting'}
       />
 
+      {/* Store Manager Modal */}
+      <StoreManagerModal
+         isOpen={isStoreManagerOpen}
+         onClose={() => setIsStoreManagerOpen(false)}
+         stores={stores}
+         onAddStore={handleAddStore}
+         onDeleteStore={handleDeleteStore}
+      />
+
       <RecordModal 
         isOpen={isModalOpen} 
         onClose={closeModal} 
         onSave={handleSaveRecord} 
         initialData={editingRecord}
+        stores={stores}
+        defaultStoreId={activeStoreId}
       />
       
       {/* AI Chat Modal (Global) */}

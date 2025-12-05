@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { ReplenishmentRecord } from '../types';
-import { X, Upload, Image as ImageIcon, Plane, Ship, RefreshCcw, Package, Box, Percent, Zap, BarChart, Tag, Calculator, DollarSign, RotateCcw, Scale } from 'lucide-react';
+import { ReplenishmentRecord, Store } from '../types';
+import { X, Upload, Image as ImageIcon, Plane, Ship, RefreshCcw, Package, Box, Percent, Zap, BarChart, Tag, Calculator, DollarSign, RotateCcw, Scale, Store as StoreIcon } from 'lucide-react';
 import { EXCHANGE_RATE } from '../constants';
 
 interface RecordModalProps {
@@ -9,11 +9,14 @@ interface RecordModalProps {
   onClose: () => void;
   onSave: (record: Omit<ReplenishmentRecord, 'id'>) => void;
   initialData?: ReplenishmentRecord | null;
+  stores: Store[];
+  defaultStoreId?: string;
 }
 
-export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSave, initialData }) => {
+export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSave, initialData, stores, defaultStoreId }) => {
   const defaultForm = {
     date: new Date().toISOString().split('T')[0],
+    storeId: defaultStoreId && defaultStoreId !== 'all' ? defaultStoreId : '', // Default to current view or empty
     productName: '',
     sku: '',
     lifecycle: 'New' as const, // Default
@@ -65,13 +68,16 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
             ...rest
         });
       } else {
-        setFormData(defaultForm);
+        setFormData({
+            ...defaultForm,
+            storeId: defaultStoreId && defaultStoreId !== 'all' ? defaultStoreId : (stores.length > 0 ? stores[0].id : '')
+        });
       }
       setSkuInput(''); // Reset SKU input
       // Reset currency toggle to CNY on open
       setShippingCurrency('CNY');
     }
-  }, [isOpen, initialData]);
+  }, [isOpen, initialData, defaultStoreId, stores]);
 
   if (!isOpen) return null;
 
@@ -79,7 +85,7 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
     const { name, value } = e.target;
     setFormData(prev => ({
       ...prev,
-      [name]: name === 'date' || name === 'productName' || name === 'sku' || name === 'shippingMethod' || name === 'warehouse' || name === 'imageUrl' || name === 'lifecycle'
+      [name]: name === 'date' || name === 'productName' || name === 'sku' || name === 'shippingMethod' || name === 'warehouse' || name === 'imageUrl' || name === 'lifecycle' || name === 'storeId'
         ? value 
         : parseFloat(value) || 0
     }));
@@ -214,9 +220,27 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
           
           {/* Section 1: Product Basic Info */}
           <div className="col-span-1 md:col-span-2 space-y-4">
-            <div className="flex items-center gap-2 mb-2 pb-2 border-b border-gray-100">
-              <span className="w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold text-sm">1</span>
-              <h3 className="text-base font-bold text-gray-800">产品基础信息</h3>
+            <div className="flex items-center gap-2 mb-2 pb-2 border-b border-gray-100 justify-between">
+              <div className="flex items-center gap-2">
+                <span className="w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold text-sm">1</span>
+                <h3 className="text-base font-bold text-gray-800">产品与店铺信息</h3>
+              </div>
+              
+              {/* Store Selector Highlight */}
+              <div className="flex items-center gap-2 bg-purple-50 px-3 py-1 rounded-lg border border-purple-100">
+                 <StoreIcon size={16} className="text-purple-600"/>
+                 <select 
+                    name="storeId" 
+                    value={formData.storeId} 
+                    onChange={handleChange}
+                    className="bg-transparent text-sm font-bold text-purple-700 outline-none cursor-pointer min-w-[120px]"
+                 >
+                    <option value="">未分配店铺 (General)</option>
+                    {stores.map(s => (
+                        <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                 </select>
+              </div>
             </div>
             
             <div className="flex flex-col md:flex-row gap-6">

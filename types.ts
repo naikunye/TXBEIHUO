@@ -1,12 +1,19 @@
 
-
 export type ShippingMethod = 'Sea' | 'Air';
 
 export type LifecycleStatus = 'New' | 'Growth' | 'Stable' | 'Clearance';
 
+export interface Store {
+  id: string;
+  name: string;
+  color: string; // e.g., 'bg-blue-500' or hex
+  platform: 'TikTok' | 'Amazon' | 'Temu' | 'Other';
+}
+
 // Core data model matching your business logic
 export interface ReplenishmentRecord {
   id: string;
+  storeId?: string; // New: Link to a store
   date: string;
   productName: string;
   sku: string;

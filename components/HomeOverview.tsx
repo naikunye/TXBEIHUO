@@ -1,5 +1,6 @@
+
 import React, { useMemo, useState } from 'react';
-import { ReplenishmentRecord } from '../types';
+import { ReplenishmentRecord, Store } from '../types';
 import { calculateMetrics, formatCurrency } from '../utils/calculations';
 import { 
   TrendingUp, 
@@ -14,15 +15,18 @@ import {
   BarChart3,
   LineChart,
   PieChart as PieChartIcon,
-  ChevronDown
+  ChevronDown,
+  Store as StoreIcon
 } from 'lucide-react';
 
 interface HomeOverviewProps {
   records: ReplenishmentRecord[];
+  stores: Store[];
   onNavigateToList: () => void;
+  currentStoreId: string;
 }
 
-export const HomeOverview: React.FC<HomeOverviewProps> = ({ records, onNavigateToList }) => {
+export const HomeOverview: React.FC<HomeOverviewProps> = ({ records, stores, onNavigateToList, currentStoreId }) => {
   const [chartType, setChartType] = useState<'bar' | 'line' | 'pie'>('bar');
 
   // Aggregation Logic
@@ -36,6 +40,7 @@ export const HomeOverview: React.FC<HomeOverviewProps> = ({ records, onNavigateT
     
     const statusCounts = { Planning: 0, Shipped: 0, Arrived: 0 };
     const topProducts: { name: string; profit: number; roi: number; sku: string }[] = [];
+    const storeProfitMap: Record<string, number> = {};
 
     records.forEach(r => {
       const m = calculateMetrics(r);
@@ -55,6 +60,10 @@ export const HomeOverview: React.FC<HomeOverviewProps> = ({ records, onNavigateT
         profit: m.estimatedProfitUSD * r.quantity,
         roi: m.roi
       });
+
+      // Aggregate for Store Profit Chart (if storeId exists)
+      const sId = r.storeId || 'unknown';
+      storeProfitMap[sId] = (storeProfitMap[sId] || 0) + (m.estimatedProfitUSD * r.quantity);
     });
 
     // Sort Top Products
@@ -63,6 +72,18 @@ export const HomeOverview: React.FC<HomeOverviewProps> = ({ records, onNavigateT
     // ROI
     const totalInvestUSD = totalInvestCNY / 7.3; // Approx exchange for aggregate
     const overallROI = totalInvestUSD > 0 ? (totalProfitUSD / totalInvestUSD) * 100 : 0;
+    
+    // Store Ranking Data
+    const storeRanking = Object.entries(storeProfitMap)
+        .map(([id, profit]) => {
+            const store = stores.find(s => s.id === id);
+            return {
+                name: store ? store.name : (id === 'unknown' ? '未分配' : '未知'),
+                profit,
+                color: store ? store.color : 'bg-gray-400'
+            };
+        })
+        .sort((a, b) => b.profit - a.profit);
 
     return {
       totalInvestCNY,
@@ -72,9 +93,10 @@ export const HomeOverview: React.FC<HomeOverviewProps> = ({ records, onNavigateT
       airCostCNY,
       seaCostCNY,
       statusCounts,
-      topProducts: topProducts.slice(0, 4)
+      topProducts: topProducts.slice(0, 4),
+      storeRanking
     };
-  }, [records]);
+  }, [records, stores]);
 
   // Dynamic Chart Data Preparation
   const chartVisualizationData = useMemo(() => {
@@ -414,59 +436,80 @@ export const HomeOverview: React.FC<HomeOverviewProps> = ({ records, onNavigateT
           </div>
         </div>
 
-        {/* Status Pipeline */}
+        {/* Status Pipeline / Store Leaderboard */}
         <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-200 lg:col-span-2">
            <div className="flex justify-between items-center mb-6">
               <h4 className="font-bold text-gray-800 flex items-center gap-2">
-                <Activity className="text-purple-500" size={18}/>
-                备货状态分布
+                {currentStoreId === 'all' ? <StoreIcon className="text-purple-500" size={18}/> : <Activity className="text-purple-500" size={18}/>}
+                {currentStoreId === 'all' ? '店铺利润贡献排行' : '备货状态分布'}
               </h4>
               <button onClick={onNavigateToList} className="text-xs text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1">
                 查看详情 <ArrowRight size={12} />
               </button>
            </div>
            
-           <div className="grid grid-cols-3 gap-4 h-40">
-              {/* Planning */}
-              <div className="bg-yellow-50 rounded-xl p-4 flex flex-col justify-between border border-yellow-100 relative overflow-hidden">
-                 <div className="absolute right-0 bottom-0 opacity-10 transform translate-x-2 translate-y-2">
-                    <Activity size={60} />
-                 </div>
-                 <span className="text-yellow-800 font-medium text-sm">计划中 (Planning)</span>
-                 <div className="flex items-end gap-2">
-                    <span className="text-3xl font-bold text-yellow-900">{data.statusCounts.Planning}</span>
-                    <span className="text-xs text-yellow-700 mb-1">单</span>
-                 </div>
-              </div>
-              
-              {/* Shipped */}
-              <div className="bg-blue-50 rounded-xl p-4 flex flex-col justify-between border border-blue-100 relative overflow-hidden">
-                 <div className="absolute right-0 bottom-0 opacity-10 transform translate-x-2 translate-y-2">
-                    <Ship size={60} />
-                 </div>
-                 <span className="text-blue-800 font-medium text-sm">运输中 (Shipped)</span>
-                 <div className="flex items-end gap-2">
-                    <span className="text-3xl font-bold text-blue-900">{data.statusCounts.Shipped}</span>
-                    <span className="text-xs text-blue-700 mb-1">单</span>
-                 </div>
-              </div>
+           {currentStoreId === 'all' ? (
+                // Store Ranking View
+                <div className="space-y-4">
+                    {data.storeRanking.map((s, idx) => (
+                        <div key={idx} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
+                             <div className="flex items-center gap-3">
+                                 <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-xs ${s.color}`}>
+                                     {idx + 1}
+                                 </div>
+                                 <span className="font-bold text-gray-700">{s.name}</span>
+                             </div>
+                             <div className="text-right">
+                                 <div className="text-sm font-bold text-gray-900">${s.profit.toLocaleString(undefined, {maximumFractionDigits: 0})}</div>
+                                 <div className="text-[10px] text-gray-400">Total Profit</div>
+                             </div>
+                        </div>
+                    ))}
+                    {data.storeRanking.length === 0 && <div className="text-gray-400 text-sm text-center py-4">暂无店铺数据</div>}
+                </div>
+           ) : (
+                // Status Pipeline View
+                <div className="grid grid-cols-3 gap-4 h-40">
+                    <div className="bg-yellow-50 rounded-xl p-4 flex flex-col justify-between border border-yellow-100 relative overflow-hidden">
+                        <div className="absolute right-0 bottom-0 opacity-10 transform translate-x-2 translate-y-2">
+                            <Activity size={60} />
+                        </div>
+                        <span className="text-yellow-800 font-medium text-sm">计划中</span>
+                        <div className="flex items-end gap-2">
+                            <span className="text-3xl font-bold text-yellow-900">{data.statusCounts.Planning}</span>
+                            <span className="text-xs text-yellow-700 mb-1">单</span>
+                        </div>
+                    </div>
+                    
+                    <div className="bg-blue-50 rounded-xl p-4 flex flex-col justify-between border border-blue-100 relative overflow-hidden">
+                        <div className="absolute right-0 bottom-0 opacity-10 transform translate-x-2 translate-y-2">
+                            <Ship size={60} />
+                        </div>
+                        <span className="text-blue-800 font-medium text-sm">运输中</span>
+                        <div className="flex items-end gap-2">
+                            <span className="text-3xl font-bold text-blue-900">{data.statusCounts.Shipped}</span>
+                            <span className="text-xs text-blue-700 mb-1">单</span>
+                        </div>
+                    </div>
 
-              {/* Arrived */}
-              <div className="bg-green-50 rounded-xl p-4 flex flex-col justify-between border border-green-100 relative overflow-hidden">
-                 <div className="absolute right-0 bottom-0 opacity-10 transform translate-x-2 translate-y-2">
-                    <Package size={60} />
-                 </div>
-                 <span className="text-green-800 font-medium text-sm">已入库 (Arrived)</span>
-                 <div className="flex items-end gap-2">
-                    <span className="text-3xl font-bold text-green-900">{data.statusCounts.Arrived}</span>
-                    <span className="text-xs text-green-700 mb-1">单</span>
-                 </div>
-              </div>
-           </div>
+                    <div className="bg-green-50 rounded-xl p-4 flex flex-col justify-between border border-green-100 relative overflow-hidden">
+                        <div className="absolute right-0 bottom-0 opacity-10 transform translate-x-2 translate-y-2">
+                            <Package size={60} />
+                        </div>
+                        <span className="text-green-800 font-medium text-sm">已入库</span>
+                        <div className="flex items-end gap-2">
+                            <span className="text-3xl font-bold text-green-900">{data.statusCounts.Arrived}</span>
+                            <span className="text-xs text-green-700 mb-1">单</span>
+                        </div>
+                    </div>
+                </div>
+           )}
 
-           {/* Profit Leaderboard */}
+           {/* Profit Leaderboard (Product Level) */}
            <div className="mt-6 pt-6 border-t border-gray-100">
-              <h5 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">利润贡献 TOP 4</h5>
+              <h5 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
+                  {currentStoreId === 'all' ? '全局爆品 TOP 4' : '本店爆品 TOP 4'}
+              </h5>
               <div className="space-y-3">
                  {data.topProducts.map((p, i) => (
                     <div key={i} className="flex items-center justify-between p-2 hover:bg-gray-50 rounded-lg transition-colors">
