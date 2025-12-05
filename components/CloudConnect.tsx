@@ -1,7 +1,21 @@
 import React, { useState, useEffect } from 'react';
-import { Cloud, CloudLightning, CloudOff, Users, CheckCircle2, Loader2, LogOut, Database, AlertCircle, Settings, Key, Link, RefreshCcw } from 'lucide-react';
+import { Cloud, CloudLightning, CloudOff, Users, CheckCircle2, Loader2, LogOut, Database, AlertCircle, Settings, Key, Link, RefreshCcw, FileCode, Copy, Check } from 'lucide-react';
 import { supabase, saveSupabaseConfig, clearSupabaseConfig, isSupabaseConfigured } from '../lib/supabaseClient';
 import { createClient } from '@supabase/supabase-js';
+
+const INIT_SQL = `-- 1. 创建数据表
+create table if not exists replenishment_data (
+  id text primary key,
+  workspace_id text not null,
+  json_content jsonb not null,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+-- 2. 创建索引
+create index if not exists idx_workspace_id on replenishment_data(workspace_id);
+
+-- 3. 关闭 RLS (允许读写)
+alter table replenishment_data disable row level security;`;
 
 interface CloudConnectProps {
   currentWorkspaceId: string | null;
@@ -17,7 +31,9 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
   isSyncing 
 }) => {
   const [isOpen, setIsOpen] = useState(false);
-  const [mode, setMode] = useState<'connect' | 'config'>('connect'); // 'connect' = 输入WorkspaceID, 'config' = 输入URL/Key
+  const [mode, setMode] = useState<'connect' | 'config'>('connect'); 
+  const [showSql, setShowSql] = useState(false);
+  const [copied, setCopied] = useState(false);
   
   // Workspace ID State
   const [inputId, setInputId] = useState('');
@@ -36,13 +52,18 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
     if (!configured) {
         setMode('config');
     }
-  }, [isOpen]); // Check every time modal opens
+  }, [isOpen]);
+
+  const handleCopySql = () => {
+      navigator.clipboard.writeText(INIT_SQL);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+  };
 
   // 1. 验证并保存 Supabase URL/Key
   const handleVerifyAndSave = async (e: React.FormEvent) => {
       e.preventDefault();
       
-      // 自动清理 URL 末尾的斜杠
       let url = configUrl.trim().replace(/\/$/, "");
       const key = configKey.trim();
 
@@ -50,7 +71,6 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
           setErrorMsg("请输入完整的 URL 和 Anon Key");
           return;
       }
-      // 简单验证格式
       if (!url.startsWith('http')) {
           setErrorMsg("URL 必须以 http 或 https 开头");
           return;
@@ -60,10 +80,8 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
       setErrorMsg(null);
 
       try {
-          // 创建一个临时的 client 来测试连接，不影响全局实例
           const tempClient = createClient(url, key);
           
-          // 尝试查询数据表，只取一行，甚至不取数据只检查连接
           const { error } = await tempClient
               .from('replenishment_data')
               .select('id')
@@ -72,11 +90,11 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
           if (error) {
              console.error("Verification error:", error);
              
-             // 分析错误类型
              if (error.code === '42P01' || error.message.includes('does not exist')) {
-                 throw new Error("连接成功，但数据库表 'replenishment_data' 不存在。请在 Supabase SQL Editor 中运行建表代码。");
+                 setShowSql(true); // Auto show SQL if table missing
+                 throw new Error("连接成功，但数据库表 'replenishment_data' 不存在。请点击下方按钮复制 SQL 并在 Supabase 执行。");
              } else if (error.code === 'PGRST301' || error.message.includes('JWT') || error.message.includes('API key') || error.code === '28P01') {
-                 throw new Error("认证失败：API Key 无效或不匹配。请检查 Key 是否正确。");
+                 throw new Error("认证失败：API Key 无效或不匹配。");
              } else if (error.message.includes('FetchError') || error.message.includes('Failed to fetch')) {
                  throw new Error("网络连接失败：无法访问该 Supabase URL，请检查网址。");
              } else {
@@ -84,9 +102,8 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
              }
           }
 
-          // 如果没有抛出错误，说明连接成功且表存在
           saveSupabaseConfig(url, key);
-          setMode('connect'); // Switch to connect mode after successful save (though reload usually happens)
+          setMode('connect'); 
           
       } catch (err: any) {
           setErrorMsg(err.message || "未知错误，请重试。");
@@ -103,18 +120,17 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
     setErrorMsg(null);
 
     try {
-        // 使用全局 client (已经配置好) 进行连接
         const { error } = await supabase
             .from('replenishment_data')
             .select('id')
             .limit(1);
 
         if (error) {
-            // 这里通常不应该发生，因为 Save 阶段已经验证过了。
             if (error.code === '42P01') {
+                 setShowSql(true);
                  throw new Error("数据库表不存在，请重新配置数据库或运行 SQL。");
             } else {
-                 throw new Error("无法读取数据，请检查网络或重新配置数据库。可能 Key 已失效。");
+                 throw new Error("无法读取数据，可能 Key 已失效，请重置配置。");
             }
         }
 
@@ -138,7 +154,7 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
   
   const handleClearConfig = () => {
       if(window.confirm('确定要清除保存的 Supabase URL 和 Key，并退出当前工作区吗？')) {
-          onDisconnect(); // Disconnect state first
+          onDisconnect();
           clearSupabaseConfig();
       }
   };
@@ -217,10 +233,10 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
 
       {isOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40 backdrop-blur-sm p-4 animate-fade-in">
-           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden flex flex-col max-h-[90vh]">
               
               {/* Header */}
-              <div className="bg-slate-900 p-6 text-white relative">
+              <div className="bg-slate-900 p-6 text-white relative flex-shrink-0">
                   <div className="flex items-center justify-center mb-3">
                       <div className="bg-white/10 p-3 rounded-full backdrop-blur-sm">
                         {mode === 'config' ? <Settings size={24} className="text-blue-300"/> : <Database size={24} className="text-emerald-300" />}
@@ -244,7 +260,7 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
                   )}
               </div>
               
-              <div className="p-6">
+              <div className="p-6 overflow-y-auto custom-scrollbar">
                   {/* --- Mode: Config URL/Key --- */}
                   {mode === 'config' && (
                       <form onSubmit={handleVerifyAndSave} className="space-y-4">
@@ -278,7 +294,7 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
                           </div>
 
                           {errorMsg && (
-                              <div className="bg-red-50 border border-red-100 p-3 rounded-lg flex gap-2 items-start">
+                              <div className="bg-red-50 border border-red-100 p-3 rounded-lg flex gap-2 items-start animate-fade-in">
                                   <AlertCircle size={16} className="text-red-500 flex-shrink-0 mt-0.5" />
                                   <div className="text-xs text-red-600 leading-tight">
                                       {errorMsg}
@@ -294,32 +310,58 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
                                {isLoading ? (
                                   <>
                                     <Loader2 size={18} className="animate-spin" />
-                                    验证连接并保存...
+                                    验证连接...
                                   </>
                               ) : (
                                   '验证并保存配置'
                               )}
                           </button>
                           
+                          {/* SQL Helper Button */}
+                          <div className="pt-2 border-t border-gray-100 mt-2">
+                             <button
+                                type="button"
+                                onClick={() => setShowSql(!showSql)}
+                                className="text-xs text-blue-500 flex items-center gap-1 hover:underline mx-auto"
+                             >
+                                <FileCode size={12} />
+                                {showSql ? '隐藏 SQL 代码' : '查看 Supabase 建表 SQL'}
+                             </button>
+                             
+                             {showSql && (
+                                <div className="mt-2 bg-slate-800 rounded-lg p-3 relative group animate-fade-in">
+                                    <pre className="text-[10px] text-slate-300 overflow-x-auto whitespace-pre-wrap font-mono leading-relaxed">
+                                        {INIT_SQL}
+                                    </pre>
+                                    <button 
+                                        type="button"
+                                        onClick={handleCopySql}
+                                        className="absolute top-2 right-2 p-1.5 bg-white/10 hover:bg-white/20 rounded-md text-white transition-colors"
+                                        title="复制 SQL"
+                                    >
+                                        {copied ? <Check size={14} className="text-green-400"/> : <Copy size={14} />}
+                                    </button>
+                                </div>
+                             )}
+                          </div>
+
                           {isConfigured && !isLoading && (
-                              <button 
-                                type="button" 
-                                onClick={() => setMode('connect')}
-                                className="w-full text-center text-gray-400 text-xs hover:text-gray-600 mt-2"
-                              >
-                                  返回连接
-                              </button>
-                          )}
-                          {isConfigured && !isLoading && (
-                               <div className="pt-2">
+                              <div className="flex flex-col gap-2 mt-2">
+                                  <button 
+                                    type="button" 
+                                    onClick={() => setMode('connect')}
+                                    className="w-full text-center text-gray-400 text-xs hover:text-gray-600"
+                                  >
+                                      返回连接
+                                  </button>
                                   <button 
                                     type="button" 
                                     onClick={handleClearConfig}
-                                    className="w-full text-center text-red-400 hover:text-red-500 text-xs mt-2 border border-red-100 py-2 rounded-lg bg-red-50/50"
+                                    className="w-full text-center text-red-400 hover:text-red-500 text-xs border border-red-100 py-2 rounded-lg bg-red-50/50"
                                   >
-                                      清除当前配置并重置
+                                      清除配置并重置
                                   </button>
-                               </div>
+                              </div>
                           )}
                       </form>
                   )}
@@ -354,6 +396,23 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
                               </div>
                           )}
 
+                          {showSql && (
+                                <div className="bg-slate-800 rounded-lg p-3 relative group animate-fade-in mb-4">
+                                    <p className="text-[10px] text-slate-400 mb-1">请在 Supabase SQL Editor 执行：</p>
+                                    <pre className="text-[10px] text-slate-300 overflow-x-auto whitespace-pre-wrap font-mono leading-relaxed">
+                                        {INIT_SQL}
+                                    </pre>
+                                    <button 
+                                        type="button"
+                                        onClick={handleCopySql}
+                                        className="absolute top-2 right-2 p-1.5 bg-white/10 hover:bg-white/20 rounded-md text-white transition-colors"
+                                        title="复制 SQL"
+                                    >
+                                        {copied ? <Check size={14} className="text-green-400"/> : <Copy size={14} />}
+                                    </button>
+                                </div>
+                           )}
+
                           <button 
                             type="submit" 
                             disabled={isLoading}
@@ -375,7 +434,7 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
                           {/* Explicit Reconfigure Button */}
                           <button 
                             type="button"
-                            onClick={() => setMode('config')}
+                            onClick={() => { setShowSql(false); setMode('config'); }}
                             className="w-full flex items-center justify-center gap-2 bg-gray-50 text-blue-600 hover:bg-blue-50 py-2.5 rounded-lg text-xs font-semibold transition-colors mt-4 border border-gray-100 hover:border-blue-100"
                           >
                               <Settings size={14} />
