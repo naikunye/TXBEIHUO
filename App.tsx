@@ -602,6 +602,7 @@ function App() {
                           <th scope="col" className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">SKU / 阶段</th>
                           <th scope="col" className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">产品信息</th>
                           <th scope="col" className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">物流 (Vol & Wgt)</th>
+                          <th scope="col" className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">资金投入 (Total)</th>
                           <th scope="col" className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">库存状态 (DOS)</th>
                           <th scope="col" className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">销售表现</th>
                           <th scope="col" className="px-6 py-4 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">操作</th>
@@ -611,6 +612,10 @@ function App() {
                         {filteredRecords.map((record) => {
                           const m = calculateMetrics(record);
                           const lifecycle = getLifecycleBadge(record.lifecycle);
+                          const productTotalCNY = record.quantity * record.unitPriceCNY;
+                          const shippingTotalCNY = m.firstLegCostCNY;
+                          const totalInvestCNY = productTotalCNY + shippingTotalCNY;
+
                           return (
                             <tr 
                                 key={record.id} 
@@ -668,6 +673,22 @@ function App() {
                                       <span className="font-mono">{m.totalVolumeCbm > 0 ? `${m.totalVolumeCbm.toFixed(3)} CBM` : '-'}</span>
                                   </div>
                                 </div>
+                              </td>
+                              {/* New Column: Total Investment */}
+                              <td className="px-6 py-4 whitespace-nowrap" onClick={() => openEditModal(record)}>
+                                  <div className="flex flex-col gap-0.5">
+                                      <span className="text-sm font-bold text-blue-900 font-mono">
+                                          {formatCurrency(totalInvestCNY, 'CNY')}
+                                      </span>
+                                      <span className="text-[10px] text-gray-500 flex items-center gap-1">
+                                          <span className="w-1.5 h-1.5 rounded-full bg-blue-400"></span>
+                                          货: {formatCurrency(productTotalCNY, 'CNY')}
+                                      </span>
+                                      <span className="text-[10px] text-gray-500 flex items-center gap-1">
+                                          <span className="w-1.5 h-1.5 rounded-full bg-orange-400"></span>
+                                          运: {formatCurrency(shippingTotalCNY, 'CNY')}
+                                      </span>
+                                  </div>
                               </td>
                               <td className="px-6 py-4 whitespace-nowrap" onClick={() => openEditModal(record)}>
                                 <div className="space-y-1">
