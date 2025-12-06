@@ -1362,6 +1362,7 @@ function App() {
         onClose={() => setIsErpSyncOpen(false)}
         records={records}
         onUpdateRecords={handleErpUpdate}
+        currentStoreId={activeStoreId === 'all' ? undefined : activeStoreId} // PASS STORE ID
       />
 
       {/* Distribute Modal */}

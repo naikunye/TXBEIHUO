@@ -9,13 +9,14 @@ interface ErpSyncModalProps {
   onClose: () => void;
   records: ReplenishmentRecord[];
   onUpdateRecords: (updatedRecords: ReplenishmentRecord[]) => void;
+  currentStoreId?: string; // New prop
 }
 
 type SyncType = 'inventory' | 'sales';
 type ErpPlatform = 'lingxing' | 'miaoshou';
 type SyncItem = { sku: string; oldVal: number; newVal: number; name: string; status: 'match' | 'new' | 'error' };
 
-export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, records, onUpdateRecords }) => {
+export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, records, onUpdateRecords, currentStoreId }) => {
   const [platform, setPlatform] = useState<ErpPlatform>('lingxing');
   const [activeTab, setActiveTab] = useState<'import' | 'api'>('import');
   const [syncType, setSyncType] = useState<SyncType>('inventory');
@@ -255,6 +256,7 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
                   shippingMethod: 'Air', shippingUnitPriceCNY: 0, materialCostCNY: 0, customsFeeCNY: 0, portFeeCNY: 0,
                   salesPriceUSD: 0, lastMileCostUSD: 0, adCostUSD: 0, platformFeeRate: 2, affiliateCommissionRate: 0, additionalFixedFeeUSD: 0, returnRate: 0,
                   warehouse: 'Default Warehouse',
+                  storeId: currentStoreId || undefined, // Assign to current store if selected
               };
               newRecords.push(newRecord);
               createCount++;
