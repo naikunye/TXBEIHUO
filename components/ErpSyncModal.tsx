@@ -549,6 +549,7 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
                             <div className="bg-slate-900 text-white p-4 rounded-xl font-mono text-xs leading-6">
                                 <div className="flex items-center gap-2 text-slate-400"><Folder size={14}/> tanxing-proxy (根文件夹)</div>
                                 <div className="flex items-center gap-2 ml-4">├── <FileCode size={14} className="text-green-400"/> package.json</div>
+                                <div className="flex items-center gap-2 ml-4">├── <FileCode size={14} className="text-yellow-400"/> vercel.json</div>
                                 <div className="flex items-center gap-2 ml-4 text-blue-300">└── <Folder size={14} className="text-blue-400"/> api/ <span className="text-red-400 ml-2">(⚠️ 必须新建这个文件夹)</span></div>
                                 <div className="flex items-center gap-2 ml-10">└── <FileCode size={14} className="text-blue-200"/> proxy.js <span className="text-gray-500 ml-2">(文件放这里面)</span></div>
                             </div>
