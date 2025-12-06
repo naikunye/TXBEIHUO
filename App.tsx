@@ -1,3 +1,4 @@
+
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   LayoutDashboard, 
@@ -269,12 +270,17 @@ function App() {
   };
 
   const handleReceiveStockFromPO = (po: PurchaseOrder) => {
-      // Find the record linked to this PO's SKU
+      // 1. ALWAYS update the Purchase Order status first to ensure the flow completes
+      // The `po` passed here already has status='Arrived', so we just need to save it.
+      handleUpdatePO(po);
+
+      // 2. Try to update Inventory
       const record = records.find(r => r.sku === po.sku);
       if (record) {
           const updatedRecord = { 
               ...record, 
               quantity: record.quantity + po.quantity,
+              // Optional: also mark the product status as Arrived if it was in planning
               status: 'Arrived' as const 
           };
           // Save Record
@@ -282,12 +288,10 @@ function App() {
           setRecords(updatedRecords);
           localStorage.setItem('tanxing_records', JSON.stringify(updatedRecords));
           
-          // Update PO status
-          handleUpdatePO(po);
-          
-          addToast(`已成功入库 ${po.quantity} 件，库存已更新。`, "success");
+          addToast(`采购单已归档，库存增加 ${po.quantity} 件。`, "success");
       } else {
-          addToast(`找不到 SKU ${po.sku} 的对应商品档案，无法自动入库。`, "error");
+          // Warning: PO closed, but no stock added
+          addToast(`采购单已归档 (Arrived)，但未找到 SKU ${po.sku} 的库存记录，未增加库存。`, "warning");
       }
   };
 
