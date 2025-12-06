@@ -35,7 +35,6 @@ export const resetMockErpData = () => {
     localStorage.removeItem(STORAGE_KEY_MOCK_DB);
 };
 
-// Simulate "ERP Only" products that aren't in the local system yet
 const MOCK_ERP_EXTRA_ITEMS = [
     { sku: 'LX-NEW-2025', productName: '2025新款无线充 (ERP)', defaultStock: 500, defaultSales: 35 },
     { sku: 'LX-ACC-007', productName: '磁吸手机支架 Pro', defaultStock: 120, defaultSales: 8 }
@@ -51,7 +50,6 @@ export const updateMockErpItem = (sku: string, field: 'stock' | 'sales', value: 
     saveMockDb(db);
 };
 
-// NEW: Bulk Import Real Data with Normalization
 export const bulkImportRealData = (data: { sku: string; qty: number }[]) => {
     const db = getMockDb();
     let count = 0;
@@ -66,62 +64,92 @@ export const bulkImportRealData = (data: { sku: string; qty: number }[]) => {
     return count;
 };
 
-// Helper to get data and optionally APPLY JITTER (simulate live changes)
 const getAndJitterMockData = (sku: string, productName: string, baseQty: number, baseSales: number, applyJitter: boolean) => {
     const db = getMockDb();
     const cleanSku = sku.trim();
-    
-    // Initialize if missing
     if (!db[cleanSku]) {
         db[cleanSku] = {
             stock: Math.max(0, baseQty),
             sales: parseFloat(baseSales.toFixed(1))
         };
     }
-
-    // Apply Jitter (Simulate sales reducing stock, or inbound increasing it)
     if (applyJitter) {
-        const stockChange = Math.floor(Math.random() * 5) - 2; // -2 to +2 variation
+        const stockChange = Math.floor(Math.random() * 5) - 2; 
         let newStock = db[cleanSku].stock + stockChange;
         if (newStock < 0) newStock = 0;
-        
-        // Small chance of restocking event
         if (Math.random() > 0.95) newStock += 50;
-
         db[cleanSku].stock = newStock;
-        
-        // Sales fluctuation
-        const salesChange = (Math.random() - 0.5) * 2; // +/- 1
+        const salesChange = (Math.random() - 0.5) * 2; 
         let newSales = db[cleanSku].sales + salesChange;
         if (newSales < 0) newSales = 0;
         db[cleanSku].sales = parseFloat(newSales.toFixed(1));
     }
-
     saveMockDb(db);
     return db[cleanSku];
 };
 
-// Helper to safely fetch JSON from proxy
-const safeJsonFetch = async (url: string, payload: any) => {
-    const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-    });
+// --- SMART FETCH LOGIC ---
+// Automatically tries multiple paths if the base one fails (404 or HTML response)
+const smartFetch = async (userProvidedUrl: string, endpointType: 'inventory' | 'sales', payload: any) => {
+    const cleanBase = userProvidedUrl.trim().replace(/\/$/, '');
+    
+    // Priority of paths to try
+    // 1. As-is (User might have pasted full path)
+    // 2. /api/proxy (Standard Vercel)
+    // 3. /api (Alternate)
+    const candidates = [
+        cleanBase, 
+        `${cleanBase}/api/proxy`,
+        `${cleanBase}/api`
+    ];
+    
+    // Remove duplicates
+    const uniqueCandidates = [...new Set(candidates)];
+    
+    let lastError: Error | null = null;
 
-    const contentType = response.headers.get("content-type");
-    if (contentType && contentType.indexOf("application/json") === -1) {
-        // We got HTML or Text instead of JSON (likely 404 or 500 from Vercel)
-        const text = await response.text();
-        console.error("Proxy returned non-JSON:", text);
-        throw new Error(`代理服务器响应格式错误(404/500)。请检查 URL 是否正确 (应以 /api/proxy 结尾)。`);
+    for (const baseUrl of uniqueCandidates) {
+        const fullUrl = `${baseUrl}?endpoint=${endpointType}`;
+        console.log(`[SmartFetch] Trying: ${fullUrl}`);
+
+        try {
+            const response = await fetch(fullUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            // If 404, we assume wrong path and continue to next candidate
+            if (response.status === 404) {
+                console.warn(`[SmartFetch] 404 at ${fullUrl}, trying next...`);
+                continue; 
+            }
+
+            const contentType = response.headers.get("content-type");
+            
+            // If 200 OK but HTML (Vercel landing page), it's also a wrong path
+            if (response.ok && contentType && !contentType.includes("application/json")) {
+                console.warn(`[SmartFetch] Got HTML at ${fullUrl}, trying next...`);
+                continue;
+            }
+
+            if (!response.ok) {
+                const txt = await response.text();
+                throw new Error(`Server Error ${response.status}: ${txt}`);
+            }
+
+            // Success!
+            return await response.json();
+
+        } catch (e: any) {
+            console.warn(`[SmartFetch] Failed at ${fullUrl}`, e);
+            lastError = e;
+            // Network errors (e.g. DNS) -> Try next
+            // But if we exhausted list, we throw
+        }
     }
 
-    if (!response.ok) {
-        throw new Error(`代理服务器报错: ${response.statusText}`);
-    }
-
-    return await response.json();
+    throw lastError || new Error(`连接失败 (404/500)。请检查 URL 是否正确。`);
 };
 
 export const fetchLingxingInventory = async (
@@ -131,30 +159,21 @@ export const fetchLingxingInventory = async (
   proxyUrl?: string
 ): Promise<LingxingInventoryItem[]> => {
   
-  // 1. Real API Mode
   if (proxyUrl && proxyUrl.startsWith('http')) {
       if (!appId || !accessToken) throw new Error("真实连接需要 App ID 和 Token");
-      try {
-          // FIX: Use Query Params instead of path to avoid Vercel 404s without rewrites
-          // Ensure no double slash, and append query param
-          const baseUrl = proxyUrl.replace(/\/$/, '');
-          const endpoint = `${baseUrl}?endpoint=inventory`; 
-          
-          return await safeJsonFetch(endpoint, { appId, accessToken, skus: localRecords.map(r => r.sku) });
-      } catch (e) {
-          console.warn("Real API call failed.", e);
-          throw new Error(`${e instanceof Error ? e.message : '未知错误'}`);
-      }
+      
+      // Use Smart Fetch
+      return await smartFetch(proxyUrl, 'inventory', { 
+          appId, 
+          accessToken, 
+          skus: localRecords.map(r => r.sku) 
+      });
   }
 
-  // 2. Offline / Simulation Mode
+  // Offline / Simulation Mode
   await new Promise(resolve => setTimeout(resolve, 600)); 
-  
   const results: LingxingInventoryItem[] = [];
-
-  // A. Process Local Records (Matched)
   localRecords.forEach(record => {
-      // Simulate live change (jitter) so user sees updates
       const data = getAndJitterMockData(record.sku, record.productName, record.quantity, record.dailySales, true);
       results.push({
           sku: record.sku,
@@ -164,13 +183,9 @@ export const fetchLingxingInventory = async (
           onWayStock: 0
       });
   });
-
-  // B. Inject "ERP Only" Items (Discovery)
   MOCK_ERP_EXTRA_ITEMS.forEach(extra => {
-      // Only add if not already matched by a local record (case-insensitive check)
       const exists = localRecords.some(r => r.sku.toLowerCase() === extra.sku.toLowerCase());
       if (!exists) {
-          // Don't apply jitter heavily to these static ones, or do it gently
           const data = getAndJitterMockData(extra.sku, extra.productName, extra.defaultStock, extra.defaultSales, false);
           results.push({
               sku: extra.sku,
@@ -181,7 +196,6 @@ export const fetchLingxingInventory = async (
           });
       }
   });
-
   return results;
 };
 
@@ -194,28 +208,20 @@ export const fetchLingxingSales = async (
   ): Promise<LingxingSalesItem[]> => {
     
     if (proxyUrl && proxyUrl.startsWith('http')) {
-        try {
-            // FIX: Use Query Params
-            const baseUrl = proxyUrl.replace(/\/$/, '');
-            const endpoint = `${baseUrl}?endpoint=sales`;
-            
-            return await safeJsonFetch(endpoint, { appId, accessToken, days, skus: localRecords.map(r => r.sku) });
-        } catch (e) {
-            throw new Error(`${e instanceof Error ? e.message : '网络错误'}`);
-        }
+        return await smartFetch(proxyUrl, 'sales', { 
+            appId, 
+            accessToken, 
+            days, 
+            skus: localRecords.map(r => r.sku) 
+        });
     }
   
     await new Promise(resolve => setTimeout(resolve, 300));
-    
     const results: LingxingSalesItem[] = [];
-
-    // Local
     localRecords.forEach(record => {
         const data = getAndJitterMockData(record.sku, record.productName, record.quantity, record.dailySales, true);
         results.push({ sku: record.sku, avgDailySales: data.sales });
     });
-
-    // Extras
     MOCK_ERP_EXTRA_ITEMS.forEach(extra => {
         const exists = localRecords.some(r => r.sku.toLowerCase() === extra.sku.toLowerCase());
         if (!exists) {
@@ -223,7 +229,6 @@ export const fetchLingxingSales = async (
             results.push({ sku: extra.sku, avgDailySales: data.sales });
         }
     });
-
     return results;
   };
 
@@ -231,27 +236,15 @@ export const calculateInventoryDiff = (
     localRecords: ReplenishmentRecord[], 
     erpData: LingxingInventoryItem[]
 ) => {
-    const diffs: { 
-        recordId: string; 
-        sku: string; 
-        productName: string;
-        localVal: number; 
-        erpVal: number; 
-        diff: number 
-    }[] = [];
-
+    const diffs: { recordId: string; sku: string; productName: string; localVal: number; erpVal: number; diff: number }[] = [];
     localRecords.forEach(local => {
         const erpItem = erpData.find(e => e.sku.trim() === local.sku.trim());
         if (erpItem) {
             const totalErp = erpItem.fbaStock;
             if (local.quantity !== totalErp) {
                 diffs.push({
-                    recordId: local.id,
-                    sku: local.sku,
-                    productName: local.productName,
-                    localVal: local.quantity,
-                    erpVal: totalErp,
-                    diff: totalErp - local.quantity
+                    recordId: local.id, sku: local.sku, productName: local.productName,
+                    localVal: local.quantity, erpVal: totalErp, diff: totalErp - local.quantity
                 });
             }
         }
@@ -263,26 +256,14 @@ export const calculateSalesDiff = (
     localRecords: ReplenishmentRecord[], 
     erpData: LingxingSalesItem[]
 ) => {
-    const diffs: { 
-        recordId: string; 
-        sku: string; 
-        productName: string;
-        localVal: number; 
-        erpVal: number; 
-        diff: number 
-    }[] = [];
-
+    const diffs: { recordId: string; sku: string; productName: string; localVal: number; erpVal: number; diff: number }[] = [];
     localRecords.forEach(local => {
         const erpItem = erpData.find(e => e.sku.trim() === local.sku.trim());
         if (erpItem) {
             if (Math.abs(local.dailySales - erpItem.avgDailySales) > 0.1) {
                 diffs.push({
-                    recordId: local.id,
-                    sku: local.sku,
-                    productName: local.productName,
-                    localVal: local.dailySales,
-                    erpVal: erpItem.avgDailySales,
-                    diff: erpItem.avgDailySales - local.dailySales
+                    recordId: local.id, sku: local.sku, productName: local.productName,
+                    localVal: local.dailySales, erpVal: erpItem.avgDailySales, diff: erpItem.avgDailySales - local.dailySales
                 });
             }
         }

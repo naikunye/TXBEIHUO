@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { ReplenishmentRecord } from '../types';
-import { X, Check, Database, Link as LinkIcon, Lock, ClipboardPaste, FileText, Save, ArrowRight, PlusCircle, AlertTriangle, TrendingUp, Package, RefreshCw, Key, Globe, Eye, EyeOff, Layers, Zap, HelpCircle, ServerOff, Wifi, Code, Terminal, Download, Folder, FileCode, AlertCircle, Search } from 'lucide-react';
+import { X, Check, Database, Link as LinkIcon, Lock, ClipboardPaste, FileText, Save, ArrowRight, PlusCircle, AlertTriangle, TrendingUp, Package, RefreshCw, Key, Globe, Eye, EyeOff, Layers, Zap, HelpCircle, ServerOff, Wifi, Code, Terminal, Download, Folder, FileCode, AlertCircle, Search, ExternalLink } from 'lucide-react';
 import { fetchLingxingInventory, fetchLingxingSales } from '../services/lingxingService';
 import { fetchMiaoshouInventory, fetchMiaoshouSales } from '../services/miaoshouService';
 
@@ -19,7 +19,7 @@ type SyncItem = { sku: string; oldVal: number; newVal: number; name: string; sta
 // --- 1. CONFIG: package.json ---
 const CODE_PACKAGE = `{
   "name": "tanxing-proxy",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "engines": { "node": "18.x" },
   "dependencies": {}
 }`;
@@ -29,12 +29,11 @@ const CODE_PACKAGE = `{
 const CODE_VERCEL = `{
   "version": 2,
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api/$1" },
     { "source": "/(.*)", "destination": "/api/proxy" }
   ]
 }`;
 
-// --- 3. CODE: proxy.js (Universal Parameter Mode) ---
+// --- 3. CODE: proxy.js (Universal Parameter Mode v2.0) ---
 const CODE_PROXY = `export default async function handler(req, res) {
   // 1. CORS Headers (Allow access from anywhere)
   res.setHeader('Access-Control-Allow-Credentials', true);
@@ -45,11 +44,13 @@ const CODE_PROXY = `export default async function handler(req, res) {
   // Handle Preflight
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  // 2. Health Check
+  // 2. Health Check (Browser Direct Visit)
   if (!req.body || req.method === 'GET') {
       return res.status(200).json({ 
           status: "ok", 
-          message: "Tanxing Proxy is Running!",
+          version: "v2.0 (Universal)", 
+          message: "Tanxing Proxy is Running Successfully!",
+          note: "If you see this, the deployment is correct.",
           time: new Date().toISOString(),
           url: req.url 
       });
@@ -227,6 +228,11 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
       setProxyStatus('error');
       setProxyStatusMsg('连接失败 (404/500)。请检查是否已按指南上传 api/proxy.js。');
       setIsTestingProxy(false);
+  };
+
+  const openProxyInBrowser = () => {
+      if (!proxyUrl) return;
+      window.open(proxyUrl, '_blank');
   };
 
   // --- Logic 1: Parse Paste Data ---
@@ -494,7 +500,7 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
                     <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
                         <div className="flex items-center gap-2 text-slate-800">
                             <Terminal size={18} />
-                            <h3 className="font-bold text-sm">Vercel 代理服务部署向导 (Fix 404)</h3>
+                            <h3 className="font-bold text-sm">Vercel 代理服务部署向导 (v2.0)</h3>
                         </div>
                         <button onClick={() => setShowProxySetup(false)} className="text-gray-500 hover:text-gray-800"><X size={18} /></button>
                     </div>
@@ -503,12 +509,12 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
                         <div className="bg-red-50 border border-red-100 p-4 rounded-xl flex gap-3">
                             <AlertCircle className="text-red-500 shrink-0" size={20} />
                             <div>
-                                <h4 className="text-sm font-bold text-red-800">404 错误终极解决方案</h4>
+                                <h4 className="text-sm font-bold text-red-800">为什么必须重新下载？</h4>
                                 <p className="text-xs text-red-700 mt-1">
-                                    如果你遇到 404，请务必删除现有的 Vercel 项目和 GitHub 仓库，
-                                    <strong>严格按照下图结构</strong>重新上传这 3 个文件。
+                                    您在 Vercel 看到的 404 错误，是因为<strong>服务器端</strong>代码不是最新的。
+                                    前端代码更新（本页面）只能解决“发请求”的逻辑，无法解决“收请求”的问题。
                                     <br/>
-                                    <strong>核心规则：</strong> <code>proxy.js</code> 必须放在 <code>api</code> 文件夹内！
+                                    <strong>请下载最新的 v2.0 文件并重新部署 Vercel。</strong>
                                 </p>
                             </div>
                         </div>
@@ -516,31 +522,31 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
                         {/* Visual Structure */}
                         <div className="flex gap-6 items-start">
                             <div className="w-1/3 bg-slate-900 text-white p-5 rounded-xl">
-                                <h5 className="text-xs font-bold text-slate-400 uppercase mb-3">✅ 正确的仓库结构</h5>
+                                <h5 className="text-xs font-bold text-slate-400 uppercase mb-3">✅ 必选文件清单</h5>
                                 <div className="font-mono text-sm space-y-2">
                                     <div className="flex items-center gap-2 text-blue-200"><Folder size={16}/> tanxing-proxy/</div>
-                                    <div className="flex items-center gap-2 pl-6 text-green-400"><FileCode size={14}/> package.json</div>
+                                    <div className="flex items-center gap-2 pl-6 text-green-400"><FileCode size={14}/> package.json (v2.0)</div>
                                     <div className="flex items-center gap-2 pl-6 text-yellow-400"><FileCode size={14}/> vercel.json</div>
-                                    <div className="flex items-center gap-2 pl-6 text-blue-300 font-bold bg-white/10 p-1 rounded"><Folder size={14}/> api/ <span className="text-xs text-white opacity-50 ml-1">(关键文件夹)</span></div>
-                                    <div className="flex items-center gap-2 pl-12 text-pink-300 font-bold"><FileCode size={14}/> proxy.js</div>
+                                    <div className="flex items-center gap-2 pl-6 text-blue-300 font-bold bg-white/10 p-1 rounded"><Folder size={14}/> api/ <span className="text-xs text-white opacity-50 ml-1">(关键)</span></div>
+                                    <div className="flex items-center gap-2 pl-12 text-pink-300 font-bold"><FileCode size={14}/> proxy.js (v2.0)</div>
                                 </div>
                             </div>
                             
                             <div className="flex-1 space-y-4">
-                                <h5 className="text-xs font-bold text-gray-500 uppercase">第一步：下载所有文件</h5>
+                                <h5 className="text-xs font-bold text-gray-500 uppercase">第一步：下载最新 v2.0 文件</h5>
                                 <div className="grid grid-cols-1 gap-2">
                                     <button onClick={() => downloadFile('proxy.js', CODE_PROXY)} className="flex items-center justify-between p-3 bg-blue-50 border border-blue-100 rounded-lg text-blue-800 hover:bg-blue-100 text-xs font-bold">
-                                        <span>1. 下载 proxy.js (放入 api 文件夹!)</span> <Download size={14}/>
+                                        <span>1. 下载 proxy.js (含 v2.0 标识)</span> <Download size={14}/>
                                     </button>
                                     <button onClick={() => downloadFile('vercel.json', CODE_VERCEL)} className="flex items-center justify-between p-3 bg-yellow-50 border border-yellow-100 rounded-lg text-yellow-800 hover:bg-yellow-100 text-xs font-bold">
-                                        <span>2. 下载 vercel.json (放入根目录)</span> <Download size={14}/>
+                                        <span>2. 下载 vercel.json (修复路由)</span> <Download size={14}/>
                                     </button>
                                     <button onClick={() => downloadFile('package.json', CODE_PACKAGE)} className="flex items-center justify-between p-3 bg-green-50 border border-green-100 rounded-lg text-green-800 hover:bg-green-100 text-xs font-bold">
-                                        <span>3. 下载 package.json (放入根目录)</span> <Download size={14}/>
+                                        <span>3. 下载 package.json (v2.0)</span> <Download size={14}/>
                                     </button>
                                 </div>
-                                <h5 className="text-xs font-bold text-gray-500 uppercase mt-4">第二步：上传至 GitHub 并重新部署 Vercel</h5>
-                                <p className="text-xs text-gray-600">部署完成后，复制 Vercel 提供的 Domain (例如 `https://xxx.vercel.app`) 填入下方输入框。</p>
+                                <h5 className="text-xs font-bold text-gray-500 uppercase mt-4">第二步：部署后自测</h5>
+                                <p className="text-xs text-gray-600">部署完成后，在下方输入框填入链接，点击右侧的 <ExternalLink size={12} className="inline"/> 按钮，如果浏览器能打开且显示 "Tanxing Proxy is Running! (v2.0)"，才算成功。</p>
                             </div>
                         </div>
                     </div>
@@ -591,11 +597,14 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
                              <div>
                                  <label className="text-[10px] text-gray-500 font-bold mb-1 flex justify-between items-center">
                                      <span>代理 URL <span className="text-red-500">*</span></span>
-                                     <button onClick={() => setShowProxySetup(true)} className="text-blue-600 hover:underline flex items-center gap-1"><Code size={10}/> 部署指南</button>
+                                     <button onClick={() => setShowProxySetup(true)} className="text-blue-600 hover:underline flex items-center gap-1"><Code size={10}/> 重新部署</button>
                                  </label>
                                  <div className="relative flex items-center gap-2">
                                      <input type="text" className="flex-1 px-3 py-2 rounded-lg border border-gray-300 text-sm" placeholder="https://your-app.vercel.app" value={proxyUrl} onChange={e => { setProxyUrl(e.target.value); setProxyStatus('idle'); }} />
-                                     <button onClick={handleTestConnection} disabled={isTestingProxy || !proxyUrl} className="bg-gray-100 p-2 rounded-lg border hover:bg-gray-200 text-gray-600">
+                                     <button onClick={openProxyInBrowser} disabled={!proxyUrl} className="bg-white p-2 rounded-lg border hover:bg-gray-50 text-blue-600" title="在浏览器打开以测试 (Open in Browser)">
+                                        <ExternalLink size={16}/>
+                                     </button>
+                                     <button onClick={handleTestConnection} disabled={isTestingProxy || !proxyUrl} className="bg-gray-100 p-2 rounded-lg border hover:bg-gray-200 text-gray-600" title="系统自检">
                                         {isTestingProxy ? <RefreshCw className="animate-spin" size={16}/> : <Search size={16}/>}
                                      </button>
                                  </div>
