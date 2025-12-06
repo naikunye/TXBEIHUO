@@ -106,14 +106,15 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
                   let rawSku = parts[0]; 
                   let extractedName = qtyIndex > 1 ? parts.slice(1, qtyIndex).join(' ') : rawSku;
 
+                  // ROBUST MATCHING
                   const match = records.find(r => 
-                      (r.sku || '').toLowerCase().trim() === rawSku.toLowerCase().trim() ||
+                      (r.sku || '').trim().toLowerCase() === rawSku.trim().toLowerCase() ||
                       (r.productName || '').toLowerCase().includes(rawSku.toLowerCase())
                   );
 
                   if (match) {
                       results.push({
-                          sku: match.sku, 
+                          sku: match.sku, // Use matched SKU to ensure consistency
                           name: match.productName,
                           oldVal: syncType === 'inventory' ? match.quantity : match.dailySales,
                           newVal: newVal,
@@ -154,9 +155,10 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
             if (syncType === 'inventory') {
                 const data = await fetchLingxingInventory(field1, field2, records, proxyUrl);
                 fetchedItems = data.map(item => {
-                    const match = records.find(r => r.sku === item.sku);
+                    // ROBUST MATCHING
+                    const match = records.find(r => (r.sku || '').trim().toLowerCase() === (item.sku || '').trim().toLowerCase());
                     return {
-                        sku: item.sku,
+                        sku: match ? match.sku : item.sku, // Use local SKU if matched
                         name: item.productName || match?.productName || item.sku,
                         oldVal: match ? match.quantity : 0,
                         newVal: item.fbaStock,
@@ -166,9 +168,9 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
             } else {
                 const data = await fetchLingxingSales(field1, field2, records, 30, proxyUrl);
                 fetchedItems = data.map(item => {
-                    const match = records.find(r => r.sku === item.sku);
+                    const match = records.find(r => (r.sku || '').trim().toLowerCase() === (item.sku || '').trim().toLowerCase());
                     return {
-                        sku: item.sku,
+                        sku: match ? match.sku : item.sku,
                         name: match?.productName || item.sku,
                         oldVal: match ? match.dailySales : 0,
                         newVal: item.avgDailySales,
@@ -180,9 +182,9 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
             if (syncType === 'inventory') {
                 const data = await fetchMiaoshouInventory(field1, field2, records, proxyUrl);
                 fetchedItems = data.map(item => {
-                    const match = records.find(r => r.sku === item.product_sku);
+                    const match = records.find(r => (r.sku || '').trim().toLowerCase() === (item.product_sku || '').trim().toLowerCase());
                     return {
-                        sku: item.product_sku,
+                        sku: match ? match.sku : item.product_sku,
                         name: item.cn_name || match?.productName || item.product_sku,
                         oldVal: match ? match.quantity : 0,
                         newVal: item.stock_quantity,
@@ -192,9 +194,9 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
             } else {
                 const data = await fetchMiaoshouSales(field1, field2, records, 30, proxyUrl);
                 fetchedItems = data.map(item => {
-                    const match = records.find(r => r.sku === item.product_sku);
+                    const match = records.find(r => (r.sku || '').trim().toLowerCase() === (item.product_sku || '').trim().toLowerCase());
                     return {
-                        sku: item.product_sku,
+                        sku: match ? match.sku : item.product_sku,
                         name: match?.productName || item.product_sku,
                         oldVal: match ? match.dailySales : 0,
                         newVal: item.avg_sales_30d,
@@ -227,6 +229,7 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
       // 1. Organize changes for O(1) lookup
       displayItems.forEach(item => {
           if (!item.sku) return; // Skip invalid items
+          // Use normalized key
           const key = item.sku.trim().toLowerCase();
           
           if (item.status === 'match') {
@@ -255,6 +258,7 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
 
       // 2. Map existing records to NEW objects if they have changes
       const updatedRecords = records.map(record => {
+          // Use normalized key for lookup
           const sku = record.sku ? record.sku.trim().toLowerCase() : '';
           const change = changesMap.get(sku);
           
