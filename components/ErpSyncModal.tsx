@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { ReplenishmentRecord } from '../types';
-import { X, Check, Database, Link as LinkIcon, Lock, ClipboardPaste, FileText, Save, ArrowRight, PlusCircle, AlertTriangle, TrendingUp, Package, RefreshCw, Key, Globe, Eye, EyeOff, Layers, Zap, Clock, Power, HelpCircle, ExternalLink, PlayCircle, ServerOff, Wifi, Code, Copy, Terminal, Download, Folder, FileCode, AlertCircle, Search, Bug } from 'lucide-react';
+import { X, Check, Database, Link as LinkIcon, Lock, ClipboardPaste, FileText, Save, ArrowRight, PlusCircle, AlertTriangle, TrendingUp, Package, RefreshCw, Key, Globe, Eye, EyeOff, Layers, Zap, HelpCircle, ServerOff, Wifi, Code, Terminal, Download, Folder, FileCode, AlertCircle, Search } from 'lucide-react';
 import { fetchLingxingInventory, fetchLingxingSales } from '../services/lingxingService';
 import { fetchMiaoshouInventory, fetchMiaoshouSales } from '../services/miaoshouService';
 
@@ -16,7 +16,7 @@ type SyncType = 'inventory' | 'sales';
 type ErpPlatform = 'lingxing' | 'miaoshou';
 type SyncItem = { sku: string; oldVal: number; newVal: number; name: string; status: 'match' | 'new' | 'error' };
 
-// --- Code Snippets for Guide ---
+// --- 1. CONFIG: package.json ---
 const CODE_PACKAGE = `{
   "name": "tanxing-proxy",
   "version": "1.0.0",
@@ -24,40 +24,44 @@ const CODE_PACKAGE = `{
   "dependencies": {}
 }`;
 
-// Updated: vercel.json is now optional but recommended
+// --- 2. CONFIG: vercel.json (Catch-All Strategy) ---
+// This forces ANY request to go to /api/proxy, solving the 404 issue effectively.
 const CODE_VERCEL = `{
+  "version": 2,
   "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/$1" },
     { "source": "/(.*)", "destination": "/api/proxy" }
   ]
 }`;
 
-// Updated Proxy Code: Handles both URL path routing AND Query Param routing for maximum compatibility
+// --- 3. CODE: proxy.js (Universal Parameter Mode) ---
 const CODE_PROXY = `export default async function handler(req, res) {
-  // 1. 设置跨域头
+  // 1. CORS Headers (Allow access from anywhere)
   res.setHeader('Access-Control-Allow-Credentials', true);
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,POST');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
 
+  // Handle Preflight
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  // 2. 健康检查
+  // 2. Health Check
   if (!req.body || req.method === 'GET') {
       return res.status(200).json({ 
           status: "ok", 
           message: "Tanxing Proxy is Running!",
+          time: new Date().toISOString(),
           url: req.url 
       });
   }
 
   try {
     const { appId, accessToken, appKey, appSecret, skus } = req.body;
-    // 兼容：既支持 URL 路径判断，也支持 Query 参数判断 (?endpoint=inventory)
-    // 这是为了解决 Vercel 路由重写失败时的 404 问题
+    // Determine intent via Query Param OR Path
     const urlStr = req.url || '';
     const queryEndpoint = req.query?.endpoint || '';
     
-    // --- 模拟库存返回 ---
+    // --- Mock Inventory ---
     if (urlStr.includes('inventory') || queryEndpoint === 'inventory') {
       const mockData = (skus || []).map(sku => ({
         sku: sku,
@@ -68,16 +72,16 @@ const CODE_PROXY = `export default async function handler(req, res) {
         stock_quantity: Math.floor(Math.random() * 200) + 20,
         localStock: 0
       }));
-      // 模拟一个新品
+      // Add a test discovery item
       mockData.push({
-          sku: "PROXY-NEW-001", product_sku: "PROXY-NEW-001",
-          productName: "代理服务器发现的新品", cn_name: "代理服务器发现的新品",
-          fbaStock: 999, stock_quantity: 999, localStock: 0
+          sku: "PROXY-TEST-001", product_sku: "PROXY-TEST-001",
+          productName: "代理连接测试商品", cn_name: "代理连接测试商品",
+          fbaStock: 888, stock_quantity: 888, localStock: 0
       });
       return res.status(200).json(mockData);
     }
 
-    // --- 模拟销量返回 ---
+    // --- Mock Sales ---
     if (urlStr.includes('sales') || queryEndpoint === 'sales') {
       const mockData = (skus || []).map(sku => ({
         sku: sku, product_sku: sku,
@@ -87,7 +91,8 @@ const CODE_PROXY = `export default async function handler(req, res) {
       return res.status(200).json(mockData);
     }
 
-    res.status(404).json({ error: "Unknown endpoint", receivedUrl: urlStr });
+    // Default Fallback
+    res.status(400).json({ error: "Unknown endpoint. Use ?endpoint=inventory or ?endpoint=sales" });
 
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -116,7 +121,7 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
 
   const [showSecret, setShowSecret] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
-  const [showProxySetup, setShowProxySetup] = useState(false); // NEW: Show code guide
+  const [showProxySetup, setShowProxySetup] = useState(false);
   const [apiResults, setApiResults] = useState<SyncItem[]>([]);
   const [isApiLoading, setIsApiLoading] = useState(false);
   const [connectionMode, setConnectionMode] = useState<'real' | 'simulated' | null>(null);
@@ -170,52 +175,57 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
       document.body.removeChild(link);
   };
 
-  // --- Auto-Detect Proxy URL Logic (Enhanced) ---
+  // --- Robust Connection Tester ---
   const handleTestConnection = async () => {
       if (!proxyUrl) return;
       setIsTestingProxy(true);
       setProxyStatus('idle');
       setProxyStatusMsg('');
 
+      // Remove trailing slash
       let cleanUrl = proxyUrl.trim().replace(/\/$/, "");
       
-      // Probing List: Priorities
-      // 1. Exact URL provided
-      // 2. URL + /api/proxy (Standard Vercel path)
-      // 3. URL + /api (If user renamed to index.js)
-      // 4. URL + /proxy (If user uploaded flat)
+      // We will try multiple paths to find where the user put the file
+      // 1. Root (if vercel.json rewrite is working)
+      // 2. /api/proxy (Standard Vercel)
+      // 3. /proxy (Alternative)
       
       const probePaths = [
-          cleanUrl,
-          `${cleanUrl}/api/proxy`,
-          `${cleanUrl}/api`,
-          `${cleanUrl}/proxy`
+          cleanUrl,              // Try 1: Rewrite active
+          `${cleanUrl}/api/proxy`, // Try 2: Direct path
+          `${cleanUrl}/proxy`      // Try 3: Flat structure
       ];
+
+      console.log("Starting Probe...");
 
       for (const url of probePaths) {
           try {
-              console.log("Probing:", url);
-              const res = await fetch(url);
+              console.log(`Probing: ${url}`);
+              const controller = new AbortController();
+              const timeoutId = setTimeout(() => controller.abort(), 5000); // 5s timeout
+
+              const res = await fetch(url, { signal: controller.signal });
+              clearTimeout(timeoutId);
+
               const contentType = res.headers.get("content-type");
               
               if (res.ok && contentType && contentType.includes("application/json")) {
                   const json = await res.json();
                   if (json.status === 'ok') {
                       setProxyStatus('success');
-                      setProxyStatusMsg(`成功连接到: ${url}`);
-                      setProxyUrl(url); // Auto-correct the URL in the input
+                      setProxyStatusMsg(`连接成功! 路径: ${url}`);
+                      setProxyUrl(url); // Auto-correct URL
                       setIsTestingProxy(false);
-                      // alert(`✅ 连接成功！\n\n系统已自动修正链接为：\n${url}`);
                       return;
                   }
               }
           } catch (e) {
-              console.log("Probe failed for:", url);
+              console.log(`Probe failed for ${url}`, e);
           }
       }
 
       setProxyStatus('error');
-      setProxyStatusMsg('无法连接。请确保 proxy.js 已部署在 /api 文件夹下。');
+      setProxyStatusMsg('连接失败 (404/500)。请检查是否已按指南上传 api/proxy.js。');
       setIsTestingProxy(false);
   };
 
@@ -288,18 +298,14 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
     setApiResults([]);
     setConnectionMode(null);
     
-    // Explicitly set mode
     const isRealMode = !forceSimulation && !!(proxyUrl && proxyUrl.startsWith('http'));
     setConnectionMode(isRealMode ? 'real' : 'simulated');
 
     try {
-        // Validation for Real Mode
-        if (isRealMode) {
-            if (!field1 || !field2) {
-                alert("真实连接模式下，App ID 和 Token 不能为空。");
-                setIsApiLoading(false);
-                return;
-            }
+        if (isRealMode && (!field1 || !field2)) {
+            alert("真实连接模式下，App ID 和 Token 不能为空。");
+            setIsApiLoading(false);
+            return;
         }
 
         let fetchedItems: SyncItem[] = [];
@@ -323,7 +329,7 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
                 fetchedItems = data.map(item => {
                     const match = records.find(r => (r.sku || '').trim().toLowerCase() === (item.sku || '').trim().toLowerCase());
                     return {
-                        sku: match ? match.sku : item.sku,
+                        sku: match ? match.sku : item.sku, 
                         name: match?.productName || item.sku,
                         oldVal: match ? match.dailySales : 0,
                         newVal: item.avgDailySales,
@@ -332,7 +338,6 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
                 });
             }
         } else {
-            // Miaoshou Logic
             if (syncType === 'inventory') {
                 const data = await fetchMiaoshouInventory(field1, field2, records, effectiveProxyUrl);
                 fetchedItems = data.map(item => {
@@ -382,25 +387,31 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
   };
 
   const displayItems = activeTab === 'import' ? parsedPasteItems : apiResults;
+  const matchCount = displayItems.filter(i => i.status === 'match').length;
+  const newCount = displayItems.filter(i => i.status === 'new').length;
 
-  if (!isOpen) return null;
+  const isSales = syncType === 'sales';
+  const isLingxing = platform === 'lingxing';
+  const brandColor = isLingxing ? 'bg-blue-600' : 'bg-orange-600';
+  const brandColorHover = isLingxing ? 'hover:bg-blue-700' : 'hover:bg-orange-700';
+  const brandText = isLingxing ? 'text-blue-600' : 'text-orange-600';
+  const brandBorder = isLingxing ? 'border-blue-600' : 'border-orange-600';
+  const brandLightBg = isLingxing ? 'bg-blue-50' : 'bg-orange-50';
+  const typeColor = isSales ? 'text-green-600' : brandText;
+  const isRealApiReady = !!(field1 && field2 && proxyUrl && proxyUrl.startsWith('http'));
 
   const handleApply = () => {
       saveConfig();
-      
       const changesMap = new Map<string, SyncItem>();
       const newRecords: ReplenishmentRecord[] = [];
-      let updateCount = 0;
-      let createCount = 0;
 
       displayItems.forEach(item => {
           if (!item.sku) return; 
           const key = item.sku.trim().toLowerCase();
-          
           if (item.status === 'match') {
               changesMap.set(key, item);
           } else if (item.status === 'new') {
-              const newRecord: ReplenishmentRecord = {
+              newRecords.push({
                   id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
                   date: new Date().toISOString().split('T')[0],
                   sku: item.sku,
@@ -415,18 +426,14 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
                   salesPriceUSD: 0, lastMileCostUSD: 0, adCostUSD: 0, platformFeeRate: 2, affiliateCommissionRate: 0, additionalFixedFeeUSD: 0, returnRate: 0,
                   warehouse: 'Default Warehouse',
                   storeId: currentStoreId || undefined, 
-              };
-              newRecords.push(newRecord);
-              createCount++;
+              });
           }
       });
 
       const updatedRecords = records.map(record => {
           const sku = record.sku ? record.sku.trim().toLowerCase() : '';
           const change = changesMap.get(sku);
-          
           if (change) {
-              updateCount++;
               return {
                   ...record,
                   quantity: syncType === 'inventory' ? change.newVal : record.quantity,
@@ -439,24 +446,11 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
           return record; 
       });
 
-      const finalRecords = [...newRecords, ...updatedRecords];
-      onUpdateRecords(finalRecords);
+      onUpdateRecords([...newRecords, ...updatedRecords]);
       onClose();
   };
 
-  const matchCount = displayItems.filter(i => i.status === 'match').length;
-  const newCount = displayItems.filter(i => i.status === 'new').length;
-
-  const isSales = syncType === 'sales';
-  const isLingxing = platform === 'lingxing';
-  const brandColor = isLingxing ? 'bg-blue-600' : 'bg-orange-600';
-  const brandColorHover = isLingxing ? 'hover:bg-blue-700' : 'hover:bg-orange-700';
-  const brandText = isLingxing ? 'text-blue-600' : 'text-orange-600';
-  const brandBorder = isLingxing ? 'border-blue-600' : 'border-orange-600';
-  const brandLightBg = isLingxing ? 'bg-blue-50' : 'bg-orange-50';
-  const typeColor = isSales ? 'text-green-600' : brandText;
-
-  const isRealApiReady = !!(field1 && field2 && proxyUrl && proxyUrl.startsWith('http'));
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black bg-opacity-50 backdrop-blur-sm p-4 animate-fade-in">
@@ -465,7 +459,6 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
         {/* Header */}
         <div className="bg-slate-900 px-5 py-4 flex justify-between items-center text-white shrink-0 relative overflow-hidden">
             <div className={`absolute top-0 right-0 w-64 h-full ${isLingxing ? 'bg-blue-900' : 'bg-orange-900'} opacity-20 transform skew-x-12 translate-x-10`}></div>
-
             <div className="flex items-center gap-4 z-10">
                 <div className={`p-2 rounded-lg ${isLingxing ? 'bg-blue-500' : 'bg-orange-500'} shadow-lg`}>
                     <Database size={24} className="text-white" />
@@ -480,357 +473,187 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
                     <p className="text-slate-400 text-xs">Multi-Platform Integration Hub</p>
                 </div>
             </div>
-            
             <div className="flex items-center gap-2 bg-slate-800 p-1 rounded-lg border border-slate-700 z-10">
-                <button 
-                    onClick={() => setPlatform('lingxing')}
-                    className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all flex items-center gap-1 ${isLingxing ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}
-                >
-                    <Layers size={12}/> 领星
-                </button>
-                <button 
-                    onClick={() => setPlatform('miaoshou')}
-                    className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all flex items-center gap-1 ${!isLingxing ? 'bg-orange-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}
-                >
-                    <Zap size={12}/> 秒手
-                </button>
+                <button onClick={() => setPlatform('lingxing')} className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all flex items-center gap-1 ${isLingxing ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}><Layers size={12}/> 领星</button>
+                <button onClick={() => setPlatform('miaoshou')} className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all flex items-center gap-1 ${!isLingxing ? 'bg-orange-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}><Zap size={12}/> 秒手</button>
             </div>
-
             <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full transition-colors text-white z-10 ml-4"><X size={24} /></button>
         </div>
 
         {/* Tabs */}
         <div className="flex border-b border-gray-200 bg-gray-50 shrink-0">
-            <button 
-                onClick={() => setActiveTab('import')}
-                className={`flex-1 py-4 text-sm font-bold flex items-center justify-center gap-2 border-b-2 transition-colors ${activeTab === 'import' ? `${brandBorder} ${brandText} bg-white` : 'border-transparent text-gray-500 hover:text-gray-700'}`}
-            >
-                <ClipboardPaste size={18} /> Excel 粘贴导入 (通用)
-            </button>
-            <button 
-                onClick={() => setActiveTab('api')}
-                className={`flex-1 py-4 text-sm font-bold flex items-center justify-center gap-2 border-b-2 transition-colors ${activeTab === 'api' ? `${brandBorder} ${brandText} bg-white` : 'border-transparent text-gray-400 hover:text-gray-600'}`}
-            >
-                <LinkIcon size={18} /> API 直连 (高级)
-            </button>
+            <button onClick={() => setActiveTab('import')} className={`flex-1 py-4 text-sm font-bold flex items-center justify-center gap-2 border-b-2 transition-colors ${activeTab === 'import' ? `${brandBorder} ${brandText} bg-white` : 'border-transparent text-gray-500 hover:text-gray-700'}`}><ClipboardPaste size={18} /> Excel 粘贴导入</button>
+            <button onClick={() => setActiveTab('api')} className={`flex-1 py-4 text-sm font-bold flex items-center justify-center gap-2 border-b-2 transition-colors ${activeTab === 'api' ? `${brandBorder} ${brandText} bg-white` : 'border-transparent text-gray-400 hover:text-gray-600'}`}><LinkIcon size={18} /> API 直连 (Vercel)</button>
         </div>
 
         <div className="flex-1 overflow-hidden flex flex-col md:flex-row bg-white relative">
             
-            {/* --- Proxy Setup Guide Overlay --- */}
+            {/* --- STRICT DEPLOYMENT GUIDE --- */}
             {showProxySetup && (
                 <div className="absolute inset-0 z-50 bg-white flex flex-col animate-fade-in">
                     <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
                         <div className="flex items-center gap-2 text-slate-800">
                             <Terminal size={18} />
-                            <h3 className="font-bold text-sm">Vercel 代理服务部署指南 (解决 404 问题)</h3>
+                            <h3 className="font-bold text-sm">Vercel 代理服务部署向导 (Fix 404)</h3>
                         </div>
-                        <button onClick={() => setShowProxySetup(false)} className="text-gray-500 hover:text-gray-800">
-                            <X size={18} />
-                        </button>
+                        <button onClick={() => setShowProxySetup(false)} className="text-gray-500 hover:text-gray-800"><X size={18} /></button>
                     </div>
                     <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                        <div className="bg-red-50 p-4 rounded-xl border border-red-100 flex items-start gap-3">
-                            <AlertCircle className="text-red-500 mt-0.5 shrink-0" size={20} />
+                        
+                        <div className="bg-red-50 border border-red-100 p-4 rounded-xl flex gap-3">
+                            <AlertCircle className="text-red-500 shrink-0" size={20} />
                             <div>
-                                <h4 className="text-sm font-bold text-red-800">为什么我会看到 404 错误？</h4>
-                                <p className="text-xs text-red-600 mt-1 leading-relaxed">
-                                    Vercel 404 页面表示服务器没有找到该函数。<strong>99% 的原因是文件结构错误。</strong>
+                                <h4 className="text-sm font-bold text-red-800">404 错误终极解决方案</h4>
+                                <p className="text-xs text-red-700 mt-1">
+                                    如果你遇到 404，请务必删除现有的 Vercel 项目和 GitHub 仓库，
+                                    <strong>严格按照下图结构</strong>重新上传这 3 个文件。
                                     <br/>
-                                    Vercel Serverless Function 必须放在名为 <code className="bg-red-100 px-1 rounded">api</code> 的文件夹中。
+                                    <strong>核心规则：</strong> <code>proxy.js</code> 必须放在 <code>api</code> 文件夹内！
                                 </p>
                             </div>
                         </div>
 
-                        <div className="space-y-2">
-                            <h4 className="text-sm font-bold text-gray-800 flex items-center gap-2">
-                                <Folder size={16} className="text-yellow-500" /> 正确的项目结构
-                            </h4>
-                            <div className="bg-slate-900 text-white p-4 rounded-xl font-mono text-xs leading-6">
-                                <div className="flex items-center gap-2 text-slate-400"><Folder size={14}/> tanxing-proxy (根文件夹)</div>
-                                <div className="flex items-center gap-2 ml-4">├── <FileCode size={14} className="text-green-400"/> package.json</div>
-                                <div className="flex items-center gap-2 ml-4">├── <FileCode size={14} className="text-yellow-400"/> vercel.json</div>
-                                <div className="flex items-center gap-2 ml-4 text-blue-300">└── <Folder size={14} className="text-blue-400"/> api/ <span className="text-red-400 ml-2">(⚠️ 必须新建这个文件夹)</span></div>
-                                <div className="flex items-center gap-2 ml-10">└── <FileCode size={14} className="text-blue-200"/> proxy.js <span className="text-gray-500 ml-2">(文件放这里面)</span></div>
+                        {/* Visual Structure */}
+                        <div className="flex gap-6 items-start">
+                            <div className="w-1/3 bg-slate-900 text-white p-5 rounded-xl">
+                                <h5 className="text-xs font-bold text-slate-400 uppercase mb-3">✅ 正确的仓库结构</h5>
+                                <div className="font-mono text-sm space-y-2">
+                                    <div className="flex items-center gap-2 text-blue-200"><Folder size={16}/> tanxing-proxy/</div>
+                                    <div className="flex items-center gap-2 pl-6 text-green-400"><FileCode size={14}/> package.json</div>
+                                    <div className="flex items-center gap-2 pl-6 text-yellow-400"><FileCode size={14}/> vercel.json</div>
+                                    <div className="flex items-center gap-2 pl-6 text-blue-300 font-bold bg-white/10 p-1 rounded"><Folder size={14}/> api/ <span className="text-xs text-white opacity-50 ml-1">(关键文件夹)</span></div>
+                                    <div className="flex items-center gap-2 pl-12 text-pink-300 font-bold"><FileCode size={14}/> proxy.js</div>
+                                </div>
                             </div>
-                        </div>
-
-                        {/* File 1 */}
-                        <div className="space-y-1">
-                            <div className="flex justify-between items-center text-xs font-bold text-gray-700 px-2">
-                                <span>1. package.json <span className="text-gray-400">(根目录)</span></span>
-                                <button onClick={() => downloadFile('package.json', CODE_PACKAGE)} className="flex items-center gap-1 text-blue-600 hover:underline border border-blue-200 px-2 py-0.5 rounded bg-blue-50"><Download size={12}/> 下载</button>
+                            
+                            <div className="flex-1 space-y-4">
+                                <h5 className="text-xs font-bold text-gray-500 uppercase">第一步：下载所有文件</h5>
+                                <div className="grid grid-cols-1 gap-2">
+                                    <button onClick={() => downloadFile('proxy.js', CODE_PROXY)} className="flex items-center justify-between p-3 bg-blue-50 border border-blue-100 rounded-lg text-blue-800 hover:bg-blue-100 text-xs font-bold">
+                                        <span>1. 下载 proxy.js (放入 api 文件夹!)</span> <Download size={14}/>
+                                    </button>
+                                    <button onClick={() => downloadFile('vercel.json', CODE_VERCEL)} className="flex items-center justify-between p-3 bg-yellow-50 border border-yellow-100 rounded-lg text-yellow-800 hover:bg-yellow-100 text-xs font-bold">
+                                        <span>2. 下载 vercel.json (放入根目录)</span> <Download size={14}/>
+                                    </button>
+                                    <button onClick={() => downloadFile('package.json', CODE_PACKAGE)} className="flex items-center justify-between p-3 bg-green-50 border border-green-100 rounded-lg text-green-800 hover:bg-green-100 text-xs font-bold">
+                                        <span>3. 下载 package.json (放入根目录)</span> <Download size={14}/>
+                                    </button>
+                                </div>
+                                <h5 className="text-xs font-bold text-gray-500 uppercase mt-4">第二步：上传至 GitHub 并重新部署 Vercel</h5>
+                                <p className="text-xs text-gray-600">部署完成后，复制 Vercel 提供的 Domain (例如 `https://xxx.vercel.app`) 填入下方输入框。</p>
                             </div>
-                            <pre className="bg-gray-100 text-gray-600 p-3 rounded-lg text-[10px] font-mono overflow-x-auto border border-gray-200">{CODE_PACKAGE}</pre>
-                        </div>
-
-                        {/* File 2 */}
-                        <div className="space-y-1">
-                            <div className="flex justify-between items-center text-xs font-bold text-gray-700 px-2">
-                                <span>2. vercel.json <span className="text-gray-400">(可选, 但推荐)</span></span>
-                                <button onClick={() => downloadFile('vercel.json', CODE_VERCEL)} className="flex items-center gap-1 text-blue-600 hover:underline border border-blue-200 px-2 py-0.5 rounded bg-blue-50"><Download size={12}/> 下载</button>
-                            </div>
-                            <pre className="bg-gray-100 text-gray-600 p-3 rounded-lg text-[10px] font-mono overflow-x-auto border border-gray-200">{CODE_VERCEL}</pre>
-                        </div>
-
-                        {/* File 3 */}
-                        <div className="space-y-1">
-                            <div className="flex justify-between items-center text-xs font-bold text-gray-700 px-2">
-                                <span>3. proxy.js <span className="text-red-600 font-bold bg-red-50 px-1 rounded">(必须放入 api 文件夹内!)</span></span>
-                                <button onClick={() => downloadFile('proxy.js', CODE_PROXY)} className="flex items-center gap-1 text-blue-600 hover:underline border border-blue-200 px-2 py-0.5 rounded bg-blue-50"><Download size={12}/> 下载</button>
-                            </div>
-                            <pre className="bg-gray-100 text-gray-600 p-3 rounded-lg text-[10px] font-mono overflow-x-auto h-32 custom-scrollbar border border-gray-200">{CODE_PROXY}</pre>
                         </div>
                     </div>
                 </div>
             )}
 
-            {/* Left Panel */}
+            {/* Left Panel Inputs */}
             <div className="w-full md:w-1/3 border-r border-gray-200 flex flex-col p-5 bg-gray-50 overflow-y-auto">
-                
-                {/* 1. Mode Selection */}
                 <div className="mb-6">
                     <label className="block text-xs font-bold text-gray-500 uppercase mb-2">1. 同步目标</label>
                     <div className="flex flex-col gap-2">
-                        <button 
-                            onClick={() => { setSyncType('inventory'); setApiResults([]); }} 
-                            className={`flex items-center gap-3 px-4 py-3 rounded-xl border transition-all text-left ${!isSales ? `${brandLightBg} ${brandBorder} ${brandText} shadow-sm ring-1` : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-100'}`}
-                        >
+                        <button onClick={() => { setSyncType('inventory'); setApiResults([]); }} className={`flex items-center gap-3 px-4 py-3 rounded-xl border transition-all text-left ${!isSales ? `${brandLightBg} ${brandBorder} ${brandText} shadow-sm ring-1` : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-100'}`}>
                             <div className={`p-2 rounded-lg ${!isSales ? (isLingxing ? 'bg-blue-200' : 'bg-orange-200') : 'bg-gray-200'}`}><Package size={18}/></div>
-                            <div>
-                                <div className="font-bold text-sm">更新库存数量</div>
-                                <div className="text-[10px] opacity-70">Inventory Level</div>
-                            </div>
+                            <div><div className="font-bold text-sm">更新库存数量</div></div>
                             {!isSales && <Check size={16} className={`ml-auto ${brandText}`}/>}
                         </button>
-                        
-                        <button 
-                            onClick={() => { setSyncType('sales'); setApiResults([]); }} 
-                            className={`flex items-center gap-3 px-4 py-3 rounded-xl border transition-all text-left ${isSales ? 'bg-green-50 border-green-200 text-green-800 shadow-sm ring-1 ring-green-200' : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-100'}`}
-                        >
+                        <button onClick={() => { setSyncType('sales'); setApiResults([]); }} className={`flex items-center gap-3 px-4 py-3 rounded-xl border transition-all text-left ${isSales ? 'bg-green-50 border-green-200 text-green-800 shadow-sm ring-1 ring-green-200' : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-100'}`}>
                             <div className={`p-2 rounded-lg ${isSales ? 'bg-green-200' : 'bg-gray-200'}`}><TrendingUp size={18}/></div>
-                            <div>
-                                <div className="font-bold text-sm">更新销量 (日均)</div>
-                                <div className="text-[10px] opacity-70">Avg. Daily Sales</div>
-                            </div>
+                            <div><div className="font-bold text-sm">更新销量 (日均)</div></div>
                             {isSales && <Check size={16} className="ml-auto text-green-600"/>}
                         </button>
                     </div>
                 </div>
 
-                {/* 2. Input Area */}
                 <div className="flex-1 flex flex-col">
                     <label className="block text-xs font-bold text-gray-500 uppercase mb-2 flex justify-between items-center">
                         <span>2. 数据来源</span>
-                        {activeTab === 'api' && (
-                            <button 
-                                onClick={() => setShowGuide(!showGuide)}
-                                className={`flex items-center gap-1 text-[10px] px-2 py-0.5 rounded transition-colors ${showGuide ? 'bg-gray-200 text-gray-700' : 'text-blue-500 hover:bg-blue-50'}`}
-                            >
-                                <HelpCircle size={10} />
-                                {showGuide ? '隐藏指引' : '如何获取凭证?'}
-                            </button>
-                        )}
+                        {activeTab === 'api' && <button onClick={() => setShowGuide(!showGuide)} className="flex items-center gap-1 text-[10px] text-blue-500 hover:underline"><HelpCircle size={10} /> 帮助</button>}
                     </label>
                     
                     {activeTab === 'import' ? (
                         <div className="flex-1 flex flex-col">
-                            <textarea 
-                                className="flex-1 w-full p-3 border rounded-xl text-xs font-mono bg-white outline-none resize-none shadow-inner focus:ring-2 border-gray-300 transition-all"
-                                style={{ '--tw-ring-color': isLingxing ? '#3b82f6' : '#ea580c' } as React.CSSProperties}
-                                placeholder={`SKU      Value\nMA-001   150\nCP-Q1M   20\n...`}
-                                value={pasteData}
-                                onChange={e => setPasteData(e.target.value)}
-                            ></textarea>
-                            <div className="flex justify-end mt-2">
-                                <button onClick={() => setPasteData('')} className="text-xs text-gray-400 hover:text-red-500 underline">清空</button>
-                            </div>
+                            <textarea className="flex-1 w-full p-3 border rounded-xl text-xs font-mono outline-none resize-none shadow-inner focus:ring-2 border-gray-300" placeholder={`SKU      Value\nMA-001   150...`} value={pasteData} onChange={e => setPasteData(e.target.value)}></textarea>
                         </div>
                     ) : (
                         <div className="space-y-4 animate-fade-in">
-                             {/* Creds Inputs */}
                              <div>
-                                 <label className="text-[10px] text-gray-500 font-bold mb-1 block">{isLingxing ? 'App ID' : 'App Key'}</label>
-                                 <div className="relative">
-                                     <Lock className="absolute left-3 top-2.5 text-gray-400" size={14} />
-                                     <input type="text" className="w-full pl-9 pr-3 py-2 rounded-lg border border-gray-300 text-sm focus:ring-2 outline-none" placeholder={isLingxing ? "Enter App ID" : "Enter App Key"} value={field1} onChange={e => setField1(e.target.value)} />
-                                 </div>
+                                 <label className="text-[10px] text-gray-500 font-bold mb-1 block">App ID / Key</label>
+                                 <input type="text" className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm" value={field1} onChange={e => setField1(e.target.value)} />
                              </div>
                              <div>
-                                 <label className="text-[10px] text-gray-500 font-bold mb-1 block">{isLingxing ? 'Access Token' : 'App Secret'}</label>
+                                 <label className="text-[10px] text-gray-500 font-bold mb-1 block">Token / Secret</label>
                                  <div className="relative">
-                                     <Key className="absolute left-3 top-2.5 text-gray-400" size={14} />
-                                     <input type={showSecret ? "text" : "password"} className="w-full pl-9 pr-9 py-2 rounded-lg border border-gray-300 text-sm focus:ring-2 outline-none" placeholder={isLingxing ? "Enter Access Token" : "Enter App Secret"} value={field2} onChange={e => setField2(e.target.value)} />
-                                     <button type="button" onClick={() => setShowSecret(!showSecret)} className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600">
-                                         {showSecret ? <EyeOff size={14}/> : <Eye size={14}/>}
-                                     </button>
+                                     <input type={showSecret ? "text" : "password"} className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm" value={field2} onChange={e => setField2(e.target.value)} />
+                                     <button type="button" onClick={() => setShowSecret(!showSecret)} className="absolute right-3 top-2.5 text-gray-400"><Eye size={14}/></button>
                                  </div>
                              </div>
                              <div>
                                  <label className="text-[10px] text-gray-500 font-bold mb-1 flex justify-between items-center">
-                                     <span>代理服务器 (Proxy) <span className="text-red-500">*</span></span>
-                                     <button onClick={() => setShowProxySetup(true)} className="text-blue-600 hover:underline flex items-center gap-1"><Code size={10}/> 如何搭建?</button>
+                                     <span>代理 URL <span className="text-red-500">*</span></span>
+                                     <button onClick={() => setShowProxySetup(true)} className="text-blue-600 hover:underline flex items-center gap-1"><Code size={10}/> 部署指南</button>
                                  </label>
                                  <div className="relative flex items-center gap-2">
-                                     <div className="relative flex-1">
-                                        <Globe className={`absolute left-3 top-2.5 ${proxyStatus === 'success' ? 'text-green-500' : proxyStatus === 'error' ? 'text-red-500' : 'text-gray-400'}`} size={14} />
-                                        <input 
-                                            type="text" 
-                                            className={`w-full pl-9 pr-3 py-2 rounded-lg border text-sm focus:ring-2 outline-none transition-all ${proxyStatus === 'success' ? 'border-green-300 focus:ring-green-100 bg-green-50 text-green-700' : proxyStatus === 'error' ? 'border-red-300 focus:ring-red-100 bg-red-50 text-red-700' : 'border-gray-300'}`}
-                                            placeholder="https://your-app.vercel.app" 
-                                            value={proxyUrl} 
-                                            onChange={e => { setProxyUrl(e.target.value); setProxyStatus('idle'); setProxyStatusMsg(''); }}
-                                        />
-                                     </div>
-                                     <button 
-                                        onClick={handleTestConnection}
-                                        disabled={isTestingProxy || !proxyUrl}
-                                        className="bg-gray-100 hover:bg-gray-200 text-gray-600 p-2 rounded-lg border border-gray-300 transition-colors disabled:opacity-50"
-                                        title="自动检测并修复链接 (智能探测 /api/proxy)"
-                                    >
+                                     <input type="text" className="flex-1 px-3 py-2 rounded-lg border border-gray-300 text-sm" placeholder="https://your-app.vercel.app" value={proxyUrl} onChange={e => { setProxyUrl(e.target.value); setProxyStatus('idle'); }} />
+                                     <button onClick={handleTestConnection} disabled={isTestingProxy || !proxyUrl} className="bg-gray-100 p-2 rounded-lg border hover:bg-gray-200 text-gray-600">
                                         {isTestingProxy ? <RefreshCw className="animate-spin" size={16}/> : <Search size={16}/>}
-                                    </button>
+                                     </button>
                                  </div>
-                                 {proxyStatus === 'success' && <p className="text-[10px] text-green-600 mt-1 flex items-center gap-1"><Check size={10}/> {proxyStatusMsg || '连接成功'}</p>}
-                                 {proxyStatus === 'error' && (
-                                     <div className="mt-2 text-[10px] text-red-500 bg-red-50 p-2 rounded border border-red-100 space-y-1">
-                                         <p className="font-bold flex items-center gap-1"><AlertTriangle size={10}/> {proxyStatusMsg}</p>
-                                         <p>请点击右上角「如何搭建」检查 api 文件夹结构。</p>
-                                     </div>
-                                 )}
+                                 {proxyStatus === 'success' && <p className="text-[10px] text-green-600 mt-1 flex items-center gap-1"><Check size={10}/> {proxyStatusMsg}</p>}
+                                 {proxyStatus === 'error' && <p className="text-[10px] text-red-500 mt-1 flex items-center gap-1"><AlertTriangle size={10}/> {proxyStatusMsg}</p>}
                              </div>
 
-                             {/* Split Action Buttons */}
                              <div className="pt-2 grid grid-cols-1 gap-3">
-                                 {/* 1. Real Connect */}
-                                 <button 
-                                    onClick={() => handleApiSync(false)}
-                                    disabled={isApiLoading || !isRealApiReady}
-                                    className={`w-full py-3 rounded-xl font-bold text-sm shadow-md flex items-center justify-center gap-2 transition-all ${
-                                        !isRealApiReady 
-                                        ? 'bg-gray-100 text-gray-400 cursor-not-allowed border border-gray-200' 
-                                        : `${brandColor} ${brandColorHover} text-white`
-                                    }`}
-                                 >
-                                     {isApiLoading && connectionMode === 'real' ? <RefreshCw className="animate-spin" size={16} /> : <LinkIcon size={16} />}
-                                     {isApiLoading && connectionMode === 'real' ? '正在连接...' : `连接真实 ${isLingxing ? 'Lingxing' : 'Miaoshou'}`}
+                                 <button onClick={() => handleApiSync(false)} disabled={isApiLoading || !isRealApiReady} className={`w-full py-3 rounded-xl font-bold text-sm shadow-md flex items-center justify-center gap-2 ${!isRealApiReady ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : `${brandColor} text-white`}`}>
+                                     {isApiLoading && connectionMode === 'real' ? <RefreshCw className="animate-spin" size={16} /> : <LinkIcon size={16} />} 真实连接
                                  </button>
-                                 
-                                 {/* 2. Simulation */}
-                                 <button 
-                                    onClick={() => handleApiSync(true)}
-                                    disabled={isApiLoading && connectionMode === 'real'}
-                                    className="w-full py-3 rounded-xl font-bold text-sm border-2 border-purple-100 bg-purple-50 text-purple-700 hover:bg-purple-100 hover:border-purple-200 transition-all flex items-center justify-center gap-2"
-                                 >
-                                     {isApiLoading && connectionMode === 'simulated' ? <RefreshCw className="animate-spin" size={16} /> : <PlayCircle size={16} />}
-                                     使用模拟数据演示 (无需代理)
+                                 <button onClick={() => handleApiSync(true)} className="w-full py-3 rounded-xl font-bold text-sm border-2 border-purple-100 bg-purple-50 text-purple-700 hover:bg-purple-100 flex items-center justify-center gap-2">
+                                     <ServerOff size={16} /> 模拟数据演示
                                  </button>
                              </div>
-                             
-                             {!isRealApiReady && (
-                                 <div className="text-[10px] text-red-500 bg-red-50 p-2 rounded border border-red-100 flex items-center gap-2">
-                                     <ServerOff size={14} />
-                                     未配置代理 URL，无法进行真实连接。请使用模拟演示。
-                                 </div>
-                             )}
                         </div>
                     )}
                 </div>
             </div>
 
-            {/* Right Panel: Preview & Action */}
+            {/* Right Panel: Preview */}
             <div className="flex-1 flex flex-col p-0 overflow-hidden relative">
                 <div className="p-4 bg-white border-b border-gray-100 flex justify-between items-center shadow-sm z-10">
-                    <div className="flex items-center gap-3">
-                        <h3 className={`font-bold text-gray-800 flex items-center gap-2 ${typeColor}`}>
-                            <FileText size={18}/> 
-                            {activeTab === 'api' ? 'API 返回结果' : '识别预览'} 
-                        </h3>
-                        {connectionMode === 'simulated' && (
-                            <span className="text-[10px] bg-purple-100 text-purple-600 px-2 py-0.5 rounded font-bold border border-purple-200 animate-pulse">
-                                模拟数据模式
-                            </span>
-                        )}
-                        {connectionMode === 'real' && (
-                            <span className="text-[10px] bg-green-100 text-green-600 px-2 py-0.5 rounded font-bold border border-green-200 flex items-center gap-1">
-                                <Wifi size={10} /> 真实连接
-                            </span>
-                        )}
-                    </div>
+                    <h3 className={`font-bold text-gray-800 flex items-center gap-2 ${typeColor}`}><FileText size={18}/> 预览结果</h3>
                     <div className="text-xs space-x-3 flex">
-                        <span className="text-green-600 font-bold bg-green-50 px-2 py-0.5 rounded border border-green-100">匹配: {matchCount}</span>
-                        <span className="text-blue-600 font-bold bg-blue-50 px-2 py-0.5 rounded border border-blue-100">新增: {newCount}</span>
+                        <span className="text-green-600 font-bold bg-green-50 px-2 py-0.5 rounded">匹配: {matchCount}</span>
+                        <span className="text-blue-600 font-bold bg-blue-50 px-2 py-0.5 rounded">新增: {newCount}</span>
                     </div>
                 </div>
-
                 <div className="flex-1 overflow-y-auto custom-scrollbar p-4 bg-gray-50/50">
                     {displayItems.length === 0 ? (
                         <div className="h-full flex flex-col items-center justify-center text-gray-400 opacity-50">
-                            {activeTab === 'import' ? <ClipboardPaste size={48} className="mb-2" /> : <Database size={48} className="mb-2" />}
-                            <p className="text-sm font-medium">
-                                {activeTab === 'import' ? '请在左侧粘贴数据以预览' : '请点击左侧按钮获取数据'}
-                            </p>
+                            <Database size={48} className="mb-2" />
+                            <p className="text-sm">暂无数据</p>
                         </div>
                     ) : (
                         <div className="space-y-2">
                             {displayItems.map((item, idx) => (
-                                <div key={idx} className={`flex items-center justify-between p-3 rounded-xl border shadow-sm transition-all hover:shadow-md ${item.status === 'match' ? 'bg-white border-gray-200' : 'bg-blue-50 border-blue-200'}`}>
+                                <div key={idx} className="flex items-center justify-between p-3 rounded-xl border bg-white border-gray-200 shadow-sm">
                                     <div className="flex items-center gap-3">
-                                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold ${item.status === 'match' ? 'bg-green-100 text-green-700' : 'bg-blue-200 text-blue-700'}`}>
-                                            {item.status === 'match' ? <Check size={14}/> : <PlusCircle size={14}/>}
-                                        </div>
+                                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold ${item.status === 'match' ? 'bg-green-100 text-green-700' : 'bg-blue-200 text-blue-700'}`}>{item.status === 'match' ? <Check size={14}/> : <PlusCircle size={14}/>}</div>
                                         <div>
-                                            <div className="flex items-center gap-2">
-                                                <span className="font-bold text-gray-800 text-sm">{item.sku}</span>
-                                                {item.status === 'new' && <span className="text-[10px] bg-blue-100 text-blue-600 px-1 rounded font-bold border border-blue-200">New</span>}
-                                            </div>
-                                            <div className="text-xs text-gray-500 truncate max-w-[150px] md:max-w-[200px]" title={item.name}>{item.name}</div>
+                                            <div className="font-bold text-gray-800 text-sm">{item.sku}</div>
+                                            <div className="text-xs text-gray-500 truncate w-32">{item.name}</div>
                                         </div>
                                     </div>
-                                    
-                                    <div className="flex items-center gap-4">
-                                        {item.status === 'match' && (
-                                            <div className="text-right hidden sm:block">
-                                                <div className="text-[10px] text-gray-400 uppercase font-bold">Current</div>
-                                                <div className="text-sm font-mono text-gray-500 line-through decoration-gray-300">{item.oldVal}</div>
-                                            </div>
-                                        )}
-                                        {item.status === 'match' && <ArrowRight size={14} className="text-gray-300 hidden sm:block" />}
-                                        <div className="text-right min-w-[60px]">
-                                            <div className={`text-[10px] font-bold uppercase ${typeColor}`}>Update</div>
-                                            <div className={`text-lg font-mono font-bold ${typeColor}`}>{item.newVal}</div>
-                                        </div>
+                                    <div className="text-right">
+                                        <div className={`text-lg font-mono font-bold ${typeColor}`}>{item.newVal}</div>
+                                        {item.status === 'match' && <div className="text-[10px] text-gray-400 line-through">{item.oldVal}</div>}
                                     </div>
                                 </div>
                             ))}
                         </div>
                     )}
                 </div>
-
-                {/* Footer Action */}
-                <div className="p-4 bg-white border-t border-gray-200 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-20">
-                     {newCount > 0 && (
-                         <div className="mb-3 flex items-start gap-2 bg-blue-50 text-blue-800 p-3 rounded-lg text-xs border border-blue-100">
-                             <AlertTriangle size={16} className="shrink-0 mt-0.5 text-blue-500" />
-                             <div>
-                                 <strong>将自动创建 {newCount} 个新产品档案。</strong>
-                                 <p className="opacity-80 mt-1">系统会自动补全基础信息，建议同步后完善成本与物流参数。</p>
-                             </div>
-                         </div>
-                     )}
-                     
-                     <button 
-                        onClick={handleApply}
-                        disabled={displayItems.length === 0}
-                        className={`w-full font-bold py-3.5 rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 transform active:scale-[0.99] ${
-                            displayItems.length === 0 
-                            ? 'bg-gray-100 text-gray-400 cursor-not-allowed' 
-                            : `${isSales ? 'bg-green-600 hover:bg-green-700 shadow-green-200' : `${brandColor} ${brandColorHover} shadow-blue-200`} text-white`
-                        }`}
-                     >
-                         <Save size={18} />
-                         {matchCount === 0 && newCount === 0 ? '暂无数据可更新' : 
-                          `确认同步 ${matchCount + newCount} 条数据`}
+                <div className="p-4 bg-white border-t border-gray-200 z-20">
+                     <button onClick={handleApply} disabled={displayItems.length === 0} className={`w-full font-bold py-3.5 rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 ${displayItems.length === 0 ? 'bg-gray-100 text-gray-400' : `${brandColor} text-white`}`}>
+                         <Save size={18} /> 确认同步
                      </button>
                 </div>
             </div>
