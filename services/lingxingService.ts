@@ -101,6 +101,29 @@ const getAndJitterMockData = (sku: string, productName: string, baseQty: number,
     return db[cleanSku];
 };
 
+// Helper to safely fetch JSON from proxy
+const safeJsonFetch = async (url: string, payload: any) => {
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    });
+
+    const contentType = response.headers.get("content-type");
+    if (contentType && contentType.indexOf("application/json") === -1) {
+        // We got HTML or Text instead of JSON (likely 404 or 500 from Vercel)
+        const text = await response.text();
+        console.error("Proxy returned non-JSON:", text);
+        throw new Error(`代理服务器响应格式错误。可能是 URL 填写错误或服务未部署。(Status: ${response.status})`);
+    }
+
+    if (!response.ok) {
+        throw new Error(`代理服务器报错: ${response.statusText}`);
+    }
+
+    return await response.json();
+};
+
 export const fetchLingxingInventory = async (
   appId: string, 
   accessToken: string, 
@@ -112,16 +135,12 @@ export const fetchLingxingInventory = async (
   if (proxyUrl && proxyUrl.startsWith('http')) {
       if (!appId || !accessToken) throw new Error("真实连接需要 App ID 和 Token");
       try {
-          const response = await fetch(`${proxyUrl}/inventory`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ appId, accessToken, skus: localRecords.map(r => r.sku) })
-          });
-          if (!response.ok) throw new Error("代理服务响应错误");
-          return await response.json();
+          // Clean the URL to avoid double slashes
+          const endpoint = `${proxyUrl.replace(/\/$/, '')}/inventory`;
+          return await safeJsonFetch(endpoint, { appId, accessToken, skus: localRecords.map(r => r.sku) });
       } catch (e) {
           console.warn("Real API call failed.", e);
-          throw new Error(`连接失败: ${e instanceof Error ? e.message : '未知错误'}`);
+          throw new Error(`${e instanceof Error ? e.message : '未知错误'}`);
       }
   }
 
@@ -172,7 +191,12 @@ export const fetchLingxingSales = async (
   ): Promise<LingxingSalesItem[]> => {
     
     if (proxyUrl && proxyUrl.startsWith('http')) {
-        throw new Error("暂未检测到有效的后端代理服务");
+        try {
+            const endpoint = `${proxyUrl.replace(/\/$/, '')}/sales`;
+            return await safeJsonFetch(endpoint, { appId, accessToken, days, skus: localRecords.map(r => r.sku) });
+        } catch (e) {
+            throw new Error(`${e instanceof Error ? e.message : '网络错误'}`);
+        }
     }
   
     await new Promise(resolve => setTimeout(resolve, 300));

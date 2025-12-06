@@ -69,6 +69,28 @@ const getAndJitterMockData = (sku: string, productName: string, baseQty: number,
     return db[cleanSku];
 };
 
+// Helper to safely fetch JSON from proxy
+const safeJsonFetch = async (url: string, payload: any) => {
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    });
+
+    const contentType = response.headers.get("content-type");
+    if (contentType && contentType.indexOf("application/json") === -1) {
+        const text = await response.text();
+        console.error("Proxy returned non-JSON:", text);
+        throw new Error(`代理服务器响应格式错误。可能是 URL 填写错误或服务未部署。(Status: ${response.status})`);
+    }
+
+    if (!response.ok) {
+        throw new Error(`代理服务器报错: ${response.statusText}`);
+    }
+
+    return await response.json();
+};
+
 export const fetchMiaoshouInventory = async (
   appKey: string, 
   appSecret: string, 
@@ -80,17 +102,12 @@ export const fetchMiaoshouInventory = async (
   if (proxyUrl && proxyUrl.startsWith('http')) {
       if (!appKey || !appSecret) throw new Error("真实连接需要 App Key 和 Secret");
       try {
-          const response = await fetch(`${proxyUrl}/miaoshou/inventory`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ appKey, appSecret, skus: localRecords.map(r => r.sku) })
-          });
-          if (!response.ok) throw new Error("秒手代理服务响应错误: " + response.statusText);
-          const data = await response.json();
+          const endpoint = `${proxyUrl.replace(/\/$/, '')}/miaoshou/inventory`;
+          const data = await safeJsonFetch(endpoint, { appKey, appSecret, skus: localRecords.map(r => r.sku) });
           return Array.isArray(data) ? data : [];
       } catch (e) {
           console.warn("Real Miaoshou API call failed.", e);
-          throw new Error(`连接失败: ${e instanceof Error ? e.message : '网络错误'}`);
+          throw new Error(`${e instanceof Error ? e.message : '网络错误'}`);
       }
   }
 
@@ -138,16 +155,11 @@ export const fetchMiaoshouSales = async (
     if (proxyUrl && proxyUrl.startsWith('http')) {
         if (!appKey || !appSecret) throw new Error("真实连接需要 App Key 和 Secret");
         try {
-            const response = await fetch(`${proxyUrl}/miaoshou/sales`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ appKey, appSecret, days, skus: localRecords.map(r => r.sku) })
-            });
-            if (!response.ok) throw new Error("秒手代理服务响应错误");
-            const data = await response.json();
+            const endpoint = `${proxyUrl.replace(/\/$/, '')}/miaoshou/sales`;
+            const data = await safeJsonFetch(endpoint, { appKey, appSecret, days, skus: localRecords.map(r => r.sku) });
             return Array.isArray(data) ? data : [];
         } catch (e) {
-            throw new Error(`连接失败: ${e instanceof Error ? e.message : '网络错误'}`);
+            throw new Error(`${e instanceof Error ? e.message : '网络错误'}`);
         }
     }
   
