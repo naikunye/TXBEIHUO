@@ -24,6 +24,7 @@ const CODE_PACKAGE = `{
   "dependencies": {}
 }`;
 
+// Updated: vercel.json is now optional but recommended
 const CODE_VERCEL = `{
   "rewrites": [
     { "source": "/(.*)", "destination": "/api/proxy" }
@@ -214,7 +215,7 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
       }
 
       setProxyStatus('error');
-      setProxyStatusMsg('无法连接。请检查 Vercel 部署状态 (404/500)。');
+      setProxyStatusMsg('无法连接。请确保 proxy.js 已部署在 /api 文件夹下。');
       setIsTestingProxy(false);
   };
 
@@ -548,7 +549,6 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
                             <div className="bg-slate-900 text-white p-4 rounded-xl font-mono text-xs leading-6">
                                 <div className="flex items-center gap-2 text-slate-400"><Folder size={14}/> tanxing-proxy (根文件夹)</div>
                                 <div className="flex items-center gap-2 ml-4">├── <FileCode size={14} className="text-green-400"/> package.json</div>
-                                <div className="flex items-center gap-2 ml-4">├── <FileCode size={14} className="text-yellow-400"/> vercel.json</div>
                                 <div className="flex items-center gap-2 ml-4 text-blue-300">└── <Folder size={14} className="text-blue-400"/> api/ <span className="text-red-400 ml-2">(⚠️ 必须新建这个文件夹)</span></div>
                                 <div className="flex items-center gap-2 ml-10">└── <FileCode size={14} className="text-blue-200"/> proxy.js <span className="text-gray-500 ml-2">(文件放这里面)</span></div>
                             </div>
@@ -566,7 +566,7 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
                         {/* File 2 */}
                         <div className="space-y-1">
                             <div className="flex justify-between items-center text-xs font-bold text-gray-700 px-2">
-                                <span>2. vercel.json <span className="text-gray-400">(根目录)</span></span>
+                                <span>2. vercel.json <span className="text-gray-400">(可选, 但推荐)</span></span>
                                 <button onClick={() => downloadFile('vercel.json', CODE_VERCEL)} className="flex items-center gap-1 text-blue-600 hover:underline border border-blue-200 px-2 py-0.5 rounded bg-blue-50"><Download size={12}/> 下载</button>
                             </div>
                             <pre className="bg-gray-100 text-gray-600 p-3 rounded-lg text-[10px] font-mono overflow-x-auto border border-gray-200">{CODE_VERCEL}</pre>

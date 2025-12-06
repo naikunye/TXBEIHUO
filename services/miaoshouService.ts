@@ -81,7 +81,7 @@ const safeJsonFetch = async (url: string, payload: any) => {
     if (contentType && contentType.indexOf("application/json") === -1) {
         const text = await response.text();
         console.error("Proxy returned non-JSON:", text);
-        throw new Error(`代理服务器响应格式错误。可能是 URL 填写错误或服务未部署。(Status: ${response.status})`);
+        throw new Error(`代理服务器响应格式错误(404/500)。请检查 URL 是否正确 (应以 /api/proxy 结尾)。`);
     }
 
     if (!response.ok) {
@@ -102,7 +102,11 @@ export const fetchMiaoshouInventory = async (
   if (proxyUrl && proxyUrl.startsWith('http')) {
       if (!appKey || !appSecret) throw new Error("真实连接需要 App Key 和 Secret");
       try {
-          const endpoint = `${proxyUrl.replace(/\/$/, '')}/miaoshou/inventory`;
+          // FIX: Use Query Params
+          const baseUrl = proxyUrl.replace(/\/$/, '');
+          // Miaoshou usually needs a specific param to distinguish action if we use a single proxy function
+          const endpoint = `${baseUrl}?endpoint=inventory`; 
+          
           const data = await safeJsonFetch(endpoint, { appKey, appSecret, skus: localRecords.map(r => r.sku) });
           return Array.isArray(data) ? data : [];
       } catch (e) {
@@ -155,7 +159,10 @@ export const fetchMiaoshouSales = async (
     if (proxyUrl && proxyUrl.startsWith('http')) {
         if (!appKey || !appSecret) throw new Error("真实连接需要 App Key 和 Secret");
         try {
-            const endpoint = `${proxyUrl.replace(/\/$/, '')}/miaoshou/sales`;
+            // FIX: Use Query Params
+            const baseUrl = proxyUrl.replace(/\/$/, '');
+            const endpoint = `${baseUrl}?endpoint=sales`;
+            
             const data = await safeJsonFetch(endpoint, { appKey, appSecret, days, skus: localRecords.map(r => r.sku) });
             return Array.isArray(data) ? data : [];
         } catch (e) {

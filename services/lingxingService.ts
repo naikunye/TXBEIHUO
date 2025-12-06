@@ -114,7 +114,7 @@ const safeJsonFetch = async (url: string, payload: any) => {
         // We got HTML or Text instead of JSON (likely 404 or 500 from Vercel)
         const text = await response.text();
         console.error("Proxy returned non-JSON:", text);
-        throw new Error(`代理服务器响应格式错误。可能是 URL 填写错误或服务未部署。(Status: ${response.status})`);
+        throw new Error(`代理服务器响应格式错误(404/500)。请检查 URL 是否正确 (应以 /api/proxy 结尾)。`);
     }
 
     if (!response.ok) {
@@ -135,8 +135,11 @@ export const fetchLingxingInventory = async (
   if (proxyUrl && proxyUrl.startsWith('http')) {
       if (!appId || !accessToken) throw new Error("真实连接需要 App ID 和 Token");
       try {
-          // Clean the URL to avoid double slashes
-          const endpoint = `${proxyUrl.replace(/\/$/, '')}/inventory`;
+          // FIX: Use Query Params instead of path to avoid Vercel 404s without rewrites
+          // Ensure no double slash, and append query param
+          const baseUrl = proxyUrl.replace(/\/$/, '');
+          const endpoint = `${baseUrl}?endpoint=inventory`; 
+          
           return await safeJsonFetch(endpoint, { appId, accessToken, skus: localRecords.map(r => r.sku) });
       } catch (e) {
           console.warn("Real API call failed.", e);
@@ -192,7 +195,10 @@ export const fetchLingxingSales = async (
     
     if (proxyUrl && proxyUrl.startsWith('http')) {
         try {
-            const endpoint = `${proxyUrl.replace(/\/$/, '')}/sales`;
+            // FIX: Use Query Params
+            const baseUrl = proxyUrl.replace(/\/$/, '');
+            const endpoint = `${baseUrl}?endpoint=sales`;
+            
             return await safeJsonFetch(endpoint, { appId, accessToken, days, skus: localRecords.map(r => r.sku) });
         } catch (e) {
             throw new Error(`${e instanceof Error ? e.message : '网络错误'}`);
@@ -200,9 +206,6 @@ export const fetchLingxingSales = async (
     }
   
     await new Promise(resolve => setTimeout(resolve, 300));
-    
-    // Combine local + extra for sales fetching too, technically sales should update both
-    // For simplicity, we just return updates for requested local records plus extras if we want fully robust sync
     
     const results: LingxingSalesItem[] = [];
 
