@@ -1,8 +1,7 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { ReplenishmentRecord } from '../types';
-import { fetchLingxingInventory, fetchLingxingSales, calculateInventoryDiff, calculateSalesDiff, resetMockErpData, updateMockErpItem, bulkImportRealData } from '../services/lingxingService';
-import { X, RefreshCw, ArrowRight, Check, AlertCircle, Database, Link as LinkIcon, Lock, TrendingUp, Package, Trash2, Edit2, Save, UploadCloud, ClipboardPaste } from 'lucide-react';
+import { X, Check, Database, Link as LinkIcon, Lock, ClipboardPaste, FileText, Save, ArrowRight, PlusCircle, AlertTriangle } from 'lucide-react';
 
 interface ErpSyncModalProps {
   isOpen: boolean;
@@ -14,323 +13,379 @@ interface ErpSyncModalProps {
 type SyncType = 'inventory' | 'sales';
 
 export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, records, onUpdateRecords }) => {
-  const [step, setStep] = useState<'config' | 'import' | 'result'>('config');
+  const [activeTab, setActiveTab] = useState<'import' | 'api'>('import');
   const [syncType, setSyncType] = useState<SyncType>('inventory');
-  
-  // FIX: Use lazy initialization to ensure localStorage is read immediately on mount
-  const [appId, setAppId] = useState(() => localStorage.getItem('lx_app_id') || '');
-  const [token, setToken] = useState(() => localStorage.getItem('lx_token') || ''); 
-  const [proxyUrl, setProxyUrl] = useState(() => localStorage.getItem('lx_proxy_url') || ''); 
   
   // Import State
   const [pasteData, setPasteData] = useState('');
 
-  // Persist changes immediately
+  // API State
+  const [appId, setAppId] = useState(() => localStorage.getItem('lx_app_id') || '');
+  const [token, setToken] = useState(() => localStorage.getItem('lx_token') || ''); 
+  const [proxyUrl, setProxyUrl] = useState(() => localStorage.getItem('lx_proxy_url') || ''); 
+
+  // Persist API config
   useEffect(() => { localStorage.setItem('lx_app_id', appId); }, [appId]);
   useEffect(() => { localStorage.setItem('lx_token', token); }, [token]);
   useEffect(() => { localStorage.setItem('lx_proxy_url', proxyUrl); }, [proxyUrl]);
 
-  const [isLoading, setIsLoading] = useState(false);
-  const [diffs, setDiffs] = useState<any[]>([]);
-  const [selectedDiffIds, setSelectedDiffIds] = useState<Set<string>>(new Set());
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editValue, setEditValue] = useState<string>('');
-
-  if (!isOpen) return null;
-
-  const isSimulation = !proxyUrl || !proxyUrl.startsWith('http');
-
-  const handleConnect = async () => {
-      setIsLoading(true);
-      setEditingId(null);
-      try {
-          if (!isSimulation && (!appId || !token)) {
-              throw new Error("请填写完整的 App Key 和 App Secret");
-          }
-
-          let calculatedDiffs: typeof diffs = [];
-
-          if (syncType === 'inventory') {
-              const erpData = await fetchLingxingInventory(appId, token, records, proxyUrl);
-              calculatedDiffs = calculateInventoryDiff(records, erpData);
-          } else {
-              const erpData = await fetchLingxingSales(appId, token, records, 30, proxyUrl);
-              calculatedDiffs = calculateSalesDiff(records, erpData);
-          }
-          
-          setDiffs(calculatedDiffs);
-          setSelectedDiffIds(new Set(calculatedDiffs.map(d => d.recordId)));
-          setStep('result');
-      } catch (error: any) {
-          alert(`连接失败: ${error.message}`);
-      } finally {
-          setIsLoading(false);
+  // --- Core Logic: Parse Paste Data (Refactored to useMemo) ---
+  const parsedItems = useMemo(() => {
+      if (!pasteData.trim()) {
+          return [];
       }
-  };
 
-  const handleBulkImport = () => {
-      if (!pasteData.trim()) return;
-      
       const lines = pasteData.trim().split('\n');
-      const parsed: { sku: string; qty: number }[] = [];
-      
+      const results: {sku: string, oldVal: number, newVal: number, name: string, status: 'match' | 'new' | 'error'}[] = [];
+
       lines.forEach(line => {
-          // Robust parsing: Remove commas (like "1,000"), replace tabs/multiple spaces with single space
-          const cleanLine = line.replace(/,/g, '').trim();
-          const parts = cleanLine.split(/[\t\s]+/).filter(Boolean);
+          // Normalize line: replace tabs/commas with spaces, remove extra spaces
+          const cleanLine = line.replace(/,/g, '').replace(/\t/g, ' ').trim();
+          if (!cleanLine) return;
+
+          // Split by space
+          const parts = cleanLine.split(/\s+/);
+          
+          // Intelligent Parsing Logic:
+          // Pattern 1: SKU Quantity (Length 2) -> "MA-001 100"
+          // Pattern 2: SKU Name Name Name Quantity (Length > 2) -> "MA-001 Mad Acid Gel 100"
           
           if (parts.length >= 2) {
-              const sku = parts[0]; // First part is SKU
-              const qtyStr = parts[parts.length-1]; // Last part is Qty
-              const qty = parseFloat(qtyStr); 
-              
-              if (sku && !isNaN(qty)) {
-                  parsed.push({ sku, qty });
+              // Try to find the number part (quantity). Usually the last item.
+              let qtyIndex = -1;
+              let newVal = 0;
+
+              // Check if the last item is a number
+              const lastItem = parseFloat(parts[parts.length - 1]);
+              if (!isNaN(lastItem)) {
+                  qtyIndex = parts.length - 1;
+                  newVal = lastItem;
+              } else {
+                  // Fallback: try to find any number in the line (risky but helpful)
+                  for (let i = parts.length - 1; i >= 0; i--) {
+                       const val = parseFloat(parts[i]);
+                       if (!isNaN(val)) {
+                           qtyIndex = i;
+                           newVal = val;
+                           break;
+                       }
+                  }
               }
-          }
-      });
 
-      if (parsed.length > 0) {
-          const count = bulkImportRealData(parsed);
-          
-          // Count matches against current records
-          const matchedCount = records.filter(r => parsed.some(p => p.sku.trim() === r.sku.trim())).length;
-          
-          if (matchedCount === 0) {
-              alert(`⚠️ 成功解析 ${parsed.length} 条数据，但没有一条与当前系统中的 SKU 匹配！\n\n请检查：\n1. 您在系统中添加产品了吗？\n2. SKU 是否完全一致？(例如 MA-001 vs MA001)`);
-          } else {
-              alert(`✅ 成功导入 ${parsed.length} 条数据！\n其中 ${matchedCount} 条匹配到了本地产品。\n\n系统将立即开始比对...`);
-              setPasteData('');
-              // Auto proceed
-              handleConnect();
-          }
-      } else {
-          alert("❌ 未能识别有效数据。\n\n请确保格式为：SKU  数量\n例如：\nMA-001  100\nCP-Q1M  50");
-      }
-  };
-
-  const handleResetSimulation = () => {
-      if(window.confirm("确定要重置所有缓存数据吗？\n如果之前手动导入过数据，也会被清空，下次将显示随机模拟数据。")) {
-          resetMockErpData();
-          alert("缓存已清空。");
-          setStep('config');
-      }
-  };
-
-  const startEdit = (diff: any) => {
-      if (!isSimulation) return;
-      setEditingId(diff.recordId);
-      setEditValue(diff.erpVal.toString());
-  };
-
-  const saveEdit = (diff: any) => {
-      const newVal = parseFloat(editValue);
-      if (!isNaN(newVal)) {
-          updateMockErpItem(diff.sku, syncType === 'inventory' ? 'stock' : 'sales', newVal);
-          setDiffs(prev => prev.map(d => {
-              if (d.recordId === diff.recordId) {
-                  return { ...d, erpVal: newVal, diff: newVal - d.localVal };
-              }
-              return d;
-          }));
-      }
-      setEditingId(null);
-  };
-
-  const toggleSelect = (id: string) => {
-      const next = new Set(selectedDiffIds);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      setSelectedDiffIds(next);
-  };
-
-  const handleSyncConfirm = () => {
-      const updatedRecords = records.map(r => {
-          if (selectedDiffIds.has(r.id)) {
-              const diffItem = diffs.find(d => d.recordId === r.id);
-              if (diffItem) {
-                  if (syncType === 'inventory') {
-                      const newQty = Number(diffItem.erpVal);
-                      const safeItemsPerBox = r.itemsPerBox > 0 ? r.itemsPerBox : 1;
-                      const newTotalCartons = Math.ceil(newQty / safeItemsPerBox);
-                      return { ...r, quantity: newQty, totalCartons: newTotalCartons };
+              if (qtyIndex !== -1) {
+                  let rawSku = parts[0]; 
+                  
+                  // Extract Name: Everything between SKU and Quantity
+                  let extractedName = '';
+                  if (qtyIndex > 1) {
+                      extractedName = parts.slice(1, qtyIndex).join(' ');
                   } else {
-                      return { ...r, dailySales: Number(diffItem.erpVal) };
+                      // If just SKU + Qty, use SKU as temp name
+                      extractedName = rawSku;
+                  }
+
+                  // Find matching record
+                  const match = records.find(r => 
+                      (r.sku || '').toLowerCase().trim() === rawSku.toLowerCase().trim() ||
+                      (r.productName || '').toLowerCase().includes(rawSku.toLowerCase()) // Fallback loose match
+                  );
+
+                  if (match) {
+                      results.push({
+                          sku: match.sku, // Use matched system SKU
+                          name: match.productName,
+                          oldVal: syncType === 'inventory' ? match.quantity : match.dailySales,
+                          newVal: newVal,
+                          status: 'match'
+                      });
+                  } else {
+                      // Unmatched -> Mark as 'new' for potential creation
+                      results.push({
+                          sku: rawSku,
+                          name: extractedName,
+                          oldVal: 0,
+                          newVal: newVal,
+                          status: 'new'
+                      });
                   }
               }
           }
-          return r;
       });
-      onUpdateRecords(updatedRecords);
+      return results;
+  }, [pasteData, records, syncType]);
+
+  // Conditional return moved AFTER hooks
+  if (!isOpen) return null;
+
+  const handleApply = () => {
+      const updates = [...records];
+      const newRecords: ReplenishmentRecord[] = [];
+      let updateCount = 0;
+      let createCount = 0;
+
+      parsedItems.forEach(item => {
+          if (item.status === 'match') {
+              // Update existing
+              const recordIndex = updates.findIndex(r => r.sku === item.sku);
+              if (recordIndex !== -1) {
+                  if (syncType === 'inventory') {
+                      updates[recordIndex].quantity = item.newVal;
+                      // Update cartons logic roughly
+                      const perBox = updates[recordIndex].itemsPerBox || 1;
+                      updates[recordIndex].totalCartons = Math.ceil(item.newVal / perBox);
+                  } else {
+                      updates[recordIndex].dailySales = item.newVal;
+                  }
+                  updateCount++;
+              }
+          } else if (item.status === 'new') {
+              // Create new record
+              const newRecord: ReplenishmentRecord = {
+                  id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
+                  date: new Date().toISOString().split('T')[0],
+                  sku: item.sku,
+                  productName: item.name || item.sku, // Fallback name
+                  quantity: syncType === 'inventory' ? item.newVal : 0,
+                  dailySales: syncType === 'sales' ? item.newVal : 0,
+                  status: 'Planning',
+                  lifecycle: 'New',
+                  
+                  // Defaults that need filling later
+                  unitPriceCNY: 0,
+                  unitWeightKg: 0,
+                  boxLengthCm: 0,
+                  boxWidthCm: 0,
+                  boxHeightCm: 0,
+                  itemsPerBox: 1,
+                  totalCartons: Math.ceil(item.newVal),
+                  shippingMethod: 'Air',
+                  shippingUnitPriceCNY: 0,
+                  materialCostCNY: 0,
+                  customsFeeCNY: 0,
+                  portFeeCNY: 0,
+                  salesPriceUSD: 0,
+                  lastMileCostUSD: 0,
+                  adCostUSD: 0,
+                  platformFeeRate: 2,
+                  affiliateCommissionRate: 0,
+                  additionalFixedFeeUSD: 0,
+                  returnRate: 0,
+                  warehouse: 'Default Warehouse',
+              };
+              newRecords.push(newRecord);
+              createCount++;
+          }
+      });
+
+      // Merge arrays
+      const finalRecords = [...newRecords, ...updates];
+      onUpdateRecords(finalRecords);
+
+      let msg = '';
+      if (updateCount > 0) msg += `更新了 ${updateCount} 个现有产品。`;
+      if (createCount > 0) msg += ` 新建了 ${createCount} 个产品档案。`;
+      alert(msg || "没有产生任何变化");
+      
       onClose();
-      setStep('config');
+      setPasteData('');
   };
+
+  const handleClear = () => {
+      setPasteData('');
+  };
+
+  const matchCount = parsedItems.filter(i => i.status === 'match').length;
+  const newCount = parsedItems.filter(i => i.status === 'new').length;
 
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black bg-opacity-50 backdrop-blur-sm p-4 animate-fade-in">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl overflow-hidden flex flex-col relative max-h-[90vh]">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl h-[90vh] flex flex-col relative overflow-hidden">
         
         {/* Header */}
-        <div className="bg-[#1890ff] p-5 flex justify-between items-center text-white shrink-0">
+        <div className="bg-slate-900 p-5 flex justify-between items-center text-white shrink-0">
             <div className="flex items-center gap-3">
-                <div className="bg-white/20 p-2 rounded-lg"><RefreshCw size={24} className="text-white" /></div>
+                <div className="bg-white/20 p-2 rounded-lg"><Database size={24} className="text-white" /></div>
                 <div>
-                    <h2 className="text-xl font-bold">库存/销量同步</h2>
-                    <p className="text-blue-100 text-xs">Lingxing Open API / Import Tool</p>
+                    <h2 className="text-xl font-bold">批量数据处理 (Import & Update)</h2>
+                    <p className="text-slate-400 text-xs">自动匹配现有商品，自动创建新商品</p>
                 </div>
             </div>
             <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full transition-colors text-white"><X size={24} /></button>
         </div>
 
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto bg-gray-50 p-6">
+        {/* Tabs */}
+        <div className="flex border-b border-gray-200 bg-gray-50 shrink-0">
+            <button 
+                onClick={() => setActiveTab('import')}
+                className={`flex-1 py-4 text-sm font-bold flex items-center justify-center gap-2 border-b-2 transition-colors ${activeTab === 'import' ? 'border-blue-600 text-blue-600 bg-white' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+            >
+                <ClipboardPaste size={18} /> Excel 粘贴导入 (推荐)
+            </button>
+            <button 
+                onClick={() => setActiveTab('api')}
+                className={`flex-1 py-4 text-sm font-bold flex items-center justify-center gap-2 border-b-2 transition-colors ${activeTab === 'api' ? 'border-blue-600 text-blue-600 bg-white' : 'border-transparent text-gray-400 hover:text-gray-600'}`}
+            >
+                <LinkIcon size={18} /> 领星 API 对接 (高级)
+            </button>
+        </div>
+
+        {/* Content Body */}
+        <div className="flex-1 overflow-hidden flex flex-col bg-white">
             
-            {/* Step 1: Config */}
-            {step === 'config' && (
-                <div className="space-y-6">
-                    <div className="flex p-1 bg-gray-200 rounded-xl">
-                        <button onClick={() => setSyncType('inventory')} className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-lg font-bold text-sm transition-all ${syncType === 'inventory' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500'}`}><Package size={18} /> 同步库存 (Stock)</button>
-                        <button onClick={() => setSyncType('sales')} className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-lg font-bold text-sm transition-all ${syncType === 'sales' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500'}`}><TrendingUp size={18} /> 同步日销 (Sales)</button>
-                    </div>
-
-                    <div className="space-y-4 bg-white p-6 rounded-xl border border-gray-200 shadow-sm relative overflow-hidden">
-                        <h3 className="font-bold text-gray-800 flex items-center gap-2 border-b border-gray-100 pb-3 mb-3">
-                            <Lock size={18} className="text-gray-400"/> API 连接配置
-                        </h3>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div>
-                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">App ID</label>
-                                <input type="text" value={appId} onChange={e => setAppId(e.target.value)} className="w-full p-2.5 border border-gray-300 rounded-lg text-sm" placeholder="领星 App ID" />
-                            </div>
-                            <div>
-                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">App Secret</label>
-                                <input type="password" value={token} onChange={e => setToken(e.target.value)} className="w-full p-2.5 border border-gray-300 rounded-lg text-sm" placeholder="领星 Secret" />
+            {activeTab === 'import' && (
+                <div className="flex-1 flex flex-col md:flex-row h-full">
+                    {/* Left: Input Area */}
+                    <div className="w-full md:w-1/3 border-r border-gray-200 flex flex-col p-4 bg-gray-50">
+                        <div className="mb-4">
+                            <label className="block text-xs font-bold text-gray-500 uppercase mb-2">1. 数据类型</label>
+                            <div className="flex bg-white rounded-lg border border-gray-200 p-1">
+                                <button onClick={() => setSyncType('inventory')} className={`flex-1 py-2 text-xs font-bold rounded ${syncType === 'inventory' ? 'bg-blue-100 text-blue-700' : 'text-gray-500'}`}>库存数量</button>
+                                <button onClick={() => setSyncType('sales')} className={`flex-1 py-2 text-xs font-bold rounded ${syncType === 'sales' ? 'bg-green-100 text-green-700' : 'text-gray-500'}`}>日均销量</button>
                             </div>
                         </div>
-                        <div className="pt-2">
-                            <label className="block text-xs font-bold text-gray-400 uppercase mb-1">代理地址 (Proxy URL)</label>
-                            <input type="text" value={proxyUrl} onChange={e => setProxyUrl(e.target.value)} className="w-full p-2.5 border border-dashed border-gray-300 bg-gray-50 rounded-lg text-xs" placeholder="https://api.your-domain.com/proxy (留空则为离线模式)" />
+
+                        <div className="flex-1 flex flex-col">
+                            <label className="block text-xs font-bold text-gray-500 uppercase mb-2">2. 粘贴数据</label>
+                            <div className="mb-2 text-[10px] text-gray-400 bg-gray-50 p-2 rounded border border-gray-100">
+                                支持格式：<br/>
+                                <span className="font-mono text-gray-600">SKU 数量</span> (如: A01 100)<br/>
+                                <span className="font-mono text-gray-600">SKU 名称 数量</span> (如: A01 手机壳 100)
+                            </div>
+                            <textarea 
+                                className="flex-1 w-full p-3 border border-gray-300 rounded-xl text-xs font-mono bg-white focus:ring-2 focus:ring-blue-500 outline-none resize-none shadow-inner"
+                                placeholder={`在此粘贴 Excel 列...\n\nMA-001  150\nCP-Q1M  20\nNEW-001 新产品名称 50`}
+                                value={pasteData}
+                                onChange={e => setPasteData(e.target.value)}
+                            ></textarea>
+                            <div className="flex justify-between items-center mt-2">
+                                <span className="text-[10px] text-gray-400">已识别 {parsedItems.length} 行</span>
+                                <button onClick={handleClear} className="text-xs text-gray-400 hover:text-red-500">清空</button>
+                            </div>
                         </div>
                     </div>
 
-                    {isSimulation && (
-                        <div className="bg-orange-50 border border-orange-100 rounded-xl p-4 flex flex-col gap-3">
-                            <div className="flex items-start gap-3">
-                                <AlertCircle className="text-orange-500 shrink-0 mt-0.5" size={20} />
-                                <div className="text-sm text-orange-800">
-                                    <p className="font-bold">未配置代理服务器 (Offline Mode)</p>
-                                    <p className="opacity-90 text-xs mt-1">由于浏览器安全限制，无法直接连接领星。您可以使用“数据导入”功能，将领星导出的 Excel/CSV 数据粘贴进来，实现离线精准同步。</p>
+                    {/* Right: Preview Area */}
+                    <div className="flex-1 flex flex-col p-0 overflow-hidden">
+                        <div className="p-4 bg-white border-b border-gray-100 flex justify-between items-center">
+                            <h3 className="font-bold text-gray-800 flex items-center gap-2">
+                                <FileText size={18} className="text-blue-500"/> 识别结果
+                            </h3>
+                            <div className="text-xs space-x-3 flex">
+                                <span className="text-green-600 font-bold bg-green-50 px-2 py-0.5 rounded">匹配: {matchCount}</span>
+                                <span className="text-blue-600 font-bold bg-blue-50 px-2 py-0.5 rounded">新增: {newCount}</span>
+                            </div>
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto custom-scrollbar p-4 bg-gray-50">
+                            {parsedItems.length === 0 ? (
+                                <div className="h-full flex flex-col items-center justify-center text-gray-400 opacity-50">
+                                    <ClipboardPaste size={48} className="mb-2" />
+                                    <p className="text-sm">请在左侧粘贴数据以预览结果</p>
                                 </div>
-                            </div>
-                            <button onClick={() => setStep('import')} className="bg-white border border-orange-200 text-orange-700 font-bold py-2 rounded-lg text-sm hover:bg-orange-100 transition-colors flex items-center justify-center gap-2">
-                                <ClipboardPaste size={16} /> 粘贴导入真实数据 (Bulk Import)
-                            </button>
-                        </div>
-                    )}
-
-                    <button onClick={handleConnect} disabled={isLoading} className={`w-full font-bold py-3.5 rounded-xl shadow-lg flex items-center justify-center gap-2 transition-all active:scale-95 text-white ${isSimulation ? 'bg-slate-800 hover:bg-slate-900' : 'bg-[#1890ff] hover:bg-blue-600'}`}>
-                        {isLoading ? <RefreshCw className="animate-spin" size={20} /> : <LinkIcon size={20} />}
-                        {isSimulation ? '开始比对 (使用导入/模拟数据)' : '连接 API 获取数据'}
-                    </button>
-                    {isSimulation && <button onClick={handleResetSimulation} className="w-full text-xs text-gray-400 hover:text-red-500 py-2">清除所有缓存数据</button>}
-                </div>
-            )}
-
-            {/* Step 1.5: Import */}
-            {step === 'import' && (
-                <div className="space-y-4 h-full flex flex-col">
-                    <h3 className="font-bold text-gray-800 flex items-center gap-2">
-                        <UploadCloud size={20} className="text-blue-600"/> 导入真实数据
-                    </h3>
-                    <div className="bg-blue-50 text-blue-800 p-3 rounded-lg text-xs leading-relaxed">
-                        <strong>使用说明：</strong>
-                        <ol className="list-decimal pl-4 mt-1 space-y-1">
-                            <li>打开您的 Excel 表格或 ERP 导出单。</li>
-                            <li>复制两列数据：<strong>SKU 列</strong> 和 <strong>数量 列</strong> (顺序不限)。</li>
-                            <li>直接粘贴到下方文本框中。</li>
-                            <li>点击“确认导入”，系统将自动匹配本地商品。</li>
-                        </ol>
-                    </div>
-                    <textarea 
-                        className="flex-1 w-full p-4 border border-gray-300 rounded-xl font-mono text-xs bg-gray-50 focus:ring-2 focus:ring-blue-500 outline-none resize-none"
-                        placeholder={`粘贴区域 (支持 Excel 直接粘贴)\nExample:\nMA-001   100\nCP-Q1M   50\n...`}
-                        value={pasteData}
-                        onChange={e => setPasteData(e.target.value)}
-                    ></textarea>
-                    <div className="flex gap-3">
-                        <button onClick={() => setStep('config')} className="flex-1 py-3 rounded-xl border border-gray-300 font-bold text-gray-600">取消</button>
-                        <button onClick={handleBulkImport} className="flex-[2] bg-blue-600 text-white font-bold py-3 rounded-xl shadow-lg hover:bg-blue-700">确认导入 & 开始比对</button>
-                    </div>
-                </div>
-            )}
-
-            {/* Step 2: Result (Existing Logic) */}
-            {step === 'result' && (
-                <div className="space-y-6">
-                    <div className="flex justify-between items-center">
-                        <div>
-                            <h3 className="font-bold text-gray-800 text-lg">{syncType === 'inventory' ? '库存' : '销量'}差异比对</h3>
-                            <p className="text-xs text-gray-400">{isSimulation ? '(Based on Imported/Mock Data)' : '(Live API Data)'}</p>
-                        </div>
-                        <span className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-xs font-bold">发现 {diffs.length} 个差异</span>
-                    </div>
-
-                    {diffs.length === 0 ? (
-                        <div className="text-center py-10 bg-white rounded-xl border border-gray-200">
-                            <Check className="mx-auto text-green-500 mb-2" size={40} />
-                            <p className="text-gray-600 font-medium">数据完全一致！</p>
-                            <p className="text-xs text-gray-400 mt-2">
-                                我们比对了您的数据，没有发现任何差异。<br/>
-                                (如果您刚导入了数据，说明导入值与本地值相同)
-                            </p>
-                            <div className="mt-4">
-                                <button onClick={() => setStep('config')} className="text-blue-500 text-xs font-bold hover:underline">返回重试</button>
-                            </div>
-                        </div>
-                    ) : (
-                        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm max-h-[400px] overflow-y-auto custom-scrollbar">
-                            <table className="w-full text-sm text-left relative">
-                                <thead className="bg-gray-50 text-gray-500 border-b border-gray-200 sticky top-0 z-10">
-                                    <tr>
-                                        <th className="p-3 w-10"><input type="checkbox" checked={selectedDiffIds.size === diffs.length} onChange={() => setSelectedDiffIds(selectedDiffIds.size === diffs.length ? new Set() : new Set(diffs.map(d => d.recordId)))} /></th>
-                                        <th className="p-3 font-medium">SKU</th>
-                                        <th className="p-3 font-medium text-right">本地</th>
-                                        <th className="p-3"></th>
-                                        <th className="p-3 font-medium text-blue-600">ERP 数据</th>
-                                        <th className="p-3 font-medium text-right">差异</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-gray-100">
-                                    {diffs.map(diff => (
-                                        <tr key={diff.recordId} className="hover:bg-gray-50 transition-colors group">
-                                            <td className="p-3"><input type="checkbox" checked={selectedDiffIds.has(diff.recordId)} onChange={() => toggleSelect(diff.recordId)} /></td>
-                                            <td className="p-3"><div className="font-bold text-gray-800">{diff.sku}</div><div className="text-xs text-gray-400 truncate max-w-[120px]">{diff.productName}</div></td>
-                                            <td className="p-3 text-right font-mono text-gray-500">{diff.localVal}</td>
-                                            <td className="p-3 text-center text-gray-300"><ArrowRight size={16} /></td>
-                                            <td className="p-3 font-mono font-bold text-blue-600 relative">
-                                                {editingId === diff.recordId ? (
-                                                    <div className="flex items-center gap-1 absolute left-2 top-2 z-20">
-                                                        <input type="number" value={editValue} onChange={e => setEditValue(e.target.value)} className="w-20 p-1 border border-blue-400 rounded text-sm shadow-lg outline-none" autoFocus onKeyDown={e => e.key === 'Enter' && saveEdit(diff)} />
-                                                        <button onClick={() => saveEdit(diff)} className="bg-green-500 text-white p-1 rounded"><Check size={14}/></button>
+                            ) : (
+                                <div className="space-y-2">
+                                    {parsedItems.map((item, idx) => (
+                                        <div key={idx} className={`flex items-center justify-between p-3 rounded-xl border ${item.status === 'match' ? 'bg-white border-gray-200' : 'bg-blue-50 border-blue-100'}`}>
+                                            <div className="flex items-center gap-3">
+                                                <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold ${item.status === 'match' ? 'bg-green-100 text-green-700' : 'bg-blue-200 text-blue-700'}`}>
+                                                    {item.status === 'match' ? <Check size={14}/> : <PlusCircle size={14}/>}
+                                                </div>
+                                                <div>
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="font-bold text-gray-800 text-sm">{item.sku}</span>
+                                                        {item.status === 'new' && <span className="text-[10px] bg-blue-100 text-blue-600 px-1 rounded font-bold">新建档案</span>}
                                                     </div>
-                                                ) : (
-                                                    <div className={`flex items-center gap-2 ${isSimulation ? 'cursor-pointer hover:bg-blue-50 px-2 py-1 rounded -ml-2' : ''}`} onClick={() => startEdit(diff)} title="点击修改">{diff.erpVal} {isSimulation && <Edit2 size={10} className="opacity-0 group-hover:opacity-50" />}</div>
+                                                    <div className="text-xs text-gray-500 truncate max-w-[200px]" title={item.name}>{item.name}</div>
+                                                </div>
+                                            </div>
+                                            
+                                            <div className="flex items-center gap-3">
+                                                {item.status === 'match' && (
+                                                    <div className="text-right">
+                                                        <div className="text-[10px] text-gray-400">原值</div>
+                                                        <div className="text-sm font-mono text-gray-500">{item.oldVal}</div>
+                                                    </div>
                                                 )}
-                                            </td>
-                                            <td className="p-3 text-right"><span className={`px-2 py-0.5 rounded text-xs font-bold ${diff.diff > 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{diff.diff > 0 ? '+' : ''}{diff.diff}</span></td>
-                                        </tr>
+                                                {item.status === 'match' && <ArrowRight size={14} className="text-gray-300" />}
+                                                <div className="text-right">
+                                                    <div className="text-[10px] text-blue-500 font-bold">{item.status === 'new' ? '初始值' : '新值'}</div>
+                                                    <div className="text-lg font-mono font-bold text-blue-600">{item.newVal}</div>
+                                                </div>
+                                            </div>
+                                        </div>
                                     ))}
-                                </tbody>
-                            </table>
+                                </div>
+                            )}
                         </div>
-                    )}
 
-                    <div className="flex gap-3 pt-4 border-t border-gray-200">
-                        <button onClick={() => setStep('config')} className="flex-1 py-3 rounded-xl border border-gray-300 text-gray-600 font-bold hover:bg-gray-50">上一步</button>
-                        <button onClick={handleSyncConfirm} disabled={selectedDiffIds.size === 0} className="flex-[2] bg-[#1890ff] hover:bg-blue-600 text-white font-bold py-3 rounded-xl shadow-lg disabled:opacity-50">确认更新 ({selectedDiffIds.size})</button>
+                        {/* Action Bar */}
+                        <div className="p-4 bg-white border-t border-gray-200">
+                             {newCount > 0 && (
+                                 <div className="mb-3 flex items-start gap-2 bg-blue-50 text-blue-800 p-3 rounded-lg text-xs">
+                                     <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+                                     <div>
+                                         <strong>将创建 {newCount} 个新产品档案。</strong>
+                                         <p className="opacity-80 mt-1">创建后，请记得在列表中完善产品的重量、尺寸和成本信息，否则利润计算不准确。</p>
+                                     </div>
+                                 </div>
+                             )}
+                             
+                             <button 
+                                onClick={handleApply}
+                                disabled={parsedItems.length === 0}
+                                className={`w-full font-bold py-3.5 rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 ${
+                                    parsedItems.length === 0 
+                                    ? 'bg-gray-100 text-gray-400 cursor-not-allowed' 
+                                    : 'bg-slate-900 text-white hover:bg-slate-800'
+                                }`}
+                             >
+                                 <Save size={18} />
+                                 {matchCount > 0 && newCount === 0 && `更新 ${matchCount} 条数据`}
+                                 {matchCount === 0 && newCount > 0 && `一键创建 ${newCount} 个新产品`}
+                                 {matchCount > 0 && newCount > 0 && `更新 ${matchCount} 条并创建 ${newCount} 条`}
+                             </button>
+                        </div>
                     </div>
                 </div>
             )}
+
+            {activeTab === 'api' && (
+                <div className="flex flex-col items-center justify-center h-full p-8 text-center space-y-6">
+                    <div className="bg-orange-50 p-4 rounded-full">
+                        <Lock size={48} className="text-orange-400" />
+                    </div>
+                    <div className="max-w-md space-y-2">
+                        <h3 className="text-xl font-bold text-gray-800">为什么无法直接同步？</h3>
+                        <p className="text-gray-500 text-sm leading-relaxed">
+                            领星 (Lingxing) 的 API 接口出于安全考虑，禁止浏览器直接访问 (CORS 限制)。
+                            要实现全自动同步，您需要搭建一个后端代理服务器。
+                        </p>
+                    </div>
+                    
+                    <div className="bg-gray-50 p-4 rounded-xl text-left w-full max-w-md border border-gray-200">
+                        <h4 className="font-bold text-sm text-gray-700 mb-2">解决方案：</h4>
+                        <ul className="text-sm text-gray-600 space-y-2 list-disc pl-4">
+                            <li>使用上方的 <strong>“Excel 粘贴导入”</strong> 功能 (最快，推荐)。</li>
+                            <li>如果您有技术团队，请部署一个 Nginx 反向代理，并将地址填入下方。</li>
+                        </ul>
+                    </div>
+
+                    <div className="w-full max-w-md">
+                        <label className="block text-xs font-bold text-gray-400 uppercase mb-1 text-left">代理服务器地址 (Proxy URL)</label>
+                        <input 
+                            type="text" 
+                            value={proxyUrl}
+                            onChange={e => setProxyUrl(e.target.value)}
+                            placeholder="https://api.your-company.com/lx-proxy"
+                            className="w-full p-3 border border-gray-300 rounded-lg text-sm"
+                        />
+                        <button className="w-full mt-3 bg-gray-200 text-gray-500 font-bold py-3 rounded-lg cursor-not-allowed" disabled>
+                            检测连接 (暂不可用)
+                        </button>
+                    </div>
+                </div>
+            )}
+
         </div>
       </div>
     </div>
