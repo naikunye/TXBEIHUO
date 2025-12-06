@@ -40,9 +40,18 @@ import {
   Wand2,
   FileJson,
   Store as StoreIcon,
-  ChevronDown
+  ChevronDown,
+  ArrowRightLeft,
+  ArrowUpDown, 
+  ArrowUp,
+  ArrowDown,
+  ChevronLeft, 
+  ChevronsLeft,
+  ChevronsRight,
+  UserCircle,
+  Command // Import Command Icon
 } from 'lucide-react';
-import { ReplenishmentRecord, Store } from './types';
+import { ReplenishmentRecord, Store, CalculatedMetrics } from './types';
 import { MOCK_DATA_INITIAL } from './constants';
 import { calculateMetrics, formatCurrency } from './utils/calculations';
 import { StatsCard } from './components/StatsCard';
@@ -56,12 +65,17 @@ import { AiChatModal } from './components/AiChatModal';
 import { MarketingModal } from './components/MarketingModal'; 
 import { MarketingDashboard } from './components/MarketingDashboard';
 import { DataBackupModal } from './components/DataBackupModal';
-import { StoreManagerModal } from './components/StoreManagerModal'; // New Component
+import { StoreManagerModal } from './components/StoreManagerModal';
+import { DistributeModal } from './components/DistributeModal'; 
+import { CommandPalette } from './components/CommandPalette'; // Import Component
 import { ToastContainer, ToastMessage, ToastType } from './components/Toast'; 
 import { analyzeInventory, generateAdStrategy, generateSelectionStrategy, generateMarketingContent } from './services/geminiService';
 import { supabase, isSupabaseConfigured } from './lib/supabaseClient';
 
 type ViewState = 'overview' | 'inventory' | 'analytics' | 'calculator' | 'logistics' | 'marketing';
+
+// Extended type for sorting
+type EnrichedRecord = ReplenishmentRecord & { metrics: CalculatedMetrics };
 
 function App() {
   // --- Cloud & Workspace State ---
@@ -85,9 +99,21 @@ function App() {
   const [records, setRecords] = useState<ReplenishmentRecord[]>([]);
   const [isDataLoaded, setIsDataLoaded] = useState(false);
 
+  // --- ERP Table State (Sorting & Pagination) ---
+  const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>({ key: 'date', direction: 'desc' });
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
+
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingRecord, setEditingRecord] = useState<ReplenishmentRecord | null>(null);
   
+  // --- Distribute Modal State ---
+  const [isDistributeModalOpen, setIsDistributeModalOpen] = useState(false);
+  const [distributeSourceRecord, setDistributeSourceRecord] = useState<ReplenishmentRecord | null>(null);
+
+  // --- Command Palette State ---
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+
   const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
   const [analysisTitle, setAnalysisTitle] = useState<string>('供应链 AI 诊断报告');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -120,14 +146,24 @@ function App() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
-  // --- Storage Effects ---
+  // --- Keyboard Shortcuts ---
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+        // Toggle Command Palette with Ctrl+K or Cmd+K
+        if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+            e.preventDefault();
+            setIsCommandPaletteOpen(prev => !prev);
+        }
+    };
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, []);
 
-  // 1. Load Data
+  // --- Storage Effects (Existing) ---
   useEffect(() => {
     const loadData = async () => {
         if (workspaceId && isSupabaseConfigured()) {
             setSyncStatus('connecting');
-            // --- Supabase Cloud Load ---
             try {
                 const { data, error } = await supabase
                     .from('replenishment_data')
@@ -135,22 +171,17 @@ function App() {
                     .eq('workspace_id', workspaceId);
 
                 if (error) {
-                    console.error("Supabase load error:", error);
                     setSyncStatus('disconnected');
                     addToast(`无法加载云端数据: ${error.message}`, 'error');
                 } else if (data) {
                     const cloudRecords = data.map(row => row.json_content as ReplenishmentRecord);
-                    cloudRecords.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
                     setRecords(cloudRecords);
-                    // Don't set 'connected' here, wait for subscription
                 }
             } catch (err) {
-                console.error("Connection failed:", err);
                 setSyncStatus('disconnected');
                 addToast("连接云端数据库失败，请检查网络", 'error');
             }
         } else {
-            // --- Local Storage Load ---
             await new Promise(r => setTimeout(r, 200)); 
             const saved = localStorage.getItem('tanxing_records');
             if (saved) {
@@ -163,121 +194,137 @@ function App() {
                 setRecords([...MOCK_DATA_INITIAL]);
             }
         }
-        
         setIsDataLoaded(true);
     };
-
     loadData();
   }, [workspaceId]);
 
-  // 2. Real-time Subscription (Robust Version)
   useEffect(() => {
-    // Only subscribe if we are in a valid workspace
     if (!workspaceId || !isSupabaseConfigured()) {
         setSyncStatus('disconnected');
         return;
     }
-
     const channel = supabase
       .channel('table-db-changes') 
       .on(
         'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'replenishment_data',
-        },
+        { event: '*', schema: 'public', table: 'replenishment_data' },
         (payload) => {
-           console.log("Realtime Event:", payload);
-
-           // Filter client-side
            if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
                const newRecord = payload.new;
-               // Check if this record belongs to our workspace
                if (newRecord.workspace_id !== workspaceId) return;
-
                const content = newRecord.json_content as ReplenishmentRecord;
                if (content && content.id) {
                    setRecords(prev => {
                        const exists = prev.some(r => r.id === content.id);
-                       if (exists) {
-                           return prev.map(r => r.id === content.id ? content : r);
-                       } else {
-                           const newList = [content, ...prev];
-                           return newList.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-                       }
+                       if (exists) return prev.map(r => r.id === content.id ? content : r);
+                       else return [content, ...prev];
                    });
-                   // Only notify for remote updates (optional, might be too noisy if self-triggered)
-                   // addToast("数据已同步更新", 'info');
                }
            } else if (payload.eventType === 'DELETE') {
                const deletedId = payload.old.id;
                if (deletedId) {
-                   setRecords(prev => {
-                       const exists = prev.some(r => r.id === deletedId);
-                       if (exists) {
-                           return prev.filter(r => r.id !== deletedId);
-                       }
-                       return prev;
-                   });
+                   setRecords(prev => prev.filter(r => r.id !== deletedId));
                }
            }
         }
       )
       .subscribe((status) => {
-          console.log(`Subscription Status: ${status}`);
-          if (status === 'SUBSCRIBED') {
-             setSyncStatus('connected');
-          } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          if (status === 'SUBSCRIBED') setSyncStatus('connected');
+          else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
              setSyncStatus('disconnected');
              addToast("实时同步连接中断", 'warning');
           }
       });
-
     return () => {
       supabase.removeChannel(channel);
       setSyncStatus('disconnected');
     };
   }, [workspaceId]);
 
-
-  // 3. Save Data (LocalStorage Backup)
   useEffect(() => {
     if (!isDataLoaded) return;
     localStorage.setItem('tanxing_records', JSON.stringify(records));
   }, [records, isDataLoaded]);
 
-  // 4. Save Stores
   useEffect(() => {
       localStorage.setItem('tanxing_stores', JSON.stringify(stores));
   }, [stores]);
 
-  // 5. Persist Workspace Selection
   useEffect(() => {
-      if (workspaceId) {
-          localStorage.setItem('tanxing_current_workspace', workspaceId);
-      } else {
-          localStorage.removeItem('tanxing_current_workspace');
-      }
+      if (workspaceId) localStorage.setItem('tanxing_current_workspace', workspaceId);
+      else localStorage.removeItem('tanxing_current_workspace');
   }, [workspaceId]);
 
 
-  // Filter Logic (Now includes Store ID)
-  const filteredRecords = useMemo(() => {
-    return records.filter(record => {
+  // --- Advanced Data Processing ---
+  const processedData = useMemo(() => {
+    // 1. Filter
+    let filtered = records.filter(record => {
       const q = searchQuery.toLowerCase();
       const matchesSearch =
         record.productName.toLowerCase().includes(q) ||
         record.sku.toLowerCase().includes(q);
       const matchesStatus = statusFilter === 'All' || record.status === statusFilter;
-      
       const matchesStore = activeStoreId === 'all' || record.storeId === activeStoreId;
-
       return matchesSearch && matchesStatus && matchesStore;
     });
-  }, [records, searchQuery, statusFilter, activeStoreId]);
 
-  // --- Store Management Handlers ---
+    // 2. Attach Metrics
+    let enriched = filtered.map(r => ({
+        ...r,
+        metrics: calculateMetrics(r)
+    }));
+
+    // 3. Sort
+    if (sortConfig) {
+        enriched.sort((a, b) => {
+            let aValue: any;
+            let bValue: any;
+
+            if (sortConfig.key.startsWith('metrics.')) {
+                const metricKey = sortConfig.key.split('.')[1] as keyof CalculatedMetrics;
+                aValue = a.metrics[metricKey];
+                bValue = b.metrics[metricKey];
+            } else {
+                aValue = a[sortConfig.key as keyof ReplenishmentRecord];
+                bValue = b[sortConfig.key as keyof ReplenishmentRecord];
+            }
+
+            if (aValue < bValue) return sortConfig.direction === 'asc' ? -1 : 1;
+            if (aValue > bValue) return sortConfig.direction === 'asc' ? 1 : -1;
+            return 0;
+        });
+    }
+
+    return enriched;
+  }, [records, searchQuery, statusFilter, activeStoreId, sortConfig]);
+
+  const paginatedRecords = useMemo(() => {
+      const startIndex = (currentPage - 1) * itemsPerPage;
+      return processedData.slice(startIndex, startIndex + itemsPerPage);
+  }, [processedData, currentPage]);
+
+  const totalPages = Math.ceil(processedData.length / itemsPerPage);
+
+  // --- Handlers ---
+  
+  const handleSort = (key: string) => {
+      let direction: 'asc' | 'desc' = 'desc'; 
+      if (sortConfig && sortConfig.key === key && sortConfig.direction === 'desc') {
+          direction = 'asc';
+      }
+      setSortConfig({ key, direction });
+  };
+
+  const getSortIcon = (key: string) => {
+      if (sortConfig?.key !== key) return <ArrowUpDown size={12} className="text-gray-300 ml-1" />;
+      return sortConfig.direction === 'asc' 
+        ? <ArrowUp size={12} className="text-blue-600 ml-1" />
+        : <ArrowDown size={12} className="text-blue-600 ml-1" />;
+  };
+
+  // ... (Existing CRUD handlers)
   const handleAddStore = (newStore: Omit<Store, 'id'>) => {
       const store: Store = { ...newStore, id: Date.now().toString() };
       setStores(prev => [...prev, store]);
@@ -285,227 +332,163 @@ function App() {
   };
 
   const handleDeleteStore = (id: string) => {
-      if (window.confirm("确定删除该店铺吗？相关的库存记录仍会保留，但会显示为未分配。")) {
+      if (window.confirm("确定删除该店铺吗？")) {
           setStores(prev => prev.filter(s => s.id !== id));
           if (activeStoreId === id) setActiveStoreId('all');
           addToast('店铺已删除', 'info');
       }
   };
 
-  const getActiveStoreColor = () => {
-      if (activeStoreId === 'all') return 'bg-slate-800';
-      const store = stores.find(s => s.id === activeStoreId);
-      return store ? store.color.replace('bg-', 'text-').replace('500', '600') : 'text-slate-600';
-  }
-
-  // Handle Create or Update
-  const handleSaveRecord = async (recordData: Omit<ReplenishmentRecord, 'id'>) => {
-    let finalRecord: ReplenishmentRecord;
-
-    if (editingRecord) {
-        finalRecord = { ...recordData, id: editingRecord.id };
-    } else {
-        finalRecord = {
-            ...recordData,
-            id: Math.random().toString(36).substring(7),
-        };
-    }
-
-    // 1. Optimistic Update
-    setRecords(prev => {
-        if (editingRecord) {
-            return prev.map(r => r.id === editingRecord.id ? finalRecord : r);
-        } else {
-            return [finalRecord, ...prev];
-        }
-    });
-
-    closeModal();
-    addToast(editingRecord ? "产品更新成功" : "新产品已添加", 'success');
-
-    // 2. Cloud Persistence
-    if (workspaceId && isSupabaseConfigured()) {
-        try {
-            const { error } = await supabase
-                .from('replenishment_data')
-                .upsert({ 
-                    id: finalRecord.id, 
-                    workspace_id: workspaceId, 
-                    json_content: finalRecord 
-                });
-
-            if (error) throw error;
-        } catch (err: any) {
-            console.error("Supabase save error:", err);
-            addToast("⚠️ 保存到云端失败，请检查网络", 'error');
-        }
-    }
-  };
-  
-  // Handle Delete
-  const handleDeleteRecord = async (id: string) => {
-      if(!window.confirm("确定要删除这条记录吗？")) return;
-
-      // 1. Optimistic Delete
-      setRecords(prev => prev.filter(r => r.id !== id));
-      addToast("记录已删除", 'info');
-      
-      // 2. Cloud Delete
+  const saveToCloud = async (record: ReplenishmentRecord) => {
       if (workspaceId && isSupabaseConfigured()) {
-          try {
-              const { error } = await supabase
-                  .from('replenishment_data')
-                  .delete()
-                  .eq('id', id); // We delete by ID, RLS (if enabled) or workspace logic handled by App
-                  
-              if (error) throw error;
-          } catch(err) {
-              console.error("Delete failed", err);
-              addToast("⚠️ 云端删除失败，请稍后重试", 'warning');
-          }
+        try {
+            await supabase.from('replenishment_data').upsert({ id: record.id, workspace_id: workspaceId, json_content: record });
+        } catch (err) { console.error(err); }
       }
   };
 
-  const openAddModal = () => {
-    setEditingRecord(null);
-    setIsModalOpen(true);
+  const handleSaveRecord = async (recordData: Omit<ReplenishmentRecord, 'id'>) => {
+    let finalRecord: ReplenishmentRecord;
+    if (editingRecord) {
+        finalRecord = { ...recordData, id: editingRecord.id };
+    } else {
+        finalRecord = { ...recordData, id: Math.random().toString(36).substring(7) };
+    }
+    setRecords(prev => {
+        if (editingRecord) return prev.map(r => r.id === editingRecord.id ? finalRecord : r);
+        else return [finalRecord, ...prev];
+    });
+    closeModal();
+    addToast(editingRecord ? "产品更新成功" : "新产品已添加", 'success');
+    saveToCloud(finalRecord);
+  };
+  
+  const handleDeleteRecord = async (id: string) => {
+      if(!window.confirm("确定要删除这条记录吗？")) return;
+      setRecords(prev => prev.filter(r => r.id !== id));
+      addToast("记录已删除", 'info');
+      if (workspaceId && isSupabaseConfigured()) {
+          try { await supabase.from('replenishment_data').delete().eq('id', id); } catch(err) { console.error(err); }
+      }
   };
 
-  const openEditModal = (record: ReplenishmentRecord) => {
-    setEditingRecord(record);
-    setIsModalOpen(true);
+  const openDistributeModal = (e: React.MouseEvent, record: ReplenishmentRecord) => {
+      e.stopPropagation();
+      setDistributeSourceRecord(record);
+      setIsDistributeModalOpen(true);
   };
 
-  const closeModal = () => {
-    setIsModalOpen(false);
-    setEditingRecord(null);
+  const handleDistributeConfirm = async (mode: 'transfer' | 'clone', targetStoreId: string, quantity: number) => {
+      if (!distributeSourceRecord) return;
+      const newRecordId = Math.random().toString(36).substring(7);
+      const itemsPerBox = distributeSourceRecord.itemsPerBox || 1;
+      const newTotalCartons = Math.ceil(quantity / itemsPerBox);
+      const manualWeightRatio = distributeSourceRecord.manualTotalWeightKg 
+          ? (quantity / distributeSourceRecord.quantity) * distributeSourceRecord.manualTotalWeightKg 
+          : undefined;
+
+      const newRecord: ReplenishmentRecord = {
+          ...distributeSourceRecord,
+          id: newRecordId,
+          storeId: targetStoreId,
+          quantity: quantity,
+          totalCartons: newTotalCartons,
+          manualTotalWeightKg: manualWeightRatio,
+          status: distributeSourceRecord.status 
+      };
+
+      let updatedSourceRecord: ReplenishmentRecord | null = null;
+      if (mode === 'transfer') {
+          const remainingQty = distributeSourceRecord.quantity - quantity;
+          const remainingCartons = Math.ceil(remainingQty / itemsPerBox);
+          const remainingWeight = distributeSourceRecord.manualTotalWeightKg 
+               ? distributeSourceRecord.manualTotalWeightKg - (manualWeightRatio || 0)
+               : undefined;
+          updatedSourceRecord = { ...distributeSourceRecord, quantity: remainingQty, totalCartons: remainingCartons, manualTotalWeightKg: remainingWeight };
+      }
+
+      setRecords(prev => {
+          let list = [...prev, newRecord];
+          if (updatedSourceRecord) list = list.map(r => r.id === updatedSourceRecord!.id ? updatedSourceRecord! : r);
+          return list;
+      });
+
+      await saveToCloud(newRecord);
+      if (updatedSourceRecord) await saveToCloud(updatedSourceRecord);
+      addToast('操作成功', 'success');
   };
 
-  // --- Handlers for Data Import ---
+  const openAddModal = () => { setEditingRecord(null); setIsModalOpen(true); };
+  const openEditModal = (record: ReplenishmentRecord) => { setEditingRecord(record); setIsModalOpen(true); };
+  const closeModal = () => { setIsModalOpen(false); setEditingRecord(null); };
+
   const handleImportData = (newRecords: ReplenishmentRecord[]) => {
       setRecords(newRecords);
       addToast(`成功导入 ${newRecords.length} 条数据`, 'success');
   };
 
-  // --- Strategy Handlers ---
-  const handleSmartAnalysis = async () => {
-    setIsAnalyzing(true);
-    setAiAnalysis(null);
-    setAnalysisTitle('供应链 AI 诊断报告');
-    const recordsToAnalyze = filteredRecords.length > 0 ? filteredRecords : records;
-    const targetRecords = currentView === 'inventory' ? recordsToAnalyze : records;
+  // --- Command Palette Handlers ---
+  const handleCommandNavigate = (view: ViewState) => {
+      setCurrentView(view);
+  };
+  
+  const handleCommandAction = (action: string) => {
+      if (action === 'add_product') openAddModal();
+      if (action === 'open_settings') setIsSettingsOpen(true);
+  };
 
-    const result = await analyzeInventory(targetRecords);
-    const cleanResult = result.replace(/^```html/, '').replace(/```$/, '');
-    setAiAnalysis(cleanResult);
+  const handleCommandOpenRecord = (record: ReplenishmentRecord) => {
+      openEditModal(record);
+  };
+
+  // ... (AI Wrappers)
+  const handleSmartAnalysis = async () => {
+    setIsAnalyzing(true); setAiAnalysis(null); setAnalysisTitle('供应链 AI 诊断报告');
+    const result = await analyzeInventory(processedData);
+    setAiAnalysis(result.replace(/^```html/, '').replace(/```$/, ''));
     setIsAnalyzing(false);
-    
-    if (currentView !== 'inventory') {
-        setCurrentView('inventory');
-    }
-    
-    // Check if result contains error class
-    if (result.includes("border-red-200") || result.includes("border-amber-200")) {
-        addToast("AI 分析服务遇到问题", 'warning');
-    } else {
-        addToast("AI 诊断报告生成完毕", 'success');
-    }
+    if (currentView !== 'inventory') setCurrentView('inventory');
+    addToast("AI 诊断报告生成完毕", 'success');
   };
 
   const handleAdStrategy = async () => {
-    setIsAnalyzing(true);
-    setAiAnalysis(null);
-    setAnalysisTitle('TikTok 广告投放策略');
-    const recordsToAnalyze = filteredRecords.length > 0 ? filteredRecords : records;
-    const targetRecords = currentView === 'inventory' ? recordsToAnalyze : records;
-
-    const result = await generateAdStrategy(targetRecords);
-    const cleanResult = result.replace(/^```html/, '').replace(/```$/, '');
-    setAiAnalysis(cleanResult);
+    setIsAnalyzing(true); setAiAnalysis(null); setAnalysisTitle('TikTok 广告投放策略');
+    const result = await generateAdStrategy(processedData);
+    setAiAnalysis(result.replace(/^```html/, '').replace(/```$/, ''));
     setIsAnalyzing(false);
-
-    if (currentView !== 'inventory') {
-        setCurrentView('inventory');
-    }
-    
-    if (result.includes("border-red-200") || result.includes("border-amber-200")) {
-        addToast("AI 服务暂时不可用", 'warning');
-    }
+    if (currentView !== 'inventory') setCurrentView('inventory');
   };
 
   const handleSelectionStrategy = async () => {
-    setIsAnalyzing(true);
-    setAiAnalysis(null);
-    setAnalysisTitle('美区选品策略报告');
-    const recordsToAnalyze = filteredRecords.length > 0 ? filteredRecords : records;
-    const targetRecords = currentView === 'inventory' ? recordsToAnalyze : records;
-
-    const result = await generateSelectionStrategy(targetRecords);
-    const cleanResult = result.replace(/^```html/, '').replace(/```$/, '');
-    setAiAnalysis(cleanResult);
+    setIsAnalyzing(true); setAiAnalysis(null); setAnalysisTitle('美区选品策略报告');
+    const result = await generateSelectionStrategy(processedData);
+    setAiAnalysis(result.replace(/^```html/, '').replace(/```$/, ''));
     setIsAnalyzing(false);
-
-    if (currentView !== 'inventory') {
-        setCurrentView('inventory');
-    }
-    
-    if (result.includes("border-red-200") || result.includes("border-amber-200")) {
-         addToast("AI 服务暂时不可用", 'warning');
-    }
+    if (currentView !== 'inventory') setCurrentView('inventory');
   };
 
-  // --- New Marketing Handler (Wrapped) ---
   const handleGenerateMarketing = async (record: ReplenishmentRecord) => {
-      setMarketingProduct(record.productName);
-      setMarketingContent(null);
-      setMarketingModalOpen(true);
-      
+      setMarketingProduct(record.productName); setMarketingContent(null); setMarketingModalOpen(true);
       const content = await generateMarketingContent(record);
-      const cleanContent = content.replace(/^```html/, '').replace(/```$/, '');
-      setMarketingContent(cleanContent);
-      
-      if (content.includes("border-red-200") || content.includes("border-amber-200")) {
-         addToast("内容生成失败", 'error');
-      }
+      setMarketingContent(content.replace(/^```html/, '').replace(/```$/, ''));
   };
 
-  // Wrapper for table click event
-  const handleTableMarketingClick = (e: React.MouseEvent, record: ReplenishmentRecord) => {
-      e.stopPropagation();
-      handleGenerateMarketing(record);
-  }
-
+  const handleTableMarketingClick = (e: React.MouseEvent, record: ReplenishmentRecord) => { e.stopPropagation(); handleGenerateMarketing(record); }
+  
   const handleExportCSV = () => {
     const headers = ['Date', 'Store', 'Product', 'SKU', 'Lifecycle', 'Qty', 'DOS', 'Method', 'Unit Cost(CNY)', 'Sales Price(USD)', 'Total Cost(USD)', 'Profit(USD)', 'Margin(%)', 'ROI(%)', 'Status'];
-    const rows = filteredRecords.map(r => {
-      const m = calculateMetrics(r);
+    const rows = processedData.map(r => {
       const storeName = stores.find(s => s.id === r.storeId)?.name || 'General';
+      const m = r.metrics;
       return [
-        r.date,
-        `"${storeName}"`,
-        `"${r.productName.replace(/"/g, '""')}"`,
-        r.sku,
-        r.lifecycle || 'New',
-        r.quantity,
-        m.daysOfSupply.toFixed(1),
-        r.shippingMethod,
-        r.unitPriceCNY,
-        r.salesPriceUSD,
-        m.totalCostPerUnitUSD.toFixed(2),
-        m.estimatedProfitUSD.toFixed(2),
-        m.marginRate.toFixed(2),
-        m.roi.toFixed(2),
-        r.status
+        r.date, `"${storeName}"`, `"${r.productName.replace(/"/g, '""')}"`, r.sku, r.lifecycle || 'New', r.quantity, m.daysOfSupply.toFixed(1), r.shippingMethod, r.unitPriceCNY, r.salesPriceUSD, m.totalCostPerUnitUSD.toFixed(2), m.estimatedProfitUSD.toFixed(2), m.marginRate.toFixed(2), m.roi.toFixed(2), r.status
       ].join(',');
     });
     const csvContent = "data:text/csv;charset=utf-8,\uFEFF" + [headers.join(','), ...rows].join('\n');
-    const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `tanxing_replenishment_${workspaceId || 'local'}_${new Date().toISOString().split('T')[0]}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    link.href = encodeURI(csvContent);
+    link.download = `tanxing_replenishment_${workspaceId || 'local'}_${new Date().toISOString().split('T')[0]}.csv`;
+    document.body.appendChild(link); link.click(); document.body.removeChild(link);
     addToast("CSV 报表已下载", 'success');
   };
 
@@ -538,80 +521,69 @@ function App() {
     }
   };
 
+  const getPageTitle = () => {
+    switch (currentView) {
+      case 'overview': return '系统总览';
+      case 'inventory': return '备货清单';
+      case 'analytics': return '数据分析';
+      case 'marketing': return 'AI 营销中心';
+      case 'calculator': return '智能试算';
+      case 'logistics': return '物流查询';
+      default: return '系统总览';
+    }
+  };
+
+  const getPageSubtitle = () => {
+    switch (currentView) {
+      case 'overview': return '全局业务核心指标看板';
+      case 'inventory': return '管理所有 SKU 的补货计划与状态';
+      case 'analytics': return '多维度利润、成本与库存健康度分析';
+      case 'marketing': return '基于商品数据的 TikTok 内容一键生成';
+      case 'calculator': return '运费估算与 TikTok 定价反推工具';
+      case 'logistics': return '集成 17TRACK 与船司查询入口';
+      default: return '欢迎使用探行科技智能备货系统';
+    }
+  };
+
   const renderContent = () => {
     switch (currentView) {
-      case 'overview':
-        return <HomeOverview records={filteredRecords} stores={stores} currentStoreId={activeStoreId} onNavigateToList={() => setCurrentView('inventory')} />;
-      case 'calculator':
-        return <CalculatorTool />;
-      case 'logistics':
-        return <LogisticsTools />;
-      case 'analytics':
-        return <AnalyticsDashboard records={filteredRecords} />;
-      case 'marketing':
-        return <MarketingDashboard records={filteredRecords} onGenerate={handleGenerateMarketing} />;
+      case 'overview': return <HomeOverview records={processedData} stores={stores} currentStoreId={activeStoreId} onNavigateToList={() => setCurrentView('inventory')} />;
+      case 'calculator': return <CalculatorTool />;
+      case 'logistics': return <LogisticsTools />;
+      case 'analytics': return <AnalyticsDashboard records={processedData} />;
+      case 'marketing': return <MarketingDashboard records={processedData} onGenerate={handleGenerateMarketing} />;
       case 'inventory':
       default:
         return (
           <>
-             {/* AI Analysis Section */}
              {aiAnalysis && (
                   <div className="mb-8 bg-white rounded-2xl p-6 border border-purple-100 shadow-md animate-fade-in relative overflow-hidden">
                     <div className="absolute top-0 right-0 w-32 h-32 bg-purple-100 rounded-full mix-blend-multiply filter blur-2xl opacity-50 -translate-y-10 translate-x-10"></div>
                     <div className="relative z-10">
                       <div className="flex items-center justify-between mb-4 pb-4 border-b border-purple-50">
                         <div className="flex items-center gap-3">
-                          <div className={`p-2 rounded-lg ${
-                              analysisTitle.includes('TikTok') ? 'bg-pink-100' : 
-                              analysisTitle.includes('选品') ? 'bg-orange-100' :
-                              'bg-purple-100'
-                          }`}>
-                            {analysisTitle.includes('TikTok') ? (
-                                <Megaphone className="text-pink-600 h-5 w-5" />
-                            ) : analysisTitle.includes('选品') ? (
-                                <Compass className="text-orange-600 h-5 w-5" />
-                            ) : (
-                                <BrainCircuit className="text-purple-600 h-5 w-5" />
-                            )}
+                          <div className={`p-2 rounded-lg ${analysisTitle.includes('TikTok') ? 'bg-pink-100' : analysisTitle.includes('选品') ? 'bg-orange-100' : 'bg-purple-100'}`}>
+                            {analysisTitle.includes('TikTok') ? <Megaphone className="text-pink-600 h-5 w-5" /> : analysisTitle.includes('选品') ? <Compass className="text-orange-600 h-5 w-5" /> : <BrainCircuit className="text-purple-600 h-5 w-5" />}
                           </div>
                           <h3 className="font-bold text-lg text-gray-800">{analysisTitle}</h3>
                         </div>
-                        <button 
-                          onClick={() => setAiAnalysis(null)}
-                          className="p-2 hover:bg-purple-50 rounded-full text-gray-400 hover:text-purple-600 transition-colors"
-                        >
-                          <X size={20} />
-                        </button>
+                        <button onClick={() => setAiAnalysis(null)} className="p-2 hover:bg-purple-50 rounded-full text-gray-400 hover:text-purple-600 transition-colors"><X size={20} /></button>
                       </div>
-                      <div className="text-gray-600">
-                         <div dangerouslySetInnerHTML={{ __html: aiAnalysis }} />
-                      </div>
+                      <div className="text-gray-600"><div dangerouslySetInnerHTML={{ __html: aiAnalysis }} /></div>
                     </div>
                   </div>
                 )}
 
-                {/* Filter & Search Bar */}
                 <div className="flex flex-col sm:flex-row gap-4 mb-6 justify-between items-center bg-white p-4 rounded-xl border border-gray-100 shadow-sm animate-fade-in">
                   <div className="relative w-full sm:w-96">
                     <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
-                    <input
-                      type="text"
-                      placeholder="搜索产品名称或 SKU..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      className="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all outline-none"
-                    />
+                    <input type="text" placeholder="搜索产品名称或 SKU..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all outline-none" />
                   </div>
-
                   <div className="flex items-center gap-2 w-full sm:w-auto">
                     <div className="flex items-center gap-2 bg-gray-50 px-3 py-2 rounded-lg border border-gray-200 w-full sm:w-auto">
                       <Filter size={18} className="text-gray-500" />
                       <span className="text-sm text-gray-600 font-medium whitespace-nowrap">状态:</span>
-                      <select
-                        value={statusFilter}
-                        onChange={(e) => setStatusFilter(e.target.value as any)}
-                        className="bg-transparent text-sm font-semibold text-gray-800 outline-none cursor-pointer w-full"
-                      >
+                      <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as any)} className="bg-transparent text-sm font-semibold text-gray-800 outline-none cursor-pointer w-full">
                         <option value="All">全部 (All)</option>
                         <option value="Planning">计划中 (Planning)</option>
                         <option value="Shipped">已发货 (Shipped)</option>
@@ -621,124 +593,93 @@ function App() {
                   </div>
                 </div>
 
-                {/* List Table */}
-                <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+                <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden flex flex-col min-h-[600px]">
                    <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
                       <div className="flex items-center gap-2">
                         <List size={18} className="text-gray-400" />
-                        <span className="text-sm font-semibold text-gray-700">当前清单 ({filteredRecords.length})</span>
+                        <span className="text-sm font-semibold text-gray-700">库存清单</span>
+                        <span className="text-xs bg-gray-200 text-gray-600 px-2 py-0.5 rounded-full">{processedData.length}</span>
                       </div>
-                      <button 
-                        onClick={handleExportCSV}
-                        className="text-gray-500 hover:text-blue-600 text-sm font-medium flex items-center gap-1 transition-colors px-3 py-1.5 hover:bg-white rounded-lg border border-transparent hover:border-gray-200 hover:shadow-sm"
-                      >
-                         <Download size={16} />
-                         导出报表 (CSV)
+                      <button onClick={handleExportCSV} className="text-gray-500 hover:text-blue-600 text-sm font-medium flex items-center gap-1 transition-colors px-3 py-1.5 hover:bg-white rounded-lg border border-transparent hover:border-gray-200 hover:shadow-sm">
+                         <Download size={16} /> 导出报表 (CSV)
                       </button>
                    </div>
-                  <div className="overflow-x-auto">
-                    <table className="min-w-full divide-y divide-gray-100">
-                      <thead className="bg-gray-50">
+                  
+                  {/* ERP-style Data Grid */}
+                  <div className="overflow-x-auto flex-grow w-full custom-scrollbar">
+                    <table className="min-w-[1200px] w-full divide-y divide-gray-100 table-fixed">
+                      <thead className="bg-gray-50 sticky top-0 z-10 shadow-sm">
                         <tr>
-                          <th scope="col" className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">SKU / 阶段</th>
-                          <th scope="col" className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">产品信息</th>
-                          <th scope="col" className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">物流 (Vol & Wgt)</th>
-                          <th scope="col" className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">资金投入 (Total)</th>
-                          <th scope="col" className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">库存状态 (DOS)</th>
-                          <th scope="col" className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">销售表现</th>
-                          <th scope="col" className="px-6 py-4 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">操作</th>
+                          <th scope="col" onClick={() => handleSort('sku')} className="w-44 px-4 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider cursor-pointer hover:text-blue-600 group select-none">
+                              <div className="flex items-center">SKU / 阶段 {getSortIcon('sku')}</div>
+                          </th>
+                          <th scope="col" onClick={() => handleSort('productName')} className="px-4 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider cursor-pointer hover:text-blue-600 group select-none">
+                              <div className="flex items-center">产品信息 {getSortIcon('productName')}</div>
+                          </th>
+                          <th scope="col" className="w-48 px-4 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">物流 (Vol & Wgt)</th>
+                          <th scope="col" onClick={() => handleSort('metrics.firstLegCostCNY')} className="w-44 px-4 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider cursor-pointer hover:text-blue-600 group select-none">
+                              <div className="flex items-center">资金投入 (Total) {getSortIcon('metrics.firstLegCostCNY')}</div>
+                          </th>
+                          <th scope="col" onClick={() => handleSort('metrics.daysOfSupply')} className="w-44 px-4 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider cursor-pointer hover:text-blue-600 group select-none">
+                              <div className="flex items-center">库存状态 (DOS) {getSortIcon('metrics.daysOfSupply')}</div>
+                          </th>
+                          <th scope="col" onClick={() => handleSort('metrics.marginRate')} className="w-36 px-4 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider cursor-pointer hover:text-blue-600 group select-none">
+                              <div className="flex items-center">销售表现 {getSortIcon('metrics.marginRate')}</div>
+                          </th>
+                          <th scope="col" className="w-40 px-4 py-4 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">操作</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100">
-                        {filteredRecords.map((record) => {
-                          const m = calculateMetrics(record);
+                        {paginatedRecords.map((record) => {
+                          const m = record.metrics;
                           const lifecycle = getLifecycleBadge(record.lifecycle);
                           const productTotalCNY = record.quantity * record.unitPriceCNY;
                           const shippingTotalCNY = m.firstLegCostCNY;
                           const totalInvestCNY = productTotalCNY + shippingTotalCNY;
-                          
-                          // Store matching
                           const store = stores.find(s => s.id === record.storeId);
 
                           return (
-                            <tr 
-                                key={record.id} 
-                                className="hover:bg-blue-50/50 transition-colors group cursor-pointer relative"
-                            >
-                              <td className="px-6 py-4 whitespace-nowrap" onClick={() => openEditModal(record)}>
+                            <tr key={record.id} className="hover:bg-blue-50/50 transition-colors group cursor-pointer relative" onClick={() => openEditModal(record)}>
+                              <td className="px-4 py-3 whitespace-nowrap">
                                 <div className="flex items-center gap-2 mb-1">
-                                    {store ? (
-                                        <span className={`w-2 h-2 rounded-full ${store.color}`} title={store.name}></span>
-                                    ) : (
-                                        <span className="w-2 h-2 rounded-full bg-gray-300" title="未分配"></span>
-                                    )}
-                                    <div className="text-sm text-gray-900 font-bold font-mono">{record.sku}</div>
+                                    {store ? <span className={`w-2 h-2 rounded-full ${store.color}`} title={store.name}></span> : <span className="w-2 h-2 rounded-full bg-gray-300" title="未分配"></span>}
+                                    <div className="text-sm text-gray-900 font-bold font-mono truncate" title={record.sku}>{record.sku}</div>
                                 </div>
-                                <div className="mt-2 flex flex-col items-start gap-1.5">
-                                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium border ${lifecycle.color}`}>
-                                    {lifecycle.icon} {lifecycle.label}
-                                  </span>
-                                  <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium border ${getStatusBadge(record.status)}`}>
-                                    {getStatusLabel(record.status)}
-                                  </span>
+                                <div className="mt-1 flex flex-col items-start gap-1">
+                                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium border ${lifecycle.color}`}>{lifecycle.icon} {lifecycle.label}</span>
+                                  <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium border ${getStatusBadge(record.status)}`}>{getStatusLabel(record.status)}</span>
                                 </div>
                               </td>
-                              <td className="px-6 py-4 whitespace-nowrap" onClick={() => openEditModal(record)}>
+                              <td className="px-4 py-3">
                                 <div className="flex items-center">
-                                  {/* Product Image */}
                                   <div className="flex-shrink-0 h-10 w-10 mr-3">
-                                    {record.imageUrl ? (
-                                      <img className="h-10 w-10 rounded-lg object-cover border border-gray-100" src={record.imageUrl} alt="" />
-                                    ) : (
-                                      <div className="h-10 w-10 rounded-lg bg-gray-100 flex items-center justify-center text-gray-400 border border-gray-100">
-                                        <Package size={18} />
-                                      </div>
-                                    )}
+                                    {record.imageUrl ? <img className="h-10 w-10 rounded-lg object-cover border border-gray-100" src={record.imageUrl} alt="" /> : <div className="h-10 w-10 rounded-lg bg-gray-100 flex items-center justify-center text-gray-400 border border-gray-100"><Package size={18} /></div>}
                                   </div>
-                                  <div>
-                                    <div className="text-sm font-medium text-gray-900">{record.productName}</div>
+                                  <div className="min-w-0 flex-1">
+                                    <div className="text-sm font-medium text-gray-900 line-clamp-2 leading-tight" title={record.productName}>{record.productName}</div>
                                     <div className="text-xs text-gray-400 mt-0.5">{record.date}</div>
-                                    <div className="inline-flex items-center gap-2 mt-1.5 bg-gray-100 px-2 py-0.5 rounded text-xs text-gray-600">
-                                       <span>Qty: {record.quantity}</span>
-                                    </div>
+                                    <div className="inline-flex items-center gap-2 mt-1 bg-gray-100 px-2 py-0.5 rounded text-[10px] text-gray-600"><span>Qty: {record.quantity}</span></div>
                                   </div>
                                 </div>
                               </td>
-                              <td className="px-6 py-4 whitespace-nowrap" onClick={() => openEditModal(record)}>
-                                <span className={`inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium border mb-1.5 ${record.shippingMethod === 'Air' ? 'bg-sky-50 text-sky-700 border-sky-100' : 'bg-indigo-50 text-indigo-700 border-indigo-100'}`}>
-                                  {record.shippingMethod === 'Air' ? <Plane className="w-3 h-3 mr-1.5"/> : <Ship className="w-3 h-3 mr-1.5"/>}
+                              <td className="px-4 py-3 whitespace-nowrap">
+                                <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium border mb-1 ${record.shippingMethod === 'Air' ? 'bg-sky-50 text-sky-700 border-sky-100' : 'bg-indigo-50 text-indigo-700 border-indigo-100'}`}>
+                                  {record.shippingMethod === 'Air' ? <Plane className="w-3 h-3 mr-1"/> : <Ship className="w-3 h-3 mr-1"/>}
                                   {record.shippingMethod === 'Air' ? '空运' : '海运'}
                                 </span>
-                                <div className="flex flex-col gap-1">
-                                  <div className="text-xs text-gray-600 flex items-center gap-2">
-                                      <Package size={12} className="text-gray-400" />
-                                      <span className="font-mono">{m.totalCartons} 箱</span>
-                                      <span className="text-gray-300">|</span>
-                                      <span className="font-mono">{m.totalWeightKg.toFixed(1)}kg</span>
-                                  </div>
-                                  <div className="text-xs text-gray-600 flex items-center gap-2">
-                                      <Box size={12} className="text-gray-400" />
-                                      <span className="font-mono">{m.totalVolumeCbm > 0 ? `${m.totalVolumeCbm.toFixed(3)} CBM` : '-'}</span>
-                                  </div>
+                                <div className="flex flex-col gap-0.5">
+                                  <div className="text-xs text-gray-500 font-mono">{m.totalCartons}箱 | {m.totalWeightKg.toFixed(1)}kg</div>
+                                  <div className="text-xs text-gray-400 font-mono">{m.totalVolumeCbm > 0 ? `${m.totalVolumeCbm.toFixed(3)} CBM` : '-'}</div>
                                 </div>
                               </td>
-                              {/* New Column: Total Investment */}
-                              <td className="px-6 py-4 whitespace-nowrap" onClick={() => openEditModal(record)}>
+                              <td className="px-4 py-3 whitespace-nowrap">
                                   <div className="flex flex-col gap-0.5">
-                                      <span className="text-sm font-bold text-blue-900 font-mono">
-                                          {formatCurrency(totalInvestCNY, 'CNY')}
-                                      </span>
-                                      <span className="text-[10px] text-gray-500 flex items-center gap-1">
-                                          <span className="w-1.5 h-1.5 rounded-full bg-blue-400"></span>
-                                          货: {formatCurrency(productTotalCNY, 'CNY')}
-                                      </span>
-                                      <span className="text-[10px] text-gray-500 flex items-center gap-1">
-                                          <span className="w-1.5 h-1.5 rounded-full bg-orange-400"></span>
-                                          运: {formatCurrency(shippingTotalCNY, 'CNY')}
-                                      </span>
+                                      <span className="text-sm font-bold text-blue-900 font-mono">{formatCurrency(totalInvestCNY, 'CNY')}</span>
+                                      <span className="text-[10px] text-gray-500 flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-blue-400"></span>货: {formatCurrency(productTotalCNY, 'CNY')}</span>
+                                      <span className="text-[10px] text-gray-500 flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-orange-400"></span>运: {formatCurrency(shippingTotalCNY, 'CNY')}</span>
                                   </div>
                               </td>
-                              <td className="px-6 py-4 whitespace-nowrap" onClick={() => openEditModal(record)}>
+                              <td className="px-4 py-3 whitespace-nowrap">
                                 <div className="space-y-1">
                                   {m.stockStatus !== 'Unknown' ? (
                                     <>
@@ -747,58 +688,25 @@ function App() {
                                             {m.stockStatus === 'Low' && <Hourglass size={14} className="text-yellow-500" />}
                                             {m.stockStatus === 'Healthy' && <div className="w-2 h-2 rounded-full bg-green-500"></div>}
                                             {m.stockStatus === 'Overstock' && <AlertTriangle size={14} className="text-orange-500" />}
-                                            
-                                            <span className={`text-xs font-bold ${
-                                                m.stockStatus === 'Critical' ? 'text-red-600' :
-                                                m.stockStatus === 'Low' ? 'text-yellow-700' :
-                                                m.stockStatus === 'Overstock' ? 'text-orange-600' :
-                                                'text-green-600'
-                                            }`}>
-                                                {m.daysOfSupply.toFixed(0)} 天周转
-                                            </span>
+                                            <span className={`text-xs font-bold ${m.stockStatus === 'Critical' ? 'text-red-600' : m.stockStatus === 'Low' ? 'text-yellow-700' : m.stockStatus === 'Overstock' ? 'text-orange-600' : 'text-green-600'}`}>{m.daysOfSupply.toFixed(0)} 天周转</span>
                                         </div>
-                                        <div className="text-[10px] text-gray-400">
-                                            日销: {record.dailySales} / 现货: {record.quantity}
-                                        </div>
+                                        <div className="text-[10px] text-gray-400">日销: {record.dailySales} / 现货: {record.quantity}</div>
                                     </>
-                                  ) : (
-                                    <span className="text-xs text-gray-400 italic">待输入日销量</span>
-                                  )}
-                                  
-                                  <div className="w-24 h-px bg-gray-100 my-1"></div>
-                                  <div className="flex justify-between w-24 text-xs text-gray-500">
-                                    <span>成本</span> <span className="font-mono">${m.totalCostPerUnitUSD.toFixed(1)}</span>
-                                  </div>
+                                  ) : <span className="text-xs text-gray-400 italic">待输入日销量</span>}
                                 </div>
                               </td>
-                              <td className="px-6 py-4 whitespace-nowrap" onClick={() => openEditModal(record)}>
+                              <td className="px-4 py-3 whitespace-nowrap">
                                 <div className="text-sm font-bold text-gray-900 font-mono">${record.salesPriceUSD.toFixed(2)}</div>
-                                <div className={`text-xs font-medium mt-1 inline-block px-1.5 py-0.5 rounded ${m.marginRate < 15 ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
-                                  毛利: {m.marginRate.toFixed(1)}%
-                                </div>
+                                <div className={`text-[10px] font-medium mt-1 inline-block px-1.5 py-0.5 rounded ${m.marginRate < 15 ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>毛利: {m.marginRate.toFixed(1)}%</div>
                               </td>
-                              <td className="px-6 py-4 whitespace-nowrap text-right">
+                              <td className="px-4 py-3 whitespace-nowrap text-right">
                                 <div className="flex flex-col items-end gap-2">
-                                    {/* Action Buttons */}
-                                    <button 
-                                        onClick={(e) => handleTableMarketingClick(e, record)}
-                                        className="bg-gradient-to-r from-indigo-500 to-purple-500 text-white text-[10px] px-2 py-1 rounded flex items-center gap-1 hover:shadow-md transition-all active:scale-95"
-                                        title="生成 TikTok 脚本与文案"
-                                    >
-                                        <Wand2 size={10} /> 生成内容
-                                    </button>
-                                    
+                                    <button onClick={(e) => handleTableMarketingClick(e, record)} className="bg-gradient-to-r from-indigo-500 to-purple-500 text-white text-[10px] px-2 py-1 rounded flex items-center gap-1 hover:shadow-md transition-all active:scale-95" title="生成 TikTok 脚本与文案"><Wand2 size={10} /> 内容</button>
                                     <div className="flex items-center gap-2">
-                                        <div className={`text-xs px-2 py-0.5 rounded-full font-bold inline-flex items-center gap-1 ${m.roi > 30 ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-600'}`}>
-                                            ROI: {m.roi.toFixed(0)}%
-                                        </div>
-                                        <button 
-                                            onClick={(e) => { e.stopPropagation(); handleDeleteRecord(record.id); }}
-                                            className="text-[10px] text-gray-300 hover:text-red-500 underline"
-                                        >
-                                            删除
-                                        </button>
+                                        <button onClick={(e) => openDistributeModal(e, record)} className="text-[10px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded border border-blue-100 hover:bg-blue-100 transition-colors flex items-center gap-1"><ArrowRightLeft size={10} /> 分发</button>
+                                        <div className={`text-xs px-2 py-0.5 rounded-full font-bold inline-flex items-center gap-1 ${m.roi > 30 ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-600'}`}>ROI: {m.roi.toFixed(0)}%</div>
                                     </div>
+                                    <button onClick={(e) => { e.stopPropagation(); handleDeleteRecord(record.id); }} className="text-[10px] text-gray-300 hover:text-red-500 underline self-end">删除</button>
                                 </div>
                               </td>
                             </tr>
@@ -806,373 +714,206 @@ function App() {
                         })}
                       </tbody>
                     </table>
-                    {filteredRecords.length === 0 && (
+                    {paginatedRecords.length === 0 && (
                        <div className="p-16 text-center">
-                         <div className="inline-flex bg-gray-50 p-4 rounded-full mb-4">
-                           <Package className="h-8 w-8 text-gray-300" />
-                         </div>
-                         <h3 className="text-gray-900 font-medium">
-                            {workspaceId ? `云端工作区 (${workspaceId}) 暂无数据` : '没有找到匹配的记录'}
-                         </h3>
-                         <p className="text-gray-500 text-sm mt-1">
-                            {activeStoreId !== 'all' ? '该店铺暂无备货记录，请点击右上角添加。' : '尝试调整搜索词或筛选状态。'}
-                         </p>
+                         <div className="inline-flex bg-gray-50 p-4 rounded-full mb-4"><Package className="h-8 w-8 text-gray-300" /></div>
+                         <h3 className="text-gray-900 font-medium">暂无数据</h3>
+                         <p className="text-gray-500 text-sm mt-1">请尝试调整筛选或添加新产品。</p>
                        </div>
                     )}
                   </div>
+
+                  {/* ERP Pagination Footer */}
+                  {processedData.length > 0 && (
+                      <div className="border-t border-gray-100 px-6 py-4 flex items-center justify-between bg-gray-50">
+                          <div className="text-xs text-gray-500">
+                              显示 <span className="font-medium text-gray-800">{(currentPage - 1) * itemsPerPage + 1}</span> 到 <span className="font-medium text-gray-800">{Math.min(currentPage * itemsPerPage, processedData.length)}</span> 条，共 <span className="font-medium text-gray-800">{processedData.length}</span> 条
+                          </div>
+                          <div className="flex items-center gap-2">
+                              <button 
+                                onClick={() => setCurrentPage(1)} 
+                                disabled={currentPage === 1}
+                                className="p-2 rounded-lg hover:bg-gray-200 text-gray-500 disabled:opacity-30 disabled:cursor-not-allowed"
+                              >
+                                  <ChevronsLeft size={16} />
+                              </button>
+                              <button 
+                                onClick={() => setCurrentPage(p => Math.max(1, p - 1))} 
+                                disabled={currentPage === 1}
+                                className="p-2 rounded-lg hover:bg-gray-200 text-gray-500 disabled:opacity-30 disabled:cursor-not-allowed"
+                              >
+                                  <ChevronLeft size={16} />
+                              </button>
+                              
+                              <div className="flex items-center gap-1">
+                                  {Array.from({ length: totalPages }, (_, i) => i + 1)
+                                    .filter(p => p === 1 || p === totalPages || (p >= currentPage - 1 && p <= currentPage + 1))
+                                    .map((p, i, arr) => (
+                                      <React.Fragment key={p}>
+                                          {i > 0 && arr[i-1] !== p - 1 && <span className="text-gray-400 px-1">...</span>}
+                                          <button
+                                              onClick={() => setCurrentPage(p)}
+                                              className={`w-8 h-8 rounded-lg text-xs font-medium transition-colors ${
+                                                  currentPage === p 
+                                                  ? 'bg-blue-600 text-white shadow-sm' 
+                                                  : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-100'
+                                              }`}
+                                          >
+                                              {p}
+                                          </button>
+                                      </React.Fragment>
+                                  ))}
+                              </div>
+
+                              <button 
+                                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} 
+                                disabled={currentPage === totalPages}
+                                className="p-2 rounded-lg hover:bg-gray-200 text-gray-500 disabled:opacity-30 disabled:cursor-not-allowed"
+                              >
+                                  <ChevronRight size={16} />
+                              </button>
+                              <button 
+                                onClick={() => setCurrentPage(totalPages)} 
+                                disabled={currentPage === totalPages}
+                                className="p-2 rounded-lg hover:bg-gray-200 text-gray-500 disabled:opacity-30 disabled:cursor-not-allowed"
+                              >
+                                  <ChevronsRight size={16} />
+                              </button>
+                          </div>
+                      </div>
+                  )}
                 </div>
           </>
         );
     }
   };
 
-  const getPageTitle = () => {
-    switch (currentView) {
-      case 'overview': return '系统总览';
-      case 'inventory': return '备货清单管理';
-      case 'analytics': return '经营数据分析';
-      case 'calculator': return '智能运费试算';
-      case 'logistics': return '物流查询中心';
-      case 'marketing': return 'AI 营销内容引擎';
-    }
-  };
-
-  const getPageSubtitle = () => {
-    switch (currentView) {
-      case 'overview': return '实时监控您的跨境供应链状态';
-      case 'inventory': return '管理您的发货计划、成本核算与物流状态';
-      case 'analytics': return '可视化您的利润结构与物流成本分布';
-      case 'calculator': return '快速测算材积重、体积与货型分析';
-      case 'logistics': return 'UPS与海运实时追踪查询';
-      case 'marketing': return '自动生成 TikTok 脚本、Listing 文案与直播话术';
-    }
-  };
-
   return (
     <div className="flex h-screen bg-gray-50 font-sans overflow-hidden">
-      
-      {/* Sidebar Navigation */}
       <aside className="w-64 bg-slate-900 text-white flex-shrink-0 hidden md:flex flex-col">
         <div className="p-6 flex items-center gap-3 border-b border-slate-800">
-           <div className="bg-blue-600 p-2 rounded-lg">
-             <LayoutDashboard className="text-white h-5 w-5" />
-           </div>
-           <div>
-             <h1 className="font-bold text-lg tracking-tight">探行科技</h1>
-             <p className="text-xs text-slate-400">智能备货系统 v3.1</p>
-           </div>
+           <div className="bg-blue-600 p-2 rounded-lg"><LayoutDashboard className="text-white h-5 w-5" /></div>
+           <div><h1 className="font-bold text-lg tracking-tight">探行科技</h1><p className="text-xs text-slate-400">智能备货系统 v4.2 (Pro)</p></div>
         </div>
         
-        {/* Store Switcher */}
+        {/* Command Palette Trigger in Sidebar */}
+        <div className="px-4 pt-4">
+            <button 
+                onClick={() => setIsCommandPaletteOpen(true)}
+                className="w-full bg-slate-800 border border-slate-700 text-slate-400 hover:text-white hover:border-slate-600 rounded-lg p-2 flex items-center justify-between transition-colors group"
+            >
+                <div className="flex items-center gap-2">
+                    <Search size={14} />
+                    <span className="text-xs">搜索...</span>
+                </div>
+                <div className="flex items-center gap-1 bg-slate-900 rounded px-1.5 py-0.5 border border-slate-700">
+                    <Command size={10} />
+                    <span className="text-[10px]">K</span>
+                </div>
+            </button>
+        </div>
+
         <div className="px-4 pt-4 pb-2">
            <div className="relative">
-             <div 
-                className="bg-slate-800 rounded-lg p-2 flex items-center justify-between cursor-pointer hover:bg-slate-700 transition-colors border border-slate-700"
-                onClick={() => setIsStoreManagerOpen(true)}
-             >
-                <div className="flex items-center gap-2 overflow-hidden">
-                    <StoreIcon size={16} className="text-slate-400 shrink-0"/>
-                    <span className="text-sm font-medium truncate">店铺管理</span>
-                </div>
+             <div className="bg-slate-800 rounded-lg p-2 flex items-center justify-between cursor-pointer hover:bg-slate-700 transition-colors border border-slate-700" onClick={() => setIsStoreManagerOpen(true)}>
+                <div className="flex items-center gap-2 overflow-hidden"><StoreIcon size={16} className="text-slate-400 shrink-0"/><span className="text-sm font-medium truncate">店铺管理</span></div>
                 <div className="bg-slate-600 text-[10px] px-1.5 rounded">{stores.length}</div>
              </div>
-
-             {/* Store Filter Buttons */}
              <div className="mt-2 space-y-1">
-                 <button
-                    onClick={() => setActiveStoreId('all')}
-                    className={`w-full text-left px-2 py-1.5 rounded text-xs font-medium transition-colors flex items-center justify-between ${activeStoreId === 'all' ? 'bg-blue-600/20 text-blue-400' : 'text-slate-500 hover:text-slate-300'}`}
-                 >
-                    <span>全部店铺 (All)</span>
-                    {activeStoreId === 'all' && <div className="w-1.5 h-1.5 rounded-full bg-blue-500"></div>}
-                 </button>
+                 <button onClick={() => setActiveStoreId('all')} className={`w-full text-left px-2 py-1.5 rounded text-xs font-medium transition-colors flex items-center justify-between ${activeStoreId === 'all' ? 'bg-blue-600/20 text-blue-400' : 'text-slate-500 hover:text-slate-300'}`}><span>全部店铺 (All)</span>{activeStoreId === 'all' && <div className="w-1.5 h-1.5 rounded-full bg-blue-500"></div>}</button>
                  {stores.map(store => (
-                     <button
-                        key={store.id}
-                        onClick={() => setActiveStoreId(store.id)}
-                        className={`w-full text-left px-2 py-1.5 rounded text-xs font-medium transition-colors flex items-center justify-between ${activeStoreId === store.id ? 'bg-slate-800 text-white' : 'text-slate-500 hover:text-slate-300'}`}
-                     >
-                        <div className="flex items-center gap-2">
-                           <span className={`w-2 h-2 rounded-full ${store.color}`}></span>
-                           <span className="truncate max-w-[120px]">{store.name}</span>
-                        </div>
+                     <button key={store.id} onClick={() => setActiveStoreId(store.id)} className={`w-full text-left px-2 py-1.5 rounded text-xs font-medium transition-colors flex items-center justify-between ${activeStoreId === store.id ? 'bg-slate-800 text-white' : 'text-slate-500 hover:text-slate-300'}`}>
+                        <div className="flex items-center gap-2"><span className={`w-2 h-2 rounded-full ${store.color}`}></span><span className="truncate max-w-[120px]">{store.name}</span></div>
                         {activeStoreId === store.id && <div className="w-1.5 h-1.5 rounded-full bg-white"></div>}
                      </button>
                  ))}
              </div>
            </div>
         </div>
-
         <div className="px-4 py-2 border-t border-slate-800 mt-2"></div>
-        
         <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
-          {/* ... existing nav buttons ... */}
-          <div className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">
-            主菜单
-          </div>
-          <button 
-            onClick={() => setCurrentView('overview')}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${currentView === 'overview' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
-          >
-            <Home size={20} />
-            <span className="font-medium">系统总览</span>
-          </button>
-          
-          <button 
-            onClick={() => setCurrentView('inventory')}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${currentView === 'inventory' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
-          >
-            <List size={20} />
-            <span className="font-medium">备货清单</span>
-          </button>
-          
-          <button 
-             onClick={() => setCurrentView('analytics')}
-             className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${currentView === 'analytics' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
-          >
-            <PieChart size={20} />
-            <span className="font-medium">数据分析</span>
-          </button>
-
-          {/* New AI Hub Section */}
-          <div className="px-4 py-2 mt-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">
-            AI 赋能中心
-          </div>
-          <button 
-             onClick={() => setCurrentView('marketing')}
-             className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all group ${currentView === 'marketing' ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
-          >
-            <Sparkles size={20} className={currentView === 'marketing' ? 'text-yellow-300' : 'group-hover:text-purple-400'} />
-            <span className="font-medium">AI 营销中心</span>
-          </button>
-
-          <div className="px-4 py-2 mt-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">
-            实用工具
-          </div>
-          <button 
-             onClick={() => setCurrentView('calculator')}
-             className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${currentView === 'calculator' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
-          >
-            <Calculator size={20} />
-            <span className="font-medium">智能试算</span>
-          </button>
-           <button 
-             onClick={() => setCurrentView('logistics')}
-             className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${currentView === 'logistics' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
-          >
-            <Search size={20} />
-            <span className="font-medium">物流查询</span>
-          </button>
-          
-          <button 
-             onClick={() => setIsBackupOpen(true)}
-             className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all text-slate-400 hover:bg-slate-800 hover:text-white`}
-          >
-            <FileJson size={20} />
-            <span className="font-medium">数据备份</span>
-          </button>
-
-          <button 
-             onClick={() => setIsSettingsOpen(true)}
-             className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
-                isSettingsOpen
-                  ? 'bg-slate-800 text-white' 
-                  : 'text-slate-400 hover:bg-slate-800 hover:text-white'
-             }`}
-          >
-            <Settings size={20} />
-            <span className="font-medium">系统设置</span>
-          </button>
-
+          <div className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">主菜单</div>
+          <button onClick={() => setCurrentView('overview')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${currentView === 'overview' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><Home size={20} /><span className="font-medium">系统总览</span></button>
+          <button onClick={() => setCurrentView('inventory')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${currentView === 'inventory' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><List size={20} /><span className="font-medium">备货清单</span></button>
+          <button onClick={() => setCurrentView('analytics')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${currentView === 'analytics' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><PieChart size={20} /><span className="font-medium">数据分析</span></button>
+          <div className="px-4 py-2 mt-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">AI 赋能中心</div>
+          <button onClick={() => setCurrentView('marketing')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all group ${currentView === 'marketing' ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><Sparkles size={20} className={currentView === 'marketing' ? 'text-yellow-300' : 'group-hover:text-purple-400'} /><span className="font-medium">AI 营销中心</span></button>
+          <div className="px-4 py-2 mt-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">实用工具</div>
+          <button onClick={() => setCurrentView('calculator')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${currentView === 'calculator' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><Calculator size={20} /><span className="font-medium">智能试算</span></button>
+          <button onClick={() => setCurrentView('logistics')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${currentView === 'logistics' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><Search size={20} /><span className="font-medium">物流查询</span></button>
+          <button onClick={() => setIsBackupOpen(true)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all text-slate-400 hover:bg-slate-800 hover:text-white`}><FileJson size={20} /><span className="font-medium">数据备份</span></button>
+          <button onClick={() => setIsSettingsOpen(true)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${isSettingsOpen ? 'bg-slate-800 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><Settings size={20} /><span className="font-medium">系统设置</span></button>
         </nav>
-
-        {/* AI Sidebar Button (Updated) */}
+        
+        {/* User Profile Section (New for ERP feel) */}
         <div className="p-4 border-t border-slate-800">
-          <div 
-            onClick={() => setIsAiChatOpen(true)}
-            className="bg-slate-800 rounded-xl p-4 cursor-pointer hover:bg-slate-700 transition-all group relative overflow-hidden"
-          >
-             <div className="absolute top-0 right-0 w-20 h-20 bg-purple-500 rounded-full mix-blend-overlay filter blur-xl opacity-20 -translate-y-10 translate-x-10 group-hover:opacity-40 transition-opacity"></div>
-             
-             <div className="flex items-center gap-2 mb-2">
-               <div className="bg-purple-900/50 p-1.5 rounded-lg">
-                  <Bot className="text-purple-400 h-5 w-5" />
-               </div>
-               <span className="text-xs font-bold text-purple-200">AI Copilot</span>
-             </div>
-             <p className="text-xs text-slate-400 leading-relaxed group-hover:text-slate-300 transition-colors">
-               点击开启智能对话，分析库存或查询利润数据。
-             </p>
-          </div>
+            <div className="flex items-center gap-3 px-2 mb-4">
+                <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-slate-300">
+                    <UserCircle size={20} />
+                </div>
+                <div className="flex-1 min-w-0">
+                    <p className="text-xs font-medium text-white truncate">Admin User</p>
+                    <p className="text-[10px] text-slate-500 truncate">admin@tanxing.tech</p>
+                </div>
+            </div>
+            <div onClick={() => setIsAiChatOpen(true)} className="bg-slate-800 rounded-xl p-3 cursor-pointer hover:bg-slate-700 transition-all group relative overflow-hidden flex items-center gap-3 border border-slate-700">
+                <div className="bg-purple-900/50 p-1.5 rounded-lg"><Bot className="text-purple-400 h-4 w-4" /></div>
+                <div>
+                    <span className="text-xs font-bold text-purple-200 block">AI Copilot</span>
+                    <span className="text-[10px] text-slate-400 block">点击唤起助手</span>
+                </div>
+            </div>
         </div>
       </aside>
-
-      {/* Main Content Area */}
       <div className="flex-1 flex flex-col h-screen overflow-hidden relative">
-        
-        {/* Mobile Header (Visible only on small screens) */}
-        <header className="bg-white border-b border-gray-200 p-4 flex justify-between items-center md:hidden">
-          <div className="font-bold text-gray-800">探行科技</div>
-          <button className="text-gray-500"><Menu /></button>
-        </header>
-
-        {/* Scrollable Canvas */}
+        <header className="bg-white border-b border-gray-200 p-4 flex justify-between items-center md:hidden"><div className="font-bold text-gray-800">探行科技</div><button className="text-gray-500"><Menu /></button></header>
         <main className="flex-1 overflow-y-auto p-4 sm:p-8 bg-gray-100 relative">
-          
-          {/* TOAST CONTAINER - Global Notification */}
           <ToastContainer toasts={toasts} removeToast={removeToast} />
-
-          <div className="max-w-7xl mx-auto">
-            
-            {/* Header Area */}
+          <div className="max-w-[1920px] w-full mx-auto">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
               <div>
                 <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-3">
                   {getPageTitle()}
-                  {/* Store Context Badge */}
-                  {activeStoreId !== 'all' && (
-                     <span className="text-sm font-medium bg-slate-800 text-white px-3 py-1 rounded-full flex items-center gap-2">
-                        <span className={`w-2 h-2 rounded-full ${stores.find(s => s.id === activeStoreId)?.color}`}></span>
-                        {stores.find(s => s.id === activeStoreId)?.name}
-                     </span>
-                  )}
+                  {activeStoreId !== 'all' && (<span className="text-sm font-medium bg-slate-800 text-white px-3 py-1 rounded-full flex items-center gap-2"><span className={`w-2 h-2 rounded-full ${stores.find(s => s.id === activeStoreId)?.color}`}></span>{stores.find(s => s.id === activeStoreId)?.name}</span>)}
                 </h2>
-                <p className="text-sm text-gray-500 mt-1">
-                  {getPageSubtitle()}
-                </p>
+                <p className="text-sm text-gray-500 mt-1">{getPageSubtitle()}</p>
               </div>
-              
               <div className="flex items-center gap-3">
-                
-                {/* Global Status Indicator for Cloud */}
-                {workspaceId && (
-                   <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
-                      syncStatus === 'connected' 
-                      ? 'bg-emerald-50 text-emerald-700 border-emerald-100' 
-                      : syncStatus === 'connecting'
-                        ? 'bg-yellow-50 text-yellow-700 border-yellow-100'
-                        : 'bg-red-50 text-red-700 border-red-100'
-                   }`}>
-                      {syncStatus === 'connected' ? <Wifi size={14} /> : <WifiOff size={14} />}
-                      <span className="hidden sm:inline">工作区: {workspaceId}</span>
-                      <span className="sm:hidden">{workspaceId}</span>
-                      <div className={`w-2 h-2 rounded-full ${
-                          syncStatus === 'connected' ? 'bg-emerald-500 animate-pulse' : syncStatus === 'connecting' ? 'bg-yellow-500' : 'bg-red-500'
-                      }`}></div>
-                      {syncStatus === 'connecting' && <span className="text-[10px]">连接中...</span>}
-                      {syncStatus === 'disconnected' && <span className="text-[10px]">断开</span>}
-                   </div>
-                )}
-
-                {/* Updated Button Visibility Logic */}
+                {workspaceId && (<div className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${syncStatus === 'connected' ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : syncStatus === 'connecting' ? 'bg-yellow-50 text-yellow-700 border-yellow-100' : 'bg-red-50 text-red-700 border-red-100'}`}>{syncStatus === 'connected' ? <Wifi size={14} /> : <WifiOff size={14} />}<span className="hidden sm:inline">工作区: {workspaceId}</span><span className="sm:hidden">{workspaceId}</span><div className={`w-2 h-2 rounded-full ${syncStatus === 'connected' ? 'bg-emerald-500 animate-pulse' : syncStatus === 'connecting' ? 'bg-yellow-500' : 'bg-red-500'}`}></div>{syncStatus === 'connecting' && <span className="text-[10px]">连接中...</span>}{syncStatus === 'disconnected' && <span className="text-[10px]">断开</span>}</div>)}
                 {(currentView === 'inventory' || currentView === 'overview' || currentView === 'marketing') && (
                   <>
-                    {/* Only show strategy buttons in Inventory/Overview to avoid clutter, or if user wants them everywhere we can remove condition */}
                     {currentView !== 'marketing' && (
                         <>
-                            <button 
-                            onClick={handleAdStrategy}
-                            disabled={isAnalyzing}
-                            className="flex items-center gap-2 bg-pink-50 text-pink-700 px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-pink-100 transition-colors border border-pink-200 shadow-sm"
-                            >
-                            {isAnalyzing && analysisTitle.includes('TikTok') ? <Loader2 className="animate-spin h-4 w-4" /> : <Megaphone className="h-4 w-4" />}
-                            TikTok 投放建议
-                            </button>
-
-                            <button 
-                            onClick={handleSelectionStrategy}
-                            disabled={isAnalyzing}
-                            className="flex items-center gap-2 bg-orange-50 text-orange-700 px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-orange-100 transition-colors border border-orange-200 shadow-sm"
-                            >
-                            {isAnalyzing && analysisTitle.includes('选品') ? <Loader2 className="animate-spin h-4 w-4" /> : <Compass className="h-4 w-4" />}
-                            美区选品策略
-                            </button>
+                            <button onClick={handleAdStrategy} disabled={isAnalyzing} className="flex items-center gap-2 bg-pink-50 text-pink-700 px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-pink-100 transition-colors border border-pink-200 shadow-sm">{isAnalyzing && analysisTitle.includes('TikTok') ? <Loader2 className="animate-spin h-4 w-4" /> : <Megaphone className="h-4 w-4" />}TikTok 投放建议</button>
+                            <button onClick={handleSelectionStrategy} disabled={isAnalyzing} className="flex items-center gap-2 bg-orange-50 text-orange-700 px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-orange-100 transition-colors border border-orange-200 shadow-sm">{isAnalyzing && analysisTitle.includes('选品') ? <Loader2 className="animate-spin h-4 w-4" /> : <Compass className="h-4 w-4" />}美区选品策略</button>
                         </>
                     )}
-
-                    {currentView === 'inventory' && (
-                        <button 
-                          onClick={handleSmartAnalysis}
-                          disabled={isAnalyzing}
-                          className="flex items-center gap-2 bg-white text-purple-700 px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-purple-50 transition-colors border border-purple-200 shadow-sm"
-                        >
-                          {isAnalyzing && !analysisTitle.includes('TikTok') && !analysisTitle.includes('选品') ? <Loader2 className="animate-spin h-4 w-4" /> : <BrainCircuit className="h-4 w-4" />}
-                          {isAnalyzing && !analysisTitle.includes('TikTok') && !analysisTitle.includes('选品') ? '正在分析...' : '智能诊断'}
-                        </button>
-                    )}
-
-                    {/* Add Product only on Inventory view to avoid confusion */}
-                    {currentView === 'inventory' && (
-                        <button 
-                          onClick={openAddModal}
-                          className="flex items-center gap-2 bg-blue-600 text-white px-5 py-2.5 rounded-xl hover:bg-blue-700 transition shadow-lg shadow-blue-200 font-bold active:scale-95 transform"
-                        >
-                          <Plus size={18} />
-                          添加产品
-                        </button>
-                    )}
+                    {currentView === 'inventory' && (<button onClick={handleSmartAnalysis} disabled={isAnalyzing} className="flex items-center gap-2 bg-white text-purple-700 px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-purple-50 transition-colors border border-purple-200 shadow-sm">{isAnalyzing && !analysisTitle.includes('TikTok') && !analysisTitle.includes('选品') ? <Loader2 className="animate-spin h-4 w-4" /> : <BrainCircuit className="h-4 w-4" />}{isAnalyzing && !analysisTitle.includes('TikTok') && !analysisTitle.includes('选品') ? '正在分析...' : '智能诊断'}</button>)}
+                    {currentView === 'inventory' && (<button onClick={openAddModal} className="flex items-center gap-2 bg-blue-600 text-white px-5 py-2.5 rounded-xl hover:bg-blue-700 transition shadow-lg shadow-blue-200 font-bold active:scale-95 transform"><Plus size={18} />添加产品</button>)}
                   </>
                 )}
               </div>
             </div>
-
-            {/* View Render */}
             {renderContent()}
-            
           </div>
         </main>
       </div>
-      
-      {/* Cloud Connect Modal (Now acting as System Settings) */}
-      <CloudConnect 
-         isOpen={isSettingsOpen}
-         onClose={() => setIsSettingsOpen(false)}
-         currentWorkspaceId={workspaceId}
-         onConnect={setWorkspaceId}
-         onDisconnect={() => setWorkspaceId(null)}
-         isSyncing={syncStatus === 'connecting'}
+      <CloudConnect isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} currentWorkspaceId={workspaceId} onConnect={setWorkspaceId} onDisconnect={() => setWorkspaceId(null)} isSyncing={syncStatus === 'connecting'} />
+      <StoreManagerModal isOpen={isStoreManagerOpen} onClose={() => setIsStoreManagerOpen(false)} stores={stores} onAddStore={handleAddStore} onDeleteStore={handleDeleteStore} />
+      <RecordModal isOpen={isModalOpen} onClose={closeModal} onSave={handleSaveRecord} initialData={editingRecord} stores={stores} defaultStoreId={activeStoreId} />
+      {/* Distribute Modal */}
+      <DistributeModal isOpen={isDistributeModalOpen} onClose={() => setIsDistributeModalOpen(false)} sourceRecord={distributeSourceRecord} stores={stores} onConfirm={handleDistributeConfirm} />
+      <CommandPalette 
+        isOpen={isCommandPaletteOpen} 
+        onClose={() => setIsCommandPaletteOpen(false)} 
+        records={records}
+        onNavigate={handleCommandNavigate}
+        onOpenRecord={handleCommandOpenRecord}
+        onAction={handleCommandAction}
       />
-
-      {/* Store Manager Modal */}
-      <StoreManagerModal
-         isOpen={isStoreManagerOpen}
-         onClose={() => setIsStoreManagerOpen(false)}
-         stores={stores}
-         onAddStore={handleAddStore}
-         onDeleteStore={handleDeleteStore}
-      />
-
-      <RecordModal 
-        isOpen={isModalOpen} 
-        onClose={closeModal} 
-        onSave={handleSaveRecord} 
-        initialData={editingRecord}
-        stores={stores}
-        defaultStoreId={activeStoreId}
-      />
-      
-      {/* AI Chat Modal (Global) */}
-      <AiChatModal 
-         isOpen={isAiChatOpen}
-         onClose={() => setIsAiChatOpen(false)}
-         records={records}
-      />
-
-      {/* AI Marketing Modal (New) */}
-      <MarketingModal
-         isOpen={marketingModalOpen}
-         onClose={() => setMarketingModalOpen(false)}
-         content={marketingContent}
-         productName={marketingProduct}
-      />
-
-      {/* Backup Modal */}
-      <DataBackupModal
-         isOpen={isBackupOpen}
-         onClose={() => setIsBackupOpen(false)}
-         records={records}
-         onImportData={handleImportData}
-      />
+      <AiChatModal isOpen={isAiChatOpen} onClose={() => setIsAiChatOpen(false)} records={records} />
+      <MarketingModal isOpen={marketingModalOpen} onClose={() => setMarketingModalOpen(false)} content={marketingContent} productName={marketingProduct} />
+      <DataBackupModal isOpen={isBackupOpen} onClose={() => setIsBackupOpen(false)} records={records} onImportData={handleImportData} />
     </div>
   );
 }

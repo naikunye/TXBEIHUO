@@ -16,8 +16,10 @@ import {
   LineChart,
   PieChart as PieChartIcon,
   ChevronDown,
-  Store as StoreIcon
+  Store as StoreIcon,
+  HelpCircle
 } from 'lucide-react';
+import { EXCHANGE_RATE } from '../constants';
 
 interface HomeOverviewProps {
   records: ReplenishmentRecord[];
@@ -31,9 +33,10 @@ export const HomeOverview: React.FC<HomeOverviewProps> = ({ records, stores, onN
 
   // Aggregation Logic
   const data = useMemo(() => {
-    let totalInvestCNY = 0;
+    let totalInvestCNY = 0; // Pure Inventory + First Leg (Cash Outflow)
     let totalRevenueUSD = 0;
     let totalProfitUSD = 0;
+    let totalCostUSD = 0; // Comprehensive Cost (Inv + Ship + Fee + Ad)
     let totalWeight = 0;
     let airCostCNY = 0;
     let seaCostCNY = 0;
@@ -44,9 +47,18 @@ export const HomeOverview: React.FC<HomeOverviewProps> = ({ records, stores, onN
 
     records.forEach(r => {
       const m = calculateMetrics(r);
+      
+      // Cash Flow Investment (RMB)
       totalInvestCNY += (r.quantity * r.unitPriceCNY) + m.firstLegCostCNY;
+      
+      // Financial Totals (USD)
       totalRevenueUSD += (r.salesPriceUSD * r.quantity);
-      totalProfitUSD += (m.estimatedProfitUSD * r.quantity);
+      const itemTotalProfit = m.estimatedProfitUSD * r.quantity;
+      const itemTotalCost = m.totalCostPerUnitUSD * r.quantity;
+      
+      totalProfitUSD += itemTotalProfit;
+      totalCostUSD += itemTotalCost;
+
       totalWeight += m.totalWeightKg;
 
       if (r.shippingMethod === 'Air') airCostCNY += m.firstLegCostCNY;
@@ -57,21 +69,21 @@ export const HomeOverview: React.FC<HomeOverviewProps> = ({ records, stores, onN
       topProducts.push({
         name: r.productName,
         sku: r.sku,
-        profit: m.estimatedProfitUSD * r.quantity,
+        profit: itemTotalProfit,
         roi: m.roi
       });
 
       // Aggregate for Store Profit Chart (if storeId exists)
       const sId = r.storeId || 'unknown';
-      storeProfitMap[sId] = (storeProfitMap[sId] || 0) + (m.estimatedProfitUSD * r.quantity);
+      storeProfitMap[sId] = (storeProfitMap[sId] || 0) + itemTotalProfit;
     });
 
     // Sort Top Products
     topProducts.sort((a, b) => b.profit - a.profit);
 
-    // ROI
-    const totalInvestUSD = totalInvestCNY / 7.3; // Approx exchange for aggregate
-    const overallROI = totalInvestUSD > 0 ? (totalProfitUSD / totalInvestUSD) * 100 : 0;
+    // Comprehensive ROI (Profit / Total Cost)
+    // Note: totalCostUSD includes Product, Shipping, Ads, Fees, Last Mile.
+    const overallROI = totalCostUSD > 0 ? (totalProfitUSD / totalCostUSD) * 100 : 0;
     
     // Store Ranking Data
     const storeRanking = Object.entries(storeProfitMap)
@@ -88,6 +100,7 @@ export const HomeOverview: React.FC<HomeOverviewProps> = ({ records, stores, onN
     return {
       totalInvestCNY,
       totalProfitUSD,
+      totalCostUSD, // Export total cost for ROI breakdown
       totalWeight,
       overallROI,
       airCostCNY,
@@ -324,19 +337,37 @@ export const HomeOverview: React.FC<HomeOverviewProps> = ({ records, stores, onN
           </div>
         </div>
 
-        {/* ROI */}
-        <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 relative hover:border-purple-200 transition-colors">
+        {/* ROI Breakdown Card */}
+        <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 relative hover:border-purple-200 transition-colors flex flex-col justify-between">
            <div className="flex justify-between items-start">
             <div>
-              <p className="text-gray-500 text-sm font-medium mb-1">综合 ROI</p>
+              <div className="flex items-center gap-1 mb-1">
+                  <p className="text-gray-500 text-sm font-medium">综合 ROI</p>
+                  <div className="group relative">
+                      <HelpCircle size={12} className="text-gray-300 cursor-pointer" />
+                      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-32 bg-slate-800 text-white text-[10px] p-2 rounded opacity-0 group-hover:opacity-100 transition pointer-events-none z-10">
+                          公式: 总利润 / 总成本 (包含物流/佣金/广告)
+                      </div>
+                  </div>
+              </div>
               <h3 className="text-3xl font-bold text-purple-600">{data.overallROI.toFixed(1)}%</h3>
             </div>
             <div className="p-3 bg-purple-50 rounded-xl text-purple-600">
                <Layers size={24} />
             </div>
           </div>
-          <div className="mt-4 w-full bg-gray-100 rounded-full h-1.5">
-            <div className="bg-purple-500 h-1.5 rounded-full" style={{ width: `${Math.min(data.overallROI, 100)}%` }}></div>
+          
+          {/* New Structure Breakdown */}
+          <div className="mt-3 bg-purple-50 rounded-lg p-2 flex items-center justify-between text-xs">
+              <div className="flex flex-col">
+                  <span className="text-[10px] text-purple-400 font-bold uppercase">总净利 (Profit)</span>
+                  <span className="font-bold text-purple-700">${data.totalProfitUSD.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+              </div>
+              <div className="text-purple-300 font-light text-lg">/</div>
+              <div className="flex flex-col text-right">
+                  <span className="text-[10px] text-purple-400 font-bold uppercase">总成本 (Total Cost)</span>
+                  <span className="font-bold text-purple-700">${data.totalCostUSD.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+              </div>
           </div>
         </div>
 
