@@ -69,14 +69,28 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
   };
 
   const handleSyncConfirm = () => {
+      // Create a brand new array to ensure React detects the state change
       const updatedRecords = records.map(r => {
           if (selectedDiffIds.has(r.id)) {
               const diffItem = diffs.find(d => d.recordId === r.id);
               if (diffItem) {
                   if (syncType === 'inventory') {
-                      return { ...r, quantity: diffItem.erpVal };
+                      const newQty = Number(diffItem.erpVal); // Force Number
+                      
+                      // Also recalculate totalCartons to keep consistency
+                      const safeItemsPerBox = r.itemsPerBox > 0 ? r.itemsPerBox : 1;
+                      const newTotalCartons = Math.ceil(newQty / safeItemsPerBox);
+
+                      return { 
+                          ...r, 
+                          quantity: newQty,
+                          totalCartons: newTotalCartons
+                      };
                   } else {
-                      return { ...r, dailySales: diffItem.erpVal };
+                      return { 
+                          ...r, 
+                          dailySales: Number(diffItem.erpVal) // Force Number
+                      };
                   }
               }
           }
@@ -84,7 +98,7 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
       });
       
       onUpdateRecords(updatedRecords);
-      alert(`成功同步 ${selectedDiffIds.size} 条${syncType === 'inventory' ? '库存' : '销量'}数据！`);
+      // alert(`成功同步 ${selectedDiffIds.size} 条${syncType === 'inventory' ? '库存' : '销量'}数据！`);
       onClose();
       setStep('config');
   };

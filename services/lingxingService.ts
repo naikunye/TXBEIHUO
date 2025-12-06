@@ -52,14 +52,17 @@ export const fetchLingxingInventory = async (
   
   return localRecords.map(record => {
       // Simulate inventory drift
-      // 80% chance of being accurate, 20% chance of drift
-      const hasDrift = Math.random() > 0.8;
+      // Increase drift probability to 70% (0.3 threshold) for better demo experience
+      const hasDrift = Math.random() > 0.3; 
       const randomDiff = hasDrift ? Math.floor(Math.random() * 20) - 5 : 0;
       
+      // Ensure we don't accidentally return the EXACT same value if randomDiff ends up 0
+      const finalStock = Math.max(0, record.quantity + (randomDiff === 0 && hasDrift ? 5 : randomDiff));
+
       return {
           sku: record.sku,
           productName: record.productName,
-          fbaStock: Math.max(0, record.quantity + randomDiff),
+          fbaStock: finalStock,
           localStock: 0,
           onWayStock: Math.floor(Math.random() * 50)
       };

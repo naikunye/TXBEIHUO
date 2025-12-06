@@ -566,7 +566,9 @@ function App() {
 
   // --- ERP Sync Handler ---
   const handleErpUpdate = async (updatedRecords: ReplenishmentRecord[]) => {
-      setRecords(updatedRecords);
+      // Force new array reference to ensure React triggers re-render
+      setRecords([...updatedRecords]);
+      addToast("领星 OMS 数据同步成功！", 'success');
       
       // Batch save to cloud
       if (workspaceId && isSupabaseConfigured()) {
