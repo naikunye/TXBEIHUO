@@ -1,8 +1,9 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { ReplenishmentRecord, Store } from '../types';
-import { X, Upload, Image as ImageIcon, Plane, Ship, RefreshCcw, Package, Box, Percent, Zap, BarChart, Tag, Calculator, DollarSign, RotateCcw, Scale, Store as StoreIcon, Clock, ShieldCheck } from 'lucide-react';
+import { X, Upload, Image as ImageIcon, Plane, Ship, RefreshCcw, Package, Box, Percent, Zap, BarChart, Tag, Calculator, DollarSign, RotateCcw, Scale, Store as StoreIcon, Clock, ShieldCheck, Factory, Swords, Truck } from 'lucide-react';
 import { EXCHANGE_RATE } from '../constants';
+import { analyzeCompetitor } from '../services/geminiService';
 
 interface RecordModalProps {
   isOpen: boolean;
@@ -28,6 +29,12 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
     // Supply Chain Defaults
     leadTimeDays: 30, // Default 30 days
     safetyStockDays: 15, // Default 15 days
+    supplierName: '',
+    supplierContact: '',
+    
+    // Competitor
+    competitorUrl: '',
+    competitorPriceUSD: 0,
 
     // Packing Defaults
     boxLengthCm: 0,
@@ -39,6 +46,9 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
     shippingMethod: 'Air' as const,
     shippingUnitPriceCNY: 0,
     manualTotalWeightKg: 0, // New Field
+    trackingNumber: '',
+    carrier: '',
+    
     materialCostCNY: 0,
     customsFeeCNY: 0, 
     portFeeCNY: 0,    
@@ -61,6 +71,8 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
   const [shippingCurrency, setShippingCurrency] = useState<'CNY' | 'USD'>('CNY');
   const [skuInput, setSkuInput] = useState(''); // State for pending SKU input
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [competitorAnalysis, setCompetitorAnalysis] = useState<string | null>(null);
+  const [isAnalyzingCompetitor, setIsAnalyzingCompetitor] = useState(false);
 
   // Effect to populate form when modal opens or initialData changes
   useEffect(() => {
@@ -81,6 +93,7 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
       setSkuInput(''); // Reset SKU input
       // Reset currency toggle to CNY on open
       setShippingCurrency('CNY');
+      setCompetitorAnalysis(null);
     }
   }, [isOpen, initialData, defaultStoreId, stores]);
 
@@ -88,11 +101,12 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
+    // Check if field is string or number type in defaultForm to decide parsing
+    const isStringField = ['date', 'productName', 'sku', 'shippingMethod', 'warehouse', 'imageUrl', 'lifecycle', 'storeId', 'supplierName', 'supplierContact', 'competitorUrl', 'trackingNumber', 'carrier'].includes(name);
+    
     setFormData(prev => ({
       ...prev,
-      [name]: name === 'date' || name === 'productName' || name === 'sku' || name === 'shippingMethod' || name === 'warehouse' || name === 'imageUrl' || name === 'lifecycle' || name === 'storeId'
-        ? value 
-        : parseFloat(value) || 0
+      [name]: isStringField ? value : (parseFloat(value) || 0)
     }));
   };
 
@@ -157,6 +171,19 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
     } else {
         setFormData(prev => ({ ...prev, shippingUnitPriceCNY: numVal * EXCHANGE_RATE }));
     }
+  };
+
+  const handleCompetitorAnalyze = async () => {
+      if(!formData.salesPriceUSD) {
+          alert("请先填写我方售价");
+          return;
+      }
+      setIsAnalyzingCompetitor(true);
+      // Construct a temporary record for analysis
+      const tempRecord = { ...formData, id: 'temp' } as ReplenishmentRecord;
+      const result = await analyzeCompetitor(tempRecord);
+      setCompetitorAnalysis(result);
+      setIsAnalyzingCompetitor(false);
   };
 
   // Calculate display value based on selected currency
@@ -360,14 +387,39 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
 
           {/* Section 2: Procurement & Packing (Combined for Flow) */}
           <div className="col-span-1 md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-8">
-             {/* 2a. Cost */}
+             {/* 2a. Cost & Supplier (CRM Update) */}
              <div className="space-y-4 p-5 bg-gray-50 rounded-xl border border-gray-100">
                 <div className="flex items-center gap-2 mb-2">
                   <span className="w-6 h-6 rounded-full bg-gray-200 text-gray-600 flex items-center justify-center font-bold text-xs">2</span>
-                  <h3 className="text-sm font-bold text-gray-700">采购与库存 (CNY)</h3>
+                  <h3 className="text-sm font-bold text-gray-700">采购与供应商 (CRM)</h3>
                 </div>
+                
                 <div className="grid grid-cols-2 gap-4">
-                    {/* SWAPPED FIELD: Total Cartons is now here */}
+                    <div>
+                        <label className={labelClass}>供应商名称</label>
+                        <div className="relative">
+                            <Factory className="absolute left-3 top-3 text-gray-400" size={16} />
+                            <input type="text" name="supplierName" value={formData.supplierName} onChange={handleChange} className={`${inputClass} pl-10`} placeholder="工厂名称" />
+                        </div>
+                    </div>
+                    <div>
+                        <label className={labelClass}>联系方式</label>
+                        <input type="text" name="supplierContact" value={formData.supplierContact} onChange={handleChange} className={inputClass} placeholder="微信/Email" />
+                    </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                    <div>
+                        <label className={labelClass}>采购单价 (¥/pcs)</label>
+                        <input required type="number" step="0.01" name="unitPriceCNY" value={formData.unitPriceCNY} onChange={handleChange} className={inputClass} />
+                    </div>
+                    <div>
+                        <label className={labelClass}>单个重量 (KG)</label>
+                        <input required type="number" step="0.001" name="unitWeightKg" value={formData.unitWeightKg} onChange={handleChange} className={inputClass} />
+                    </div>
+                </div>
+                
+                <div className="grid grid-cols-2 gap-4">
                     <div>
                         <label className={labelClass}>备货箱数 (Box)</label>
                         <input required type="number" name="totalCartons" value={formData.totalCartons} onChange={handleChange} className={inputClass} />
@@ -379,18 +431,8 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
                             <input required type="number" step="0.1" name="dailySales" value={formData.dailySales} onChange={handleChange} className={`${inputClass} pl-10`} />
                         </div>
                         <p className="text-[10px] text-gray-500 mt-1">
-                            可售天数 (DOS): <span className={formData.dailySales > 0 ? (formData.quantity/formData.dailySales < 30 ? 'text-red-500 font-bold' : 'text-green-600') : ''}>{dos} 天</span>
+                            可售天数: <span className={formData.dailySales > 0 ? (formData.quantity/formData.dailySales < 30 ? 'text-red-500 font-bold' : 'text-green-600') : ''}>{dos} 天</span>
                         </p>
-                    </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                    <div>
-                        <label className={labelClass}>采购单价 (¥/pcs)</label>
-                        <input required type="number" step="0.01" name="unitPriceCNY" value={formData.unitPriceCNY} onChange={handleChange} className={inputClass} />
-                    </div>
-                    <div>
-                        <label className={labelClass}>单个重量 (KG)</label>
-                        <input required type="number" step="0.001" name="unitWeightKg" value={formData.unitWeightKg} onChange={handleChange} className={inputClass} />
                     </div>
                 </div>
              </div>
@@ -448,7 +490,7 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
              </div>
           </div>
 
-          {/* Section 4: Logistics */}
+          {/* Section 4: Logistics & Tracking (Live Tracking Update) */}
           <div className="space-y-4 p-5 bg-gray-50 rounded-xl border border-gray-100">
              <div className="flex items-center gap-2 mb-2">
                <span className="w-6 h-6 rounded-full bg-gray-200 text-gray-600 flex items-center justify-center font-bold text-xs">4</span>
@@ -484,6 +526,20 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
                         <span className="font-medium">海运 (Sea)</span>
                     </button>
                 </div>
+             </div>
+
+             <div className="grid grid-cols-2 gap-4">
+                 <div>
+                    <label className={labelClass}>承运商 / 船司</label>
+                    <input type="text" name="carrier" value={formData.carrier} onChange={handleChange} className={inputClass} placeholder="Matson/UPS" />
+                 </div>
+                 <div>
+                    <label className={labelClass}>物流追踪号</label>
+                    <div className="relative">
+                        <Truck className="absolute left-3 top-3 text-gray-400" size={16} />
+                        <input type="text" name="trackingNumber" value={formData.trackingNumber} onChange={handleChange} className={`${inputClass} pl-10`} placeholder="Tracking No." />
+                    </div>
+                 </div>
              </div>
 
              <div className="grid grid-cols-2 gap-4">
@@ -617,15 +673,43 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
            <div className="space-y-4 p-5 bg-gradient-to-r from-blue-50 to-purple-50 rounded-xl border border-blue-100">
              <div className="flex items-center gap-2 mb-2">
                <span className="w-6 h-6 rounded-full bg-purple-200 text-purple-700 flex items-center justify-center font-bold text-xs">5</span>
-               <h3 className="text-sm font-bold text-gray-800">TikTok 销售与费用 (USD)</h3>
+               <h3 className="text-sm font-bold text-gray-800">TikTok 销售与竞品 (Market Intel)</h3>
              </div>
              
              <div className="grid grid-cols-2 gap-4">
                 <div className="col-span-2">
-                  <label className={labelClass}>销售价格 ($)</label>
+                  <label className={labelClass}>我方销售价格 ($)</label>
                   <input required type="number" step="0.01" name="salesPriceUSD" value={formData.salesPriceUSD} onChange={handleChange} className={`${inputClass} font-bold text-blue-600`} />
                 </div>
                 
+                {/* Competitor Analysis Section (New) */}
+                <div className="col-span-2 bg-white/60 p-3 rounded-lg border border-purple-100 shadow-sm">
+                    <div className="flex justify-between items-center mb-2">
+                        <div className="flex items-center gap-2">
+                            <Swords size={14} className="text-red-500" />
+                            <span className="text-xs font-bold text-gray-700">竞品监控</span>
+                        </div>
+                        <button 
+                            type="button" 
+                            onClick={handleCompetitorAnalyze}
+                            disabled={isAnalyzingCompetitor}
+                            className="text-[10px] bg-slate-800 text-white px-2 py-1 rounded hover:bg-slate-700 transition flex items-center gap-1"
+                        >
+                            {isAnalyzingCompetitor ? '分析中...' : 'AI 攻防分析'}
+                        </button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3 mb-2">
+                        <input type="text" name="competitorUrl" value={formData.competitorUrl} onChange={handleChange} className="text-xs p-2 border rounded" placeholder="竞品链接/ASIN" />
+                        <div className="relative">
+                            <span className="absolute left-2 top-2 text-gray-400 text-xs">$</span>
+                            <input type="number" name="competitorPriceUSD" value={formData.competitorPriceUSD} onChange={handleChange} className="text-xs p-2 pl-4 border rounded w-full" placeholder="竞品售价" />
+                        </div>
+                    </div>
+                    {competitorAnalysis && (
+                        <div className="mt-2 p-2 bg-slate-50 rounded text-xs border border-slate-200 prose max-w-none" dangerouslySetInnerHTML={{__html: competitorAnalysis}}></div>
+                    )}
+                </div>
+
                 {/* Visual Group for TikTok Fees */}
                 <div className="col-span-2 bg-purple-100/50 p-3 rounded-lg border border-purple-100">
                     <div className="flex items-center gap-2 mb-3">

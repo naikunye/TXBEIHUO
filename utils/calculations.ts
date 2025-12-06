@@ -1,12 +1,24 @@
 
-import { ReplenishmentRecord, CalculatedMetrics } from '../types';
-import { EXCHANGE_RATE } from '../constants';
+import { ReplenishmentRecord, CalculatedMetrics, AppSettings } from '../types';
 
-export const calculateMetrics = (record: ReplenishmentRecord): CalculatedMetrics => {
+// Helper to find tiered price
+const getTieredPrice = (weight: number, tiers: AppSettings['airTiers']) => {
+    // Sort tiers by weight desc to find the matching range
+    const sorted = [...tiers].sort((a, b) => a.minWeight - b.minWeight);
+    for (let i = sorted.length - 1; i >= 0; i--) {
+        if (weight >= sorted[i].minWeight) {
+            return sorted[i].price;
+        }
+    }
+    return 0; // Fallback
+};
+
+export const calculateMetrics = (record: ReplenishmentRecord, settings?: AppSettings): CalculatedMetrics => {
+  // Fallback to defaults if settings not provided (migration safety)
+  const exchangeRate = settings?.exchangeRate || 7.3;
+
   // 1. Weight Calculation
   const naturalWeight = record.quantity * record.unitWeightKg;
-  
-  // Use manual override if it exists and is greater than 0, otherwise use calculated weight
   const totalWeightKg = (record.manualTotalWeightKg && record.manualTotalWeightKg > 0) 
     ? record.manualTotalWeightKg 
     : naturalWeight;
@@ -21,12 +33,25 @@ export const calculateMetrics = (record: ReplenishmentRecord): CalculatedMetrics
   
   const singleBoxVolumeCbm = (record.boxLengthCm * record.boxWidthCm * record.boxHeightCm) / 1000000;
   const totalVolumeCbm = singleBoxVolumeCbm * totalCartons;
-  
   const singleBoxWeightKg = record.unitWeightKg * safeItemsPerBox;
 
   // 3. First Leg Shipping Cost (RMB)
-  // Now uses totalWeightKg which might be the manual billing weight
-  const shippingFeeCNY = totalWeightKg * record.shippingUnitPriceCNY; 
+  // Dynamic Pricing Logic:
+  // If user entered a specific price in record (manual override), use it.
+  // Otherwise, if settings exist, look up tiered price.
+  let shippingUnitPrice = record.shippingUnitPriceCNY;
+  
+  if (settings && (!shippingUnitPrice || shippingUnitPrice === 0)) {
+      if (record.shippingMethod === 'Air') {
+          shippingUnitPrice = getTieredPrice(totalWeightKg, settings.airTiers);
+      } else {
+          // For Sea, usually price per kg or cbm. Simplified here to kg for consistency with current model, 
+          // or we could check volume. For now assuming kg based tier for simplicity in this refactor.
+          shippingUnitPrice = getTieredPrice(totalWeightKg, settings.seaTiers);
+      }
+  }
+
+  const shippingFeeCNY = totalWeightKg * shippingUnitPrice; 
   
   const fixedLogisticsCostCNY = 
     (record.materialCostCNY || 0) + 
@@ -35,25 +60,21 @@ export const calculateMetrics = (record: ReplenishmentRecord): CalculatedMetrics
 
   const firstLegCostCNY = shippingFeeCNY + fixedLogisticsCostCNY;
 
-  // 4. Convert First Leg to USD
-  const firstLegCostUSD = firstLegCostCNY / EXCHANGE_RATE;
+  // 4. Convert First Leg to USD (Dynamic Rate)
+  const firstLegCostUSD = firstLegCostCNY / exchangeRate;
   
   // 5. Per Unit First Leg (USD)
   const singleHeadHaulCostUSD = record.quantity > 0 ? firstLegCostUSD / record.quantity : 0;
 
-  // 6. Product Cost in USD
-  const productCostUSD = record.unitPriceCNY / EXCHANGE_RATE;
+  // 6. Product Cost in USD (Dynamic Rate)
+  const productCostUSD = record.unitPriceCNY / exchangeRate;
 
   // 7. Calculate TikTok Specific Fees (USD)
   const platformFeeUSD = record.salesPriceUSD * (record.platformFeeRate / 100);
   const affiliateCommissionUSD = record.salesPriceUSD * (record.affiliateCommissionRate / 100);
-  const fixedFeeUSD = record.additionalFixedFeeUSD || 0; // New: Fixed Transaction Fee
+  const fixedFeeUSD = record.additionalFixedFeeUSD || 0; 
 
-  // 8. Return Loss Provision (New)
-  // Logic: We assume returns result in lost Shipping (Head Haul + Last Mile) + Ad Spend. 
-  // We assume Product Cost is recoverable (optimistic) or partially lost. 
-  // For simplicity and safety in US dropshipping/FBA models, we often calculate it as a % of the Landed Cost or Sales Price.
-  // Here, we calculate it as: (Product + Logistics + Ads) * ReturnRate. Meaning these costs are wasted on returned units.
+  // 8. Return Loss Provision
   const baseCostForReturn = productCostUSD + singleHeadHaulCostUSD + record.lastMileCostUSD + record.adCostUSD;
   const returnLossProvisionUSD = baseCostForReturn * ((record.returnRate || 0) / 100);
 
@@ -66,15 +87,15 @@ export const calculateMetrics = (record: ReplenishmentRecord): CalculatedMetrics
     platformFeeUSD +
     affiliateCommissionUSD +
     fixedFeeUSD +
-    returnLossProvisionUSD; // Add return provision to cost
+    returnLossProvisionUSD;
 
   // 10. Profit
   const estimatedProfitUSD = record.salesPriceUSD - totalCostPerUnitUSD;
 
-  // 11. Margin (Profit / Sales Price)
+  // 11. Margin
   const marginRate = record.salesPriceUSD > 0 ? (estimatedProfitUSD / record.salesPriceUSD) * 100 : 0;
 
-  // 12. ROI (Profit / Total Cost)
+  // 12. ROI
   const roi = totalCostPerUnitUSD > 0 ? (estimatedProfitUSD / totalCostPerUnitUSD) * 100 : 0;
 
   // 13. Inventory Health

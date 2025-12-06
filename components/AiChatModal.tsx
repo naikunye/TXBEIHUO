@@ -1,13 +1,14 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { X, Send, Bot, User, Sparkles, Loader2, Trash2 } from 'lucide-react';
+import { X, Send, Bot, User, Sparkles, Loader2, Trash2, ArrowRightCircle } from 'lucide-react';
 import { ReplenishmentRecord } from '../types';
-import { askAiAssistant } from '../services/geminiService';
+import { askAiAssistant, parseAgentAction } from '../services/geminiService';
 
 interface AiChatModalProps {
   isOpen: boolean;
   onClose: () => void;
   records: ReplenishmentRecord[];
+  onAction?: (actionType: string, data: any) => void; // New Callback
 }
 
 interface Message {
@@ -15,14 +16,15 @@ interface Message {
   role: 'user' | 'model';
   content: string;
   timestamp: Date;
+  action?: { type: string; data: any }; // New Action Payload
 }
 
-export const AiChatModal: React.FC<AiChatModalProps> = ({ isOpen, onClose, records }) => {
+export const AiChatModal: React.FC<AiChatModalProps> = ({ isOpen, onClose, records, onAction }) => {
   const [messages, setMessages] = useState<Message[]>([
     {
         id: 'welcome',
         role: 'model',
-        content: '你好！我是探行供应链 AI 助手。我可以帮您分析库存、查询利润或提供补货建议。请问有什么可以帮您？',
+        content: '你好！我是探行供应链 AI 助手。我可以帮您分析库存，或者直接帮您创建采购单（试着说：给 SKU-001 补货 500 个）。',
         timestamp: new Date()
     }
   ]);
@@ -38,8 +40,10 @@ export const AiChatModal: React.FC<AiChatModalProps> = ({ isOpen, onClose, recor
   }, [isOpen]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+    if (isOpen) {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages, isOpen]);
 
   const handleSend = async (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -57,18 +61,33 @@ export const AiChatModal: React.FC<AiChatModalProps> = ({ isOpen, onClose, recor
     setIsLoading(true);
 
     try {
-        // Convert internal message format to simple history for API
-        const history = messages.map(m => ({ role: m.role, content: m.content }));
+        // 1. Check for Action Intent first (The Agent Layer)
+        const agentResult = await parseAgentAction(userMsg.content, records);
         
-        const responseText = await askAiAssistant(userMsg.content, records, history);
-        
-        const botMsg: Message = {
-            id: (Date.now() + 1).toString(),
-            role: 'model',
-            content: responseText,
-            timestamp: new Date()
-        };
-        setMessages(prev => [...prev, botMsg]);
+        if (agentResult.type !== 'none' && agentResult.type) {
+             const botMsg: Message = {
+                id: (Date.now() + 1).toString(),
+                role: 'model',
+                content: `已识别您的意图: ${agentResult.reason || '执行操作'}。`,
+                timestamp: new Date(),
+                action: { type: agentResult.type, data: agentResult.data }
+            };
+            setMessages(prev => [...prev, botMsg]);
+        } else {
+            // 2. Fallback to Conversational Chat
+            // Filter history to simple format for API
+            const history = messages.map(m => ({ role: m.role, content: m.content }));
+            const responseText = await askAiAssistant(userMsg.content, records, history);
+            
+            const botMsg: Message = {
+                id: (Date.now() + 1).toString(),
+                role: 'model',
+                content: responseText,
+                timestamp: new Date()
+            };
+            setMessages(prev => [...prev, botMsg]);
+        }
+
     } catch (error) {
         const errorMsg: Message = {
             id: (Date.now() + 1).toString(),
@@ -91,6 +110,7 @@ export const AiChatModal: React.FC<AiChatModalProps> = ({ isOpen, onClose, recor
       }]);
   };
 
+  // Important: Return null if not open, BUT after hooks to allow state preservation
   if (!isOpen) return null;
 
   return (
@@ -112,8 +132,8 @@ export const AiChatModal: React.FC<AiChatModalProps> = ({ isOpen, onClose, recor
                     </span>
                  </div>
                  <div>
-                    <h3 className="font-bold text-sm">探行 AI Copilot</h3>
-                    <p className="text-[10px] text-slate-400">基于实时库存数据</p>
+                    <h3 className="font-bold text-sm">探行 AI Agent</h3>
+                    <p className="text-[10px] text-slate-400">可执行指令的智能助手</p>
                  </div>
              </div>
              <div className="flex items-center gap-1">
@@ -137,12 +157,26 @@ export const AiChatModal: React.FC<AiChatModalProps> = ({ isOpen, onClose, recor
                           </div>
                           
                           {/* Bubble */}
-                          <div className={`p-3 rounded-2xl text-sm leading-relaxed shadow-sm ${
-                              msg.role === 'user' 
-                                ? 'bg-blue-600 text-white rounded-tr-none' 
-                                : 'bg-white text-gray-800 border border-gray-100 rounded-tl-none'
-                          }`}>
-                              {msg.content}
+                          <div className="flex flex-col gap-2">
+                              <div className={`p-3 rounded-2xl text-sm leading-relaxed shadow-sm ${
+                                  msg.role === 'user' 
+                                    ? 'bg-blue-600 text-white rounded-tr-none' 
+                                    : 'bg-white text-gray-800 border border-gray-100 rounded-tl-none'
+                              }`}>
+                                  {msg.content}
+                              </div>
+                              
+                              {/* Action Button (Agent) */}
+                              {msg.action && onAction && (
+                                  <button 
+                                    onClick={() => onAction(msg.action!.type, msg.action!.data)}
+                                    className="bg-purple-50 border border-purple-200 text-purple-700 p-2 rounded-xl text-xs font-bold flex items-center gap-2 hover:bg-purple-100 transition-colors shadow-sm w-fit"
+                                  >
+                                      <Sparkles size={12} />
+                                      {msg.action.type === 'create_po' ? '点击生成采购单' : '点击执行操作'}
+                                      <ArrowRightCircle size={14} />
+                                  </button>
+                              )}
                           </div>
                       </div>
                   </div>
@@ -155,7 +189,7 @@ export const AiChatModal: React.FC<AiChatModalProps> = ({ isOpen, onClose, recor
                           </div>
                           <div className="bg-white p-3 rounded-2xl rounded-tl-none border border-gray-100 shadow-sm flex items-center gap-2">
                               <Loader2 size={14} className="animate-spin text-purple-500" />
-                              <span className="text-xs text-gray-400">思考中...</span>
+                              <span className="text-xs text-gray-400">Thinking...</span>
                           </div>
                       </div>
                   </div>
@@ -171,7 +205,7 @@ export const AiChatModal: React.FC<AiChatModalProps> = ({ isOpen, onClose, recor
                     type="text"
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
-                    placeholder="问点什么... 例如: 哪个产品利润最高?"
+                    placeholder="输入指令... 例如: 帮 MAD ACID 补货 200 个"
                     className="w-full pl-4 pr-12 py-3 bg-white border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-100 focus:border-purple-300 text-sm text-black placeholder-gray-500 transition-all"
                   />
                   <button 

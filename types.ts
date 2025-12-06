@@ -6,92 +6,141 @@ export type LifecycleStatus = 'New' | 'Growth' | 'Stable' | 'Clearance';
 export interface Store {
   id: string;
   name: string;
-  color: string; // e.g., 'bg-blue-500' or hex
+  color: string; 
   platform: 'TikTok' | 'Amazon' | 'Temu' | 'Other';
+}
+
+// --- NEW: Global Settings ---
+export interface LogisticsTier {
+  minWeight: number; // e.g. 0
+  maxWeight: number; // e.g. 21
+  price: number;     // e.g. 65
+}
+
+export interface AppSettings {
+  exchangeRate: number; // USD to CNY
+  airTiers: LogisticsTier[];
+  seaTiers: LogisticsTier[];
+}
+
+// --- NEW: Purchase Order Flow ---
+export type POStatus = 'Draft' | 'Ordered' | 'Production' | 'Shipped' | 'Arrived' | 'Cancelled';
+
+export interface PurchaseOrder {
+  id: string;
+  poNumber: string;
+  date: string;
+  sku: string;
+  productName: string;
+  supplierName?: string;
+  quantity: number;
+  unitPriceCNY: number;
+  totalAmountCNY: number;
+  status: POStatus;
+  expectedDeliveryDate?: string;
+  trackingNumber?: string;
+  carrier?: string;
+  shippingMethod?: ShippingMethod;
+  notes?: string;
 }
 
 // Core data model matching your business logic
 export interface ReplenishmentRecord {
   id: string;
-  storeId?: string; // New: Link to a store
+  storeId?: string; 
   date: string;
   productName: string;
   sku: string;
   imageUrl?: string;
   
-  // Lifecycle Management (New)
+  // Lifecycle Management
   lifecycle: LifecycleStatus;
   
   // Base Product Data
   quantity: number;
-  dailySales: number; // 预估日均销量 (用于计算库存周转)
-  unitPriceCNY: number; // 采购单价 (RMB)
-  unitWeightKg: number; // 单个重量
+  dailySales: number; 
+  unitPriceCNY: number; 
+  unitWeightKg: number; 
   
-  // Supply Chain Params (New for Smart Restock)
-  leadTimeDays?: number; // 生产+头程总时长 (days)
-  safetyStockDays?: number; // 安全库存天数 (days)
+  // Supply Chain Params
+  leadTimeDays?: number; 
+  safetyStockDays?: number; 
   
-  // Packing Info (New)
+  // Supplier CRM
+  supplierName?: string;
+  supplierContact?: string; 
+  moq?: number; 
+  
+  // Competitor Intel
+  competitorUrl?: string;
+  competitorPriceUSD?: number;
+  
+  // Packing Info
   boxLengthCm: number;
   boxWidthCm: number;
   boxHeightCm: number;
-  itemsPerBox: number; // 每箱装多少个 (Reference only)
-  totalCartons: number; // 总箱数 (Manual override)
+  itemsPerBox: number; 
+  totalCartons: number; 
 
-  // Logistics Data (First Leg / Head Haul)
+  // Logistics Data
   shippingMethod: ShippingMethod;
-  shippingUnitPriceCNY: number; // 海运/空运单价 (RMB/kg)
-  manualTotalWeightKg?: number; // 新增：手动填写的计费总重 (Billing Weight Override)
+  shippingUnitPriceCNY: number; // This can now be overridden or calculated dynamically
+  manualTotalWeightKg?: number; 
   
-  // Fixed Logistics Costs (Batch Level)
-  materialCostCNY: number; // 耗材费
-  customsFeeCNY: number;   // 报关费
-  portFeeCNY: number;      // 港口操作费/港杂费
+  // Live Tracking
+  trackingNumber?: string;
+  carrier?: string; 
+  etd?: string; 
+  eta?: string; 
+  
+  // Fixed Logistics Costs
+  materialCostCNY: number; 
+  customsFeeCNY: number;   
+  portFeeCNY: number;      
   
   // Last Mile & Sales (USD)
-  salesPriceUSD: number; // 销售价格 ($)
-  lastMileCostUSD: number; // 尾程配送费 ($)
-  adCostUSD: number; // 广告费 ($)
+  salesPriceUSD: number; 
+  lastMileCostUSD: number; 
+  adCostUSD: number; 
   
-  // TikTok Specific Fees (New)
-  platformFeeRate: number; // TikTok Shop 平台佣金率 (e.g., 2.0 for 2%)
-  affiliateCommissionRate: number; // 达人带货佣金率 (e.g., 15.0 for 15%)
-  additionalFixedFeeUSD: number; // 每单固定交易费 (e.g. $0.30)
-  returnRate: number; // 预估退货率 (%)
+  // TikTok Specific Fees
+  platformFeeRate: number; 
+  affiliateCommissionRate: number; 
+  additionalFixedFeeUSD: number; 
+  returnRate: number; 
 
   // Warehouse Info
   warehouse: string;
   status: 'Planning' | 'Shipped' | 'Arrived';
 
-  // Trash Bin Logic (New)
+  // Trash Bin Logic
   isDeleted?: boolean;
-  deletedAt?: string; // ISO Date string
+  deletedAt?: string; 
 }
 
-// Calculated Metrics (Computed on the fly)
+// Calculated Metrics
 export interface CalculatedMetrics {
   totalWeightKg: number;
-  totalVolumeCbm: number; // Total Cubic Meters
-  totalCartons: number;   // Total boxes
+  totalVolumeCbm: number; 
+  totalCartons: number;   
   singleBoxWeightKg: number;
 
-  firstLegCostCNY: number; // Total Shipping Cost RMB
-  firstLegCostUSD: number; // Converted to USD
-  singleHeadHaulCostUSD: number; // Cost to ship ONE unit in USD
-  productCostUSD: number; // Product sourcing cost in USD
+  firstLegCostCNY: number; 
+  firstLegCostUSD: number; 
+  singleHeadHaulCostUSD: number; 
+  productCostUSD: number; 
   
   // Fee Amounts (USD)
   platformFeeUSD: number;
   affiliateCommissionUSD: number;
-  returnLossProvisionUSD: number; // Cost provision for returns
+  returnLossProvisionUSD: number; 
 
-  totalCostPerUnitUSD: number; // Landed Cost (Product + Ship + Last Mile + Ad + Fees)
-  estimatedProfitUSD: number; // Sales - Total Cost
-  marginRate: number; // Profit / Sales (Gross Margin)
-  roi: number; // Profit / Total Cost (Return on Investment)
+  totalCostPerUnitUSD: number; 
+  estimatedProfitUSD: number; 
+  marginRate: number; 
+  roi: number; 
   
   // Inventory Health Metrics
-  daysOfSupply: number; // Quantity / Daily Sales
+  daysOfSupply: number; 
   stockStatus: 'Critical' | 'Low' | 'Healthy' | 'Overstock' | 'Unknown';
 }

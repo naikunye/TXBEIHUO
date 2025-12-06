@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { ReplenishmentRecord } from '../types';
-import { X, Check, Database, Link as LinkIcon, Lock, ClipboardPaste, FileText, Save, ArrowRight, PlusCircle, AlertTriangle, TrendingUp, Package, RefreshCw, Key, Globe, Eye, EyeOff, Layers, Zap, HelpCircle, ServerOff, Wifi, Code, Terminal, Download, Folder, FileCode, AlertCircle, Search, ExternalLink } from 'lucide-react';
+import { X, Check, Database, Link as LinkIcon, ClipboardPaste, FileText, Save, ArrowRight, PlusCircle, AlertTriangle, TrendingUp, Package, RefreshCw, Layers, Zap, HelpCircle, ServerOff, Search, ExternalLink } from 'lucide-react';
 import { fetchLingxingInventory, fetchLingxingSales } from '../services/lingxingService';
 import { fetchMiaoshouInventory, fetchMiaoshouSales } from '../services/miaoshouService';
 
@@ -16,93 +16,12 @@ type SyncType = 'inventory' | 'sales';
 type ErpPlatform = 'lingxing' | 'miaoshou';
 type SyncItem = { sku: string; oldVal: number; newVal: number; name: string; status: 'match' | 'new' | 'error' };
 
-// --- 1. CONFIG: package.json ---
-const CODE_PACKAGE = `{
-  "name": "tanxing-proxy",
-  "version": "2.0.0",
-  "engines": { "node": "18.x" },
-  "dependencies": {}
-}`;
-
-// --- 2. CONFIG: vercel.json (Catch-All Strategy) ---
-// This forces ANY request to go to /api/proxy, solving the 404 issue effectively.
-const CODE_VERCEL = `{
-  "version": 2,
-  "rewrites": [
-    { "source": "/(.*)", "destination": "/api/proxy" }
-  ]
-}`;
-
-// --- 3. CODE: proxy.js (Universal Parameter Mode v2.0) ---
-const CODE_PROXY = `export default async function handler(req, res) {
-  // 1. CORS Headers (Allow access from anywhere)
-  res.setHeader('Access-Control-Allow-Credentials', true);
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,POST');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
-
-  // Handle Preflight
-  if (req.method === 'OPTIONS') return res.status(200).end();
-
-  // 2. Health Check (Browser Direct Visit)
-  if (!req.body || req.method === 'GET') {
-      return res.status(200).json({ 
-          status: "ok", 
-          version: "v2.0 (Universal)", 
-          message: "Tanxing Proxy is Running Successfully!",
-          note: "If you see this, the deployment is correct.",
-          time: new Date().toISOString(),
-          url: req.url 
-      });
-  }
-
-  try {
-    const { appId, accessToken, appKey, appSecret, skus } = req.body;
-    // Determine intent via Query Param OR Path
-    const urlStr = req.url || '';
-    const queryEndpoint = req.query?.endpoint || '';
-    
-    // --- Mock Inventory ---
-    if (urlStr.includes('inventory') || queryEndpoint === 'inventory') {
-      const mockData = (skus || []).map(sku => ({
-        sku: sku,
-        product_sku: sku,
-        productName: \`[Proxy] \${sku}\`,
-        cn_name: \`[Proxy] \${sku}\`,
-        fbaStock: Math.floor(Math.random() * 200) + 20,
-        stock_quantity: Math.floor(Math.random() * 200) + 20,
-        localStock: 0
-      }));
-      // Add a test discovery item
-      mockData.push({
-          sku: "PROXY-TEST-001", product_sku: "PROXY-TEST-001",
-          productName: "代理连接测试商品", cn_name: "代理连接测试商品",
-          fbaStock: 888, stock_quantity: 888, localStock: 0
-      });
-      return res.status(200).json(mockData);
-    }
-
-    // --- Mock Sales ---
-    if (urlStr.includes('sales') || queryEndpoint === 'sales') {
-      const mockData = (skus || []).map(sku => ({
-        sku: sku, product_sku: sku,
-        avgDailySales: (Math.random() * 10).toFixed(1),
-        avg_sales_30d: (Math.random() * 10).toFixed(1)
-      }));
-      return res.status(200).json(mockData);
-    }
-
-    // Default Fallback
-    res.status(400).json({ error: "Unknown endpoint. Use ?endpoint=inventory or ?endpoint=sales" });
-
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-}`;
-
 export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, records, onUpdateRecords, currentStoreId }) => {
   const [platform, setPlatform] = useState<ErpPlatform>('lingxing');
+  
+  // DEFAULT TO 'import' TO AVOID VERCEL ISSUES
   const [activeTab, setActiveTab] = useState<'import' | 'api'>('import');
+  
   const [syncType, setSyncType] = useState<SyncType>('inventory');
   
   // Import State
@@ -112,20 +31,9 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
   const [field1, setField1] = useState('');
   const [field2, setField2] = useState(''); 
   const [proxyUrl, setProxyUrl] = useState(''); 
-  const [isTestingProxy, setIsTestingProxy] = useState(false);
-  const [proxyStatus, setProxyStatus] = useState<'idle' | 'success' | 'error'>('idle');
-  const [proxyStatusMsg, setProxyStatusMsg] = useState('');
-  
-  // Auto Sync Settings
-  const [autoSync, setAutoSync] = useState(false);
-  const [syncInterval, setSyncInterval] = useState(60);
-
-  const [showSecret, setShowSecret] = useState(false);
-  const [showGuide, setShowGuide] = useState(false);
-  const [showProxySetup, setShowProxySetup] = useState(false);
-  const [apiResults, setApiResults] = useState<SyncItem[]>([]);
   const [isApiLoading, setIsApiLoading] = useState(false);
-  const [connectionMode, setConnectionMode] = useState<'real' | 'simulated' | null>(null);
+  const [apiResults, setApiResults] = useState<SyncItem[]>([]);
+  const [showGuide, setShowGuide] = useState(false);
 
   // Load Config
   useEffect(() => {
@@ -134,11 +42,6 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
           setPasteData('');
           setApiResults([]);
           setIsApiLoading(false);
-          setShowGuide(false);
-          setShowProxySetup(false);
-          setConnectionMode(null);
-          setProxyStatus('idle');
-          setProxyStatusMsg('');
       }
   }, [isOpen, platform]);
 
@@ -147,11 +50,6 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
       setField1(localStorage.getItem(`${prefix}_app_id`) || '');
       setField2(localStorage.getItem(`${prefix}_token`) || '');
       setProxyUrl(localStorage.getItem(`${prefix}_proxy_url`) || '');
-      
-      const savedAutoSync = localStorage.getItem('erp_auto_sync') === 'true';
-      const savedInterval = parseInt(localStorage.getItem('erp_sync_interval') || '60');
-      setAutoSync(savedAutoSync);
-      setSyncInterval(savedInterval);
   };
 
   const saveConfig = () => {
@@ -159,80 +57,6 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
       localStorage.setItem(`${prefix}_app_id`, field1);
       localStorage.setItem(`${prefix}_token`, field2);
       localStorage.setItem(`${prefix}_proxy_url`, proxyUrl);
-      
-      localStorage.setItem('erp_active_platform', platform);
-      localStorage.setItem('erp_auto_sync', autoSync.toString());
-      localStorage.setItem('erp_sync_interval', syncInterval.toString());
-  };
-
-  const downloadFile = (filename: string, content: string) => {
-      const blob = new Blob([content], { type: 'text/plain' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-  };
-
-  // --- Robust Connection Tester ---
-  const handleTestConnection = async () => {
-      if (!proxyUrl) return;
-      setIsTestingProxy(true);
-      setProxyStatus('idle');
-      setProxyStatusMsg('');
-
-      // Remove trailing slash
-      let cleanUrl = proxyUrl.trim().replace(/\/$/, "");
-      
-      // We will try multiple paths to find where the user put the file
-      // 1. Root (if vercel.json rewrite is working)
-      // 2. /api/proxy (Standard Vercel)
-      // 3. /proxy (Alternative)
-      
-      const probePaths = [
-          cleanUrl,              // Try 1: Rewrite active
-          `${cleanUrl}/api/proxy`, // Try 2: Direct path
-          `${cleanUrl}/proxy`      // Try 3: Flat structure
-      ];
-
-      console.log("Starting Probe...");
-
-      for (const url of probePaths) {
-          try {
-              console.log(`Probing: ${url}`);
-              const controller = new AbortController();
-              const timeoutId = setTimeout(() => controller.abort(), 5000); // 5s timeout
-
-              const res = await fetch(url, { signal: controller.signal });
-              clearTimeout(timeoutId);
-
-              const contentType = res.headers.get("content-type");
-              
-              if (res.ok && contentType && contentType.includes("application/json")) {
-                  const json = await res.json();
-                  if (json.status === 'ok') {
-                      setProxyStatus('success');
-                      setProxyStatusMsg(`连接成功! 路径: ${url}`);
-                      setProxyUrl(url); // Auto-correct URL
-                      setIsTestingProxy(false);
-                      return;
-                  }
-              }
-          } catch (e) {
-              console.log(`Probe failed for ${url}`, e);
-          }
-      }
-
-      setProxyStatus('error');
-      setProxyStatusMsg('连接失败 (404/500)。请检查是否已按指南上传 api/proxy.js。');
-      setIsTestingProxy(false);
-  };
-
-  const openProxyInBrowser = () => {
-      if (!proxyUrl) return;
-      window.open(proxyUrl, '_blank');
   };
 
   // --- Logic 1: Parse Paste Data ---
@@ -297,94 +121,58 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
       return results;
   }, [pasteData, records, syncType]);
 
-  // --- Logic 2: API Fetch ---
+  // --- Logic 2: API Fetch (Graceful Fallback) ---
   const handleApiSync = async (forceSimulation = false) => {
     saveConfig(); 
     setIsApiLoading(true);
     setApiResults([]);
-    setConnectionMode(null);
     
-    const isRealMode = !forceSimulation && !!(proxyUrl && proxyUrl.startsWith('http'));
-    setConnectionMode(isRealMode ? 'real' : 'simulated');
+    // Always prefer simulation if forceSimulation is true, otherwise check proxy URL
+    const effectiveProxyUrl = forceSimulation ? undefined : proxyUrl;
 
     try {
-        if (isRealMode && (!field1 || !field2)) {
-            alert("真实连接模式下，App ID 和 Token 不能为空。");
-            setIsApiLoading(false);
-            return;
-        }
-
         let fetchedItems: SyncItem[] = [];
-        const effectiveProxyUrl = forceSimulation ? undefined : proxyUrl;
 
-        if (platform === 'lingxing') {
-            if (syncType === 'inventory') {
-                const data = await fetchLingxingInventory(field1, field2, records, effectiveProxyUrl);
-                fetchedItems = data.map(item => {
-                    const match = records.find(r => (r.sku || '').trim().toLowerCase() === (item.sku || '').trim().toLowerCase());
-                    return {
-                        sku: match ? match.sku : item.sku, 
-                        name: item.productName || match?.productName || item.sku,
-                        oldVal: match ? match.quantity : 0,
-                        newVal: item.fbaStock,
-                        status: match ? 'match' : 'new'
-                    };
-                });
+        // Generic Fetch Wrapper
+        const fetcher = async () => {
+            if (platform === 'lingxing') {
+                if (syncType === 'inventory') return await fetchLingxingInventory(field1, field2, records, effectiveProxyUrl);
+                else return await fetchLingxingSales(field1, field2, records, 30, effectiveProxyUrl);
             } else {
-                const data = await fetchLingxingSales(field1, field2, records, 30, effectiveProxyUrl);
-                fetchedItems = data.map(item => {
-                    const match = records.find(r => (r.sku || '').trim().toLowerCase() === (item.sku || '').trim().toLowerCase());
-                    return {
-                        sku: match ? match.sku : item.sku, 
-                        name: match?.productName || item.sku,
-                        oldVal: match ? match.dailySales : 0,
-                        newVal: item.avgDailySales,
-                        status: match ? 'match' : 'new'
-                    };
-                });
+                if (syncType === 'inventory') return await fetchMiaoshouInventory(field1, field2, records, effectiveProxyUrl);
+                else return await fetchMiaoshouSales(field1, field2, records, 30, effectiveProxyUrl);
             }
-        } else {
-            if (syncType === 'inventory') {
-                const data = await fetchMiaoshouInventory(field1, field2, records, effectiveProxyUrl);
-                fetchedItems = data.map(item => {
-                    const match = records.find(r => (r.sku || '').trim().toLowerCase() === (item.product_sku || '').trim().toLowerCase());
-                    return {
-                        sku: match ? match.sku : item.product_sku,
-                        name: item.cn_name || match?.productName || item.product_sku,
-                        oldVal: match ? match.quantity : 0,
-                        newVal: item.stock_quantity,
-                        status: match ? 'match' : 'new'
-                    };
-                });
+        };
+
+        const data = await fetcher();
+        
+        // Map Result
+        fetchedItems = (data as any[]).map(item => {
+            const itemSku = item.sku || item.product_sku || '';
+            const match = records.find(r => (r.sku || '').trim().toLowerCase() === itemSku.trim().toLowerCase());
+            
+            let newVal = 0;
+            if (platform === 'lingxing') {
+                newVal = syncType === 'inventory' ? item.fbaStock : item.avgDailySales;
             } else {
-                const data = await fetchMiaoshouSales(field1, field2, records, 30, effectiveProxyUrl);
-                fetchedItems = data.map(item => {
-                    const match = records.find(r => (r.sku || '').trim().toLowerCase() === (item.product_sku || '').trim().toLowerCase());
-                    return {
-                        sku: match ? match.sku : item.product_sku,
-                        name: match?.productName || item.product_sku,
-                        oldVal: match ? match.dailySales : 0,
-                        newVal: item.avg_sales_30d,
-                        status: match ? 'match' : 'new'
-                    };
-                });
+                newVal = syncType === 'inventory' ? item.stock_quantity : item.avg_sales_30d;
             }
-        }
+
+            return {
+                sku: match ? match.sku : itemSku, 
+                name: match?.productName || item.productName || item.cn_name || itemSku,
+                oldVal: match ? (syncType === 'inventory' ? match.quantity : match.dailySales) : 0,
+                newVal: newVal,
+                status: match ? 'match' : 'new'
+            };
+        });
         
         setApiResults(fetchedItems);
-        
-        if (isRealMode && fetchedItems.length === 0) {
-            const retrySim = window.confirm("API 连接成功但未返回任何数据。\n可能是权限问题或没有对应 SKU。\n\n是否切换到「模拟数据模式」来体验功能？");
-            if (retrySim) {
-                handleApiSync(true); 
-                return;
-            }
-        }
 
     } catch (e: any) {
         console.error(e);
-        const retrySim = window.confirm(`连接失败: ${e.message}\n\n是否切换到「模拟数据模式」来演示？`);
-        if (retrySim) {
+        // Auto fallback to simulation if real connection fails
+        if (!forceSimulation && window.confirm(`连接失败 (${e.message})。是否切换到「演示模式」生成模拟数据？`)) {
             handleApiSync(true);
         }
     } finally {
@@ -399,12 +187,10 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
   const isSales = syncType === 'sales';
   const isLingxing = platform === 'lingxing';
   const brandColor = isLingxing ? 'bg-blue-600' : 'bg-orange-600';
-  const brandColorHover = isLingxing ? 'hover:bg-blue-700' : 'hover:bg-orange-700';
   const brandText = isLingxing ? 'text-blue-600' : 'text-orange-600';
   const brandBorder = isLingxing ? 'border-blue-600' : 'border-orange-600';
   const brandLightBg = isLingxing ? 'bg-blue-50' : 'bg-orange-50';
   const typeColor = isSales ? 'text-green-600' : brandText;
-  const isRealApiReady = !!(field1 && field2 && proxyUrl && proxyUrl.startsWith('http'));
 
   const handleApply = () => {
       saveConfig();
@@ -488,71 +274,12 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
 
         {/* Tabs */}
         <div className="flex border-b border-gray-200 bg-gray-50 shrink-0">
-            <button onClick={() => setActiveTab('import')} className={`flex-1 py-4 text-sm font-bold flex items-center justify-center gap-2 border-b-2 transition-colors ${activeTab === 'import' ? `${brandBorder} ${brandText} bg-white` : 'border-transparent text-gray-500 hover:text-gray-700'}`}><ClipboardPaste size={18} /> Excel 粘贴导入</button>
-            <button onClick={() => setActiveTab('api')} className={`flex-1 py-4 text-sm font-bold flex items-center justify-center gap-2 border-b-2 transition-colors ${activeTab === 'api' ? `${brandBorder} ${brandText} bg-white` : 'border-transparent text-gray-400 hover:text-gray-600'}`}><LinkIcon size={18} /> API 直连 (Vercel)</button>
+            <button onClick={() => setActiveTab('import')} className={`flex-1 py-4 text-sm font-bold flex items-center justify-center gap-2 border-b-2 transition-colors ${activeTab === 'import' ? `${brandBorder} ${brandText} bg-white` : 'border-transparent text-gray-500 hover:text-gray-700'}`}><ClipboardPaste size={18} /> Excel 粘贴导入 (推荐)</button>
+            <button onClick={() => setActiveTab('api')} className={`flex-1 py-4 text-sm font-bold flex items-center justify-center gap-2 border-b-2 transition-colors ${activeTab === 'api' ? `${brandBorder} ${brandText} bg-white` : 'border-transparent text-gray-400 hover:text-gray-600'}`}><LinkIcon size={18} /> API 直连 (需要部署)</button>
         </div>
 
         <div className="flex-1 overflow-hidden flex flex-col md:flex-row bg-white relative">
             
-            {/* --- STRICT DEPLOYMENT GUIDE --- */}
-            {showProxySetup && (
-                <div className="absolute inset-0 z-50 bg-white flex flex-col animate-fade-in">
-                    <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
-                        <div className="flex items-center gap-2 text-slate-800">
-                            <Terminal size={18} />
-                            <h3 className="font-bold text-sm">Vercel 代理服务部署向导 (v2.0)</h3>
-                        </div>
-                        <button onClick={() => setShowProxySetup(false)} className="text-gray-500 hover:text-gray-800"><X size={18} /></button>
-                    </div>
-                    <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                        
-                        <div className="bg-red-50 border border-red-100 p-4 rounded-xl flex gap-3">
-                            <AlertCircle className="text-red-500 shrink-0" size={20} />
-                            <div>
-                                <h4 className="text-sm font-bold text-red-800">为什么必须重新下载？</h4>
-                                <p className="text-xs text-red-700 mt-1">
-                                    您在 Vercel 看到的 404 错误，是因为<strong>服务器端</strong>代码不是最新的。
-                                    前端代码更新（本页面）只能解决“发请求”的逻辑，无法解决“收请求”的问题。
-                                    <br/>
-                                    <strong>请下载最新的 v2.0 文件并重新部署 Vercel。</strong>
-                                </p>
-                            </div>
-                        </div>
-
-                        {/* Visual Structure */}
-                        <div className="flex gap-6 items-start">
-                            <div className="w-1/3 bg-slate-900 text-white p-5 rounded-xl">
-                                <h5 className="text-xs font-bold text-slate-400 uppercase mb-3">✅ 必选文件清单</h5>
-                                <div className="font-mono text-sm space-y-2">
-                                    <div className="flex items-center gap-2 text-blue-200"><Folder size={16}/> tanxing-proxy/</div>
-                                    <div className="flex items-center gap-2 pl-6 text-green-400"><FileCode size={14}/> package.json (v2.0)</div>
-                                    <div className="flex items-center gap-2 pl-6 text-yellow-400"><FileCode size={14}/> vercel.json</div>
-                                    <div className="flex items-center gap-2 pl-6 text-blue-300 font-bold bg-white/10 p-1 rounded"><Folder size={14}/> api/ <span className="text-xs text-white opacity-50 ml-1">(关键)</span></div>
-                                    <div className="flex items-center gap-2 pl-12 text-pink-300 font-bold"><FileCode size={14}/> proxy.js (v2.0)</div>
-                                </div>
-                            </div>
-                            
-                            <div className="flex-1 space-y-4">
-                                <h5 className="text-xs font-bold text-gray-500 uppercase">第一步：下载最新 v2.0 文件</h5>
-                                <div className="grid grid-cols-1 gap-2">
-                                    <button onClick={() => downloadFile('proxy.js', CODE_PROXY)} className="flex items-center justify-between p-3 bg-blue-50 border border-blue-100 rounded-lg text-blue-800 hover:bg-blue-100 text-xs font-bold">
-                                        <span>1. 下载 proxy.js (含 v2.0 标识)</span> <Download size={14}/>
-                                    </button>
-                                    <button onClick={() => downloadFile('vercel.json', CODE_VERCEL)} className="flex items-center justify-between p-3 bg-yellow-50 border border-yellow-100 rounded-lg text-yellow-800 hover:bg-yellow-100 text-xs font-bold">
-                                        <span>2. 下载 vercel.json (修复路由)</span> <Download size={14}/>
-                                    </button>
-                                    <button onClick={() => downloadFile('package.json', CODE_PACKAGE)} className="flex items-center justify-between p-3 bg-green-50 border border-green-100 rounded-lg text-green-800 hover:bg-green-100 text-xs font-bold">
-                                        <span>3. 下载 package.json (v2.0)</span> <Download size={14}/>
-                                    </button>
-                                </div>
-                                <h5 className="text-xs font-bold text-gray-500 uppercase mt-4">第二步：部署后自测</h5>
-                                <p className="text-xs text-gray-600">部署完成后，在下方输入框填入链接，点击右侧的 <ExternalLink size={12} className="inline"/> 按钮，如果浏览器能打开且显示 "Tanxing Proxy is Running! (v2.0)"，才算成功。</p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            )}
-
             {/* Left Panel Inputs */}
             <div className="w-full md:w-1/3 border-r border-gray-200 flex flex-col p-5 bg-gray-50 overflow-y-auto">
                 <div className="mb-6">
@@ -580,6 +307,7 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
                     {activeTab === 'import' ? (
                         <div className="flex-1 flex flex-col">
                             <textarea className="flex-1 w-full p-3 border rounded-xl text-xs font-mono outline-none resize-none shadow-inner focus:ring-2 border-gray-300" placeholder={`SKU      Value\nMA-001   150...`} value={pasteData} onChange={e => setPasteData(e.target.value)}></textarea>
+                            <p className="text-[10px] text-gray-400 mt-2">提示：直接从 ERP 导出的 Excel 复制并粘贴两列数据 (SKU, 数量) 即可。</p>
                         </div>
                     ) : (
                         <div className="space-y-4 animate-fade-in">
@@ -589,35 +317,21 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
                              </div>
                              <div>
                                  <label className="text-[10px] text-gray-500 font-bold mb-1 block">Token / Secret</label>
-                                 <div className="relative">
-                                     <input type={showSecret ? "text" : "password"} className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm" value={field2} onChange={e => setField2(e.target.value)} />
-                                     <button type="button" onClick={() => setShowSecret(!showSecret)} className="absolute right-3 top-2.5 text-gray-400"><Eye size={14}/></button>
-                                 </div>
+                                 <input type="password" className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm" value={field2} onChange={e => setField2(e.target.value)} />
                              </div>
                              <div>
                                  <label className="text-[10px] text-gray-500 font-bold mb-1 flex justify-between items-center">
-                                     <span>代理 URL <span className="text-red-500">*</span></span>
-                                     <button onClick={() => setShowProxySetup(true)} className="text-blue-600 hover:underline flex items-center gap-1"><Code size={10}/> 重新部署</button>
+                                     <span>代理 URL</span>
                                  </label>
-                                 <div className="relative flex items-center gap-2">
-                                     <input type="text" className="flex-1 px-3 py-2 rounded-lg border border-gray-300 text-sm" placeholder="https://your-app.vercel.app" value={proxyUrl} onChange={e => { setProxyUrl(e.target.value); setProxyStatus('idle'); }} />
-                                     <button onClick={openProxyInBrowser} disabled={!proxyUrl} className="bg-white p-2 rounded-lg border hover:bg-gray-50 text-blue-600" title="在浏览器打开以测试 (Open in Browser)">
-                                        <ExternalLink size={16}/>
-                                     </button>
-                                     <button onClick={handleTestConnection} disabled={isTestingProxy || !proxyUrl} className="bg-gray-100 p-2 rounded-lg border hover:bg-gray-200 text-gray-600" title="系统自检">
-                                        {isTestingProxy ? <RefreshCw className="animate-spin" size={16}/> : <Search size={16}/>}
-                                     </button>
-                                 </div>
-                                 {proxyStatus === 'success' && <p className="text-[10px] text-green-600 mt-1 flex items-center gap-1"><Check size={10}/> {proxyStatusMsg}</p>}
-                                 {proxyStatus === 'error' && <p className="text-[10px] text-red-500 mt-1 flex items-center gap-1"><AlertTriangle size={10}/> {proxyStatusMsg}</p>}
+                                 <input type="text" className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm" placeholder="https://..." value={proxyUrl} onChange={e => setProxyUrl(e.target.value)} />
                              </div>
 
                              <div className="pt-2 grid grid-cols-1 gap-3">
-                                 <button onClick={() => handleApiSync(false)} disabled={isApiLoading || !isRealApiReady} className={`w-full py-3 rounded-xl font-bold text-sm shadow-md flex items-center justify-center gap-2 ${!isRealApiReady ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : `${brandColor} text-white`}`}>
-                                     {isApiLoading && connectionMode === 'real' ? <RefreshCw className="animate-spin" size={16} /> : <LinkIcon size={16} />} 真实连接
+                                 <button onClick={() => handleApiSync(false)} disabled={isApiLoading} className={`w-full py-3 rounded-xl font-bold text-sm shadow-md flex items-center justify-center gap-2 ${brandColor} text-white`}>
+                                     {isApiLoading ? <RefreshCw className="animate-spin" size={16} /> : <LinkIcon size={16} />} 连接同步
                                  </button>
                                  <button onClick={() => handleApiSync(true)} className="w-full py-3 rounded-xl font-bold text-sm border-2 border-purple-100 bg-purple-50 text-purple-700 hover:bg-purple-100 flex items-center justify-center gap-2">
-                                     <ServerOff size={16} /> 模拟数据演示
+                                     <ServerOff size={16} /> 演示模式 (Mock)
                                  </button>
                              </div>
                         </div>

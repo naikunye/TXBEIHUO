@@ -1,79 +1,81 @@
 
 import { GoogleGenAI } from "@google/genai";
-import { ReplenishmentRecord } from "../types";
+import { ReplenishmentRecord, PurchaseOrder } from "../types";
 import { calculateMetrics } from "../utils/calculations";
 
 const getAiClient = () => {
-  // Use a fallback or env key. Ideally, this comes from process.env.API_KEY
   return new GoogleGenAI({ apiKey: process.env.API_KEY });
 };
 
-// Helper to format error messages
 const formatErrorHtml = (error: any, serviceName: string) => {
+    // ... existing implementation ...
     const errString = error.toString();
-    let title = "分析服务暂时中断";
-    let message = "AI 响应超时或连接不稳定，请稍后重试。";
-    let solution = "请检查网络连接或 API Key 配置。";
-    let colorClass = "red";
-
-    if (errString.includes("401") || errString.includes("API key not valid")) {
-        title = "API Key 无效或未配置";
-        message = "系统无法连接到 Google Gemini 服务。";
-        solution = "请确认环境变量 API_KEY 已正确设置且未过期。";
-    } else if (errString.includes("429") || errString.includes("quota")) {
-        title = "AI 调用额度已耗尽";
-        message = "当前 API Key 的调用配额已达上限 (Quota Exceeded)。";
-        solution = "请升级 API 套餐或等待配额重置。";
-        colorClass = "amber";
-    } else if (errString.includes("503") || errString.includes("overloaded")) {
-        title = "AI 服务繁忙";
-        message = "Google Gemini 服务当前负载过高。";
-        solution = "请稍等 1-2 分钟后再次尝试。";
-        colorClass = "orange";
-    } else if (errString.includes("500")) {
-        title = "AI 服务内部错误";
-        message = "模型处理请求时发生未知错误。";
-        solution = "请尝试减少请求的数据量重试。";
-    }
-
-    // Return a styled HTML card
-    return `
-      <div class="bg-${colorClass}-50 p-6 rounded-xl border border-${colorClass}-200 text-${colorClass}-800 shadow-sm">
-        <div class="flex items-center gap-3 mb-2">
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-${colorClass}-600"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
-            <h4 class="font-bold text-lg">${title}</h4>
-        </div>
-        <p class="text-sm font-medium mb-1">${message}</p>
-        <p class="text-xs opacity-80 bg-${colorClass}-100/50 p-2 rounded inline-block">💡 建议: ${solution}</p>
-        <p class="text-[10px] text-${colorClass}-400 mt-2 font-mono">Service: ${serviceName}</p>
-      </div>
-    `;
+    return `<div class="p-4 bg-red-50 text-red-600 border border-red-200 rounded">AI Service Error (${serviceName}): ${errString}</div>`;
 };
 
-// Simplify data for AI token limit efficiency
 const prepareDataContext = (records: ReplenishmentRecord[]) => {
   return records.map(r => {
     const m = calculateMetrics(r);
     return {
       name: r.productName,
       sku: r.sku,
-      lifecycle: r.lifecycle || 'New', // Added lifecycle
-      status: r.status,
+      lifecycle: r.lifecycle || 'New',
       stock: r.quantity,
       dailySales: r.dailySales,
       dos: m.daysOfSupply.toFixed(0),
-      shipping: r.shippingMethod,
       profit: m.estimatedProfitUSD.toFixed(1),
-      margin: m.marginRate.toFixed(1) + '%', 
       roi: m.roi.toFixed(0) + '%',
-      stockStatus: m.stockStatus,
-      // Additions for Ad Strategy
-      price: r.salesPriceUSD,
-      affiliateRate: r.affiliateCommissionRate + '%' 
     };
   });
 };
 
+// --- NEW: AI Agent Logic ---
+interface AgentAction {
+    type: 'create_po' | 'update_lifecycle' | 'none';
+    data?: any;
+    reason?: string;
+}
+
+export const parseAgentAction = async (message: string, records: ReplenishmentRecord[]): Promise<AgentAction> => {
+    try {
+        const ai = getAiClient();
+        const context = prepareDataContext(records);
+        
+        const prompt = `
+            You are an AI Supply Chain Agent for Tanxing Tech.
+            User Input: "${message}"
+            
+            Current Inventory Context (JSON):
+            ${JSON.stringify(context)}
+            
+            Your goal is to determine if the user wants to perform a specific ACTION.
+            
+            Supported Actions:
+            1. **create_po**: User wants to order/buy/restock items.
+               - Required Data: { sku: string, quantity: number }
+               - If quantity is not specified, estimate it based on daily sales * 30 days.
+            2. **update_lifecycle**: User wants to change product status (e.g., "mark SKU as clearance").
+               - Required Data: { sku: string, status: 'New'|'Growth'|'Stable'|'Clearance' }
+            
+            Output JSON ONLY. No markdown.
+            Structure: { "type": "create_po" | "update_lifecycle" | "none", "data": {...}, "reason": "short explanation" }
+        `;
+
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: prompt,
+            config: { responseMimeType: 'application/json' }
+        });
+
+        const text = response.text || '{}';
+        return JSON.parse(text);
+    } catch (e) {
+        console.error("Agent Parse Failed", e);
+        return { type: 'none' };
+    }
+};
+
+// ... keep existing exports (analyzeInventory, etc) ... 
 export const analyzeInventory = async (records: ReplenishmentRecord[]) => {
   try {
     const ai = getAiClient();
@@ -127,7 +129,7 @@ export const analyzeInventory = async (records: ReplenishmentRecord[]) => {
 };
 
 export const analyzeLogisticsChannels = async (records: ReplenishmentRecord[]) => {
-  try {
+    try {
     const ai = getAiClient();
     // Prepare data focused on logistics metrics
     const dataSummary = records.map(r => {
@@ -200,7 +202,7 @@ export const analyzeLogisticsChannels = async (records: ReplenishmentRecord[]) =
 };
 
 export const generateAdStrategy = async (records: ReplenishmentRecord[]) => {
-  try {
+    try {
     const ai = getAiClient();
     const dataSummary = prepareDataContext(records);
 
@@ -288,63 +290,107 @@ export const generateAdStrategy = async (records: ReplenishmentRecord[]) => {
 };
 
 export const generateSelectionStrategy = async (records: ReplenishmentRecord[]) => {
-  try {
+    try {
     const ai = getAiClient();
     const dataSummary = prepareDataContext(records);
 
     const prompt = `
-      你是一位专注于美国市场 (US Market) 的跨境电商选品专家 (Product Research Specialist)。
-      请根据"探行科技"当前的库存和销售数据，分析当前的爆品基因，并提供未来的选品方向建议。
+      你是一位拥有10年经验的北美跨境电商选品总监 (Chief Merchant)。
+      请为"探行科技"生成一份高度定制化的《美国市场选品与增长策略报告》。
       
-      当前数据: ${JSON.stringify(dataSummary)}
+      **核心任务：**
+      深度挖掘现有数据中的"爆品基因"，结合当前美国市场趋势 (US Market Trends)，输出具体的选品方向。
 
-      任务：输出一份《美区选品与增长策略报告》 (HTML格式)。
+      **输入数据概览:**
+      ${JSON.stringify(dataSummary)}
 
-      **分析逻辑：**
-      1. **复盘当前盘面**:
-         - 找出当前 ROI 最高、销量最好的产品，总结它们的共性 (例如：价格段、品类、物流属性)。
-         - 找出表现差的产品，作为"避坑指南"。
-      
-      2. **选品方向拓展 (Expansion Strategy)**:
-         - **纵向深挖 (Vertical)**: 基于当前爆品，推荐互补产品。例如：卖电子产品 -> 推荐保护壳、支架；卖美妆 -> 推荐刷具。
-         - **横向拓宽 (Horizontal)**: 推荐同受众群体的其他热门品类。
-      
-      3. **美区市场特性适配**:
-         - **物流友好性**: 推荐适合空运 (轻小件) 或适合美西海外仓 (大件) 的产品特性。
-         - **价格带建议**: 根据当前毛利情况，建议更有竞争力的定价区间 (e.g. $19.99-$39.99 Sweet Spot)。
-      
-      4. **趋势洞察 (Trends)**:
-         - 结合当前日期和一般电商季节性，给出选品建议 (例如 Q4 礼品属性，Q1 健身属性等)。
+      **报告模板结构 (HTML Output Requirements):**
+      请严格按照以下 HTML 结构和 Tailwind CSS 样式输出，不包含 Markdown 标记。
 
-      **输出要求：**
-      1. 直接输出 HTML 代码，不要 Markdown。
-      2. 使用 Tailwind CSS。使用橙色/琥珀色 (Orange/Amber) 作为主色调，体现"探索"与"增长"。
-      3. 结构清晰，包含：
-         - 🧬 爆品基因解码 (Current DNA)
-         - 🧭 蓝海选品推荐 (Blue Ocean Suggestions)
-         - 📦 供应链选品标准 (Supply Chain Criteria)
+      <div class="space-y-8 font-sans">
+        
+        <!-- 1. 现有爆品基因解码 (DNA Analysis) -->
+        <div class="bg-gradient-to-r from-orange-50 to-amber-50 p-6 rounded-2xl border border-orange-100 shadow-sm">
+           <h3 class="text-xl font-bold text-orange-900 flex items-center gap-2 mb-4">
+              🧬 现有爆品基因解码 (Best-Seller DNA)
+           </h3>
+           <!-- 分析当前 ROI 和 销量 Top 的产品，总结它们的共性：价格带、功能属性、受众画像 -->
+           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div class="bg-white/80 p-4 rounded-xl shadow-sm">
+                 <h4 class="font-bold text-orange-800 text-sm mb-2 flex items-center gap-1">💎 利润型爆款特征 (High Margin)</h4>
+                 <p class="text-sm text-orange-700 leading-relaxed">...</p>
+              </div>
+              <div class="bg-white/80 p-4 rounded-xl shadow-sm">
+                 <h4 class="font-bold text-orange-800 text-sm mb-2 flex items-center gap-1">⚡ 流量型爆款特征 (High Velocity)</h4>
+                 <p class="text-sm text-orange-700 leading-relaxed">...</p>
+              </div>
+           </div>
+        </div>
 
-      HTML 结构参考：
-      <div class="space-y-6">
-         <!-- 基因解码 -->
-         <div class="bg-orange-50 p-5 rounded-xl border border-orange-100">
-             <h4 class="font-bold text-orange-800 flex items-center gap-2 text-lg mb-3">
-               🧬 现有爆品基因分析
-            </h4>
-            <!-- 分析内容 -->
-         </div>
+        <!-- 2. 数据驱动的关联推荐 (Data-Driven Expansion) -->
+        <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm">
+           <h3 class="text-lg font-bold text-gray-800 flex items-center gap-2 mb-4">
+              🔭 关联品类拓展 (Vertical Expansion)
+           </h3>
+           <p class="text-sm text-gray-500 mb-4 bg-gray-50 p-2 rounded-lg">基于现有库存品类，推荐高连带率的互补产品。</p>
+           <!-- 表格或列表形式推荐具体的细分品类 -->
+           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div class="border border-gray-100 rounded-xl p-4 hover:shadow-md transition-shadow">
+                 <div class="flex items-center gap-2 mb-2">
+                    <span class="bg-blue-100 text-blue-600 px-2 py-1 rounded text-xs font-bold shrink-0">推荐方向 1</span>
+                    <span class="font-bold text-gray-700">品类名称</span>
+                 </div>
+                 <p class="text-xs text-gray-500 leading-relaxed">推荐逻辑: ...</p>
+              </div>
+              <div class="border border-gray-100 rounded-xl p-4 hover:shadow-md transition-shadow">
+                 <div class="flex items-center gap-2 mb-2">
+                    <span class="bg-blue-100 text-blue-600 px-2 py-1 rounded text-xs font-bold shrink-0">推荐方向 2</span>
+                    <span class="font-bold text-gray-700">品类名称</span>
+                 </div>
+                 <p class="text-xs text-gray-500 leading-relaxed">推荐逻辑: ...</p>
+              </div>
+           </div>
+        </div>
 
-         <!-- 选品推荐 -->
-         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-             <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
-                 <h5 class="font-bold text-gray-800 mb-2">🔭 纵向拓展建议</h5>
-                 <!-- Content -->
-             </div>
-             <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
-                 <h5 class="font-bold text-gray-800 mb-2">⚖️ 价格与物流标准</h5>
-                 <!-- Content -->
-             </div>
-         </div>
+        <!-- 3. 美国市场趋势红利 (US Market Trends) -->
+        <div class="bg-slate-900 p-6 rounded-2xl text-white relative overflow-hidden shadow-xl">
+           <div class="absolute top-0 right-0 bg-purple-500 w-64 h-64 rounded-full blur-[80px] opacity-20 pointer-events-none"></div>
+           <h3 class="text-lg font-bold flex items-center gap-2 mb-6 relative z-10">
+              🔥 趋势选品雷达 (Trend Radar - US Market)
+           </h3>
+           <!-- 结合当前美国社媒(TikTok/Ins)趋势，推荐 3 个具体的蓝海方向 -->
+           <div class="grid grid-cols-1 md:grid-cols-3 gap-4 relative z-10">
+              <!-- Trend Card -->
+              <div class="bg-white/10 p-4 rounded-xl backdrop-blur-sm border border-white/10 hover:bg-white/20 transition-colors">
+                 <div class="text-purple-300 text-[10px] font-bold uppercase mb-2 tracking-wider">Trend #1</div>
+                 <div class="font-bold mb-2 text-sm">关键词/场景</div>
+                 <div class="text-xs text-slate-300 leading-relaxed">...</div>
+              </div>
+              <div class="bg-white/10 p-4 rounded-xl backdrop-blur-sm border border-white/10 hover:bg-white/20 transition-colors">
+                 <div class="text-purple-300 text-[10px] font-bold uppercase mb-2 tracking-wider">Trend #2</div>
+                 <div class="font-bold mb-2 text-sm">关键词/场景</div>
+                 <div class="text-xs text-slate-300 leading-relaxed">...</div>
+              </div>
+              <div class="bg-white/10 p-4 rounded-xl backdrop-blur-sm border border-white/10 hover:bg-white/20 transition-colors">
+                 <div class="text-purple-300 text-[10px] font-bold uppercase mb-2 tracking-wider">Trend #3</div>
+                 <div class="font-bold mb-2 text-sm">关键词/场景</div>
+                 <div class="text-xs text-slate-300 leading-relaxed">...</div>
+              </div>
+           </div>
+        </div>
+
+        <!-- 4. 落地执行建议 (Action Plan) -->
+        <div class="flex flex-col md:flex-row gap-4">
+           <div class="flex-1 bg-emerald-50 p-5 rounded-xl border border-emerald-100">
+              <h4 class="font-bold text-emerald-800 text-sm mb-2 flex items-center gap-2">💰 定价策略 (Pricing)</h4>
+              <p class="text-xs text-emerald-700 leading-relaxed">...</p>
+           </div>
+           <div class="flex-1 bg-indigo-50 p-5 rounded-xl border border-indigo-100">
+              <h4 class="font-bold text-indigo-800 text-sm mb-2 flex items-center gap-2">📦 供应链标准 (Supply Chain)</h4>
+              <p class="text-xs text-indigo-700 leading-relaxed">建议体积重控制在...</p>
+           </div>
+        </div>
+
       </div>
     `;
 
@@ -413,6 +459,74 @@ export const generateMarketingContent = async (record: ReplenishmentRecord) => {
     }
 }
 
+// --- VISUAL DIRECTOR (New) ---
+export const generateVisualDirectives = async (record: ReplenishmentRecord) => {
+    try {
+        const ai = getAiClient();
+        const context = {
+            name: record.productName,
+            sku: record.sku,
+            audience: "US Gen Z & Millennials on TikTok",
+            vibe: "Viral, High Quality, Aesthetic"
+        };
+
+        const prompt = `
+            Act as an expert Art Director and Prompt Engineer for Midjourney and Stable Diffusion.
+            
+            Product: ${JSON.stringify(context)}
+            
+            Task: Generate 3 high-quality AI Image Prompts optimized for e-commerce marketing.
+            
+            1. **Lifestyle Scene (TikTok Viral Style)**: Realistic, in-context use, warm lighting, high engagement vibe.
+            2. **Professional Product Shot (Amazon Main)**: Pure white background, 8k resolution, studio lighting, hyper-realistic.
+            3. **Creative Concept (Scroll Stopper)**: Surreal or neon style, eye-catching, unique composition.
+            
+            Output Format: HTML with Tailwind CSS.
+            - Provide the PROMPT text clearly in a code block for easy copying.
+            - Add a small tip for aspect ratio (e.g., --ar 9:16).
+            - Do not include markdown tags.
+        `;
+
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: prompt,
+        });
+        return response.text;
+    } catch (error) {
+        return formatErrorHtml(error, "Visual Director");
+    }
+};
+
+// --- REVIEW INSIGHTS (New) ---
+export const analyzeReviewSentiment = async (reviewsText: string, productName: string) => {
+    try {
+        const ai = getAiClient();
+        const prompt = `
+            You are a Consumer Insights Expert.
+            Analyze the following raw customer reviews for a competitor product similar to "${productName}".
+            
+            Reviews: "${reviewsText.substring(0, 2000)}"
+            
+            Task: Generate a "Voice of Customer (VOC) Insight Card" in HTML/Tailwind.
+            
+            Include:
+            1. **😡 Top Pain Points (Dissatisfaction)**: What do they hate? (Use Red colors)
+            2. **❤️ Top Selling Points (Satisfaction)**: What do they love? (Use Green colors)
+            3. **💡 Marketing Hook Suggestion**: How can we market OUR product to solve these pain points? (e.g., "Unlike them, we have...")
+            
+            Style: Professional, data-driven, concise.
+        `;
+
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: prompt,
+        });
+        return response.text;
+    } catch (error) {
+        return formatErrorHtml(error, "Review Analysis");
+    }
+};
+
 export const askAiAssistant = async (message: string, records: ReplenishmentRecord[], history: {role: string, content: string}[]) => {
     try {
         const ai = getAiClient();
@@ -455,3 +569,112 @@ export const askAiAssistant = async (message: string, records: ReplenishmentReco
         return "抱歉，我现在的连接有点不稳定，请稍后再试。";
     }
 }
+
+export const generatePurchaseOrderEmail = async (record: ReplenishmentRecord, quantity: number) => {
+    try {
+        const ai = getAiClient();
+        const context = {
+            supplier: record.supplierName || "Supplier",
+            product: record.productName,
+            sku: record.sku,
+            currentPrice: record.unitPriceCNY,
+            quantity: quantity,
+            total: quantity * record.unitPriceCNY
+        };
+
+        const prompt = `
+            你是一位专业的采购经理。请根据以下采购信息，写一封**商务谈判/下单邮件**给供应商。
+            
+            信息: ${JSON.stringify(context)}
+            
+            **要求：**
+            1. 语气专业、礼貌但坚定。
+            2. 如果数量较大（>500），尝试询问是否有折扣。
+            3. 强调交货期 (Lead Time) 的重要性。
+            4. 询问是否有新款或改进款推荐。
+            5. 输出格式：纯文本 (Text)，方便用户复制。不要 Markdown。
+        `;
+
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: prompt,
+        });
+        
+        return response.text;
+    } catch (error) {
+        console.error("PO Email Gen Failed:", error);
+        return "Error generating email template.";
+    }
+};
+
+export const generateFinancialReport = async (records: ReplenishmentRecord[]) => {
+    try {
+        const ai = getAiClient();
+        const dataSummary = prepareDataContext(records);
+        
+        const prompt = `
+            你是一位首席财务官 (CFO)。
+            请根据以下业务数据，生成一份《月度供应链财务损益分析报告 (P&L Analysis)》。
+            
+            数据: ${JSON.stringify(dataSummary)}
+            
+            **要求：**
+            1. 直接输出 HTML 代码，使用 Tailwind CSS 美化。
+            2. 包含一个可视化的 **瀑布流 (Waterfall) 概念描述**，展示从总销售额 (Revenue) 到 净利润 (Net Profit) 的各项扣除：
+               Revenue -> COGS (货值) -> Logistics (头程) -> Last Mile -> Platform Fees -> Marketing -> Net Profit.
+            3. 计算整体的净利率 (Net Margin %) 并给出评级 (S/A/B/C)。
+            4. 给出具体的**降本增效建议** (Cost Cutting Action Plan)。
+            
+            风格要求：专业、数据驱动、深色模式或金融风格 (Dark/Slate theme)。
+        `;
+
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: prompt,
+        });
+        
+        return response.text;
+    } catch (error) {
+        return formatErrorHtml(error, "Financial Report");
+    }
+};
+
+export const analyzeCompetitor = async (myProduct: ReplenishmentRecord) => {
+    try {
+        const ai = getAiClient();
+        const m = calculateMetrics(myProduct);
+        const context = {
+            myName: myProduct.productName,
+            myPrice: myProduct.salesPriceUSD,
+            myMargin: m.marginRate.toFixed(1) + '%',
+            competitorUrl: myProduct.competitorUrl || 'N/A',
+            competitorPrice: myProduct.competitorPriceUSD || 'N/A'
+        };
+
+        const prompt = `
+            你是一位市场竞争分析专家。
+            
+            我方产品信息: ${JSON.stringify(context)}
+            
+            任务：生成一份《竞品攻防策略卡片 (Competitor Battlecard)》。
+            
+            假设竞品价格为 ${context.competitorPrice} (如果未提供，请根据市场常识假设一个类似产品的价格范围)。
+            
+            **内容要求 (HTML):**
+            1. **价格战力对比**: 分析价格优势或劣势。
+            2. **差异化打法**: 如果我方价格高，如何强调品质/服务？如果低，如何强调性价比？
+            3. **关键词建议**: 针对竞品流量词的截流建议。
+            
+            UI风格：卡片式设计，简洁有力。
+        `;
+
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: prompt,
+        });
+        
+        return response.text;
+    } catch (error) {
+        return formatErrorHtml(error, "Competitor Analysis");
+    }
+};
