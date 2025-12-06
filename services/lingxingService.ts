@@ -40,6 +40,16 @@ export const resetMockErpData = () => {
     localStorage.removeItem(STORAGE_KEY_MOCK_DB);
 };
 
+// NEW: Allow manual update of mock data
+export const updateMockErpItem = (sku: string, field: 'stock' | 'sales', value: number) => {
+    const db = getMockDb();
+    if (!db[sku]) {
+        db[sku] = { stock: 0, sales: 0 };
+    }
+    db[sku][field] = value;
+    saveMockDb(db);
+};
+
 const getOrGenerateMockData = (record: ReplenishmentRecord) => {
     const db = getMockDb();
     
@@ -79,12 +89,10 @@ export const fetchLingxingInventory = async (
   proxyUrl?: string
 ): Promise<LingxingInventoryItem[]> => {
   
-  if (!appId || !accessToken) {
-      throw new Error("请先配置领星 App ID 和 Access Token");
-  }
-
   // 1. Real API Mode (If Proxy URL is provided)
   if (proxyUrl && proxyUrl.startsWith('http')) {
+      if (!appId || !accessToken) throw new Error("真实连接需要 App ID 和 Token");
+      
       try {
           const response = await fetch(`${proxyUrl}/inventory`, {
               method: 'POST',
@@ -126,10 +134,9 @@ export const fetchLingxingSales = async (
     proxyUrl?: string
   ): Promise<LingxingSalesItem[]> => {
     
-    if (!appId || !accessToken) throw new Error("请先配置 API 凭证");
-  
     // 1. Real API Mode
     if (proxyUrl && proxyUrl.startsWith('http')) {
+        if (!appId || !accessToken) throw new Error("真实连接需要 App ID 和 Token");
         // Implementation for real proxy...
         throw new Error("暂未检测到有效的后端代理服务");
     }
@@ -167,7 +174,11 @@ export const calculateInventoryDiff = (
         const erpItem = erpData.find(e => e.sku === local.sku);
         if (erpItem) {
             const totalErp = erpItem.fbaStock;
-            // Only add to diff list if there is an ACTUAL difference
+            // Always show item in list if we are in "Edit Mode" (implied by usage)
+            // But for diff calculation, we usually only care about differences.
+            // However, to allow user to edit "ERP Data" even if match, we might need a way to access them.
+            // For now, let's keep showing only diffs, but user can edit the mock DB to create a diff or fix one.
+            
             if (local.quantity !== totalErp) {
                 diffs.push({
                     recordId: local.id,

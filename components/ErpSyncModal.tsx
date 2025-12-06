@@ -1,8 +1,8 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ReplenishmentRecord } from '../types';
-import { fetchLingxingInventory, fetchLingxingSales, calculateInventoryDiff, calculateSalesDiff, resetMockErpData } from '../services/lingxingService';
-import { X, RefreshCw, ArrowRight, Check, AlertCircle, Database, Link as LinkIcon, Lock, TrendingUp, Package, Trash2 } from 'lucide-react';
+import { fetchLingxingInventory, fetchLingxingSales, calculateInventoryDiff, calculateSalesDiff, resetMockErpData, updateMockErpItem } from '../services/lingxingService';
+import { X, RefreshCw, ArrowRight, Check, AlertCircle, Database, Link as LinkIcon, Lock, TrendingUp, Package, Trash2, Edit2, Save } from 'lucide-react';
 
 interface ErpSyncModalProps {
   isOpen: boolean;
@@ -17,11 +17,16 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
   const [step, setStep] = useState<'config' | 'result'>('config');
   const [syncType, setSyncType] = useState<SyncType>('inventory');
   
-  // Config State
-  const [appId, setAppId] = useState('lx_demo_app_id');
-  const [token, setToken] = useState('lx_demo_token_123'); 
-  const [proxyUrl, setProxyUrl] = useState(''); // Optional proxy for real calls
+  // Config State with Persistence
+  const [appId, setAppId] = useState(() => localStorage.getItem('lx_app_id') || '');
+  const [token, setToken] = useState(() => localStorage.getItem('lx_token') || ''); 
+  const [proxyUrl, setProxyUrl] = useState(() => localStorage.getItem('lx_proxy_url') || ''); 
   
+  // Persist effects
+  useEffect(() => { localStorage.setItem('lx_app_id', appId); }, [appId]);
+  useEffect(() => { localStorage.setItem('lx_token', token); }, [token]);
+  useEffect(() => { localStorage.setItem('lx_proxy_url', proxyUrl); }, [proxyUrl]);
+
   const [isLoading, setIsLoading] = useState(false);
   
   // Diff State
@@ -34,12 +39,24 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
         diff: number 
     }[]>([]);
   const [selectedDiffIds, setSelectedDiffIds] = useState<Set<string>>(new Set());
+  
+  // Edit Mock Data State
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState<string>('');
 
   if (!isOpen) return null;
 
+  const isSimulation = !proxyUrl || !proxyUrl.startsWith('http');
+
   const handleConnect = async () => {
       setIsLoading(true);
+      setEditingId(null); // Reset edit state
       try {
+          // If real mode, validate inputs
+          if (!isSimulation && (!appId || !token)) {
+              throw new Error("请填写完整的 App Key 和 App Secret");
+          }
+
           let calculatedDiffs: typeof diffs = [];
 
           if (syncType === 'inventory') {
@@ -55,7 +72,7 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
           setSelectedDiffIds(new Set(calculatedDiffs.map(d => d.recordId))); // Select all by default
           setStep('result');
       } catch (error: any) {
-          alert(`连接领星 OMS 失败: ${error.message}`);
+          alert(`连接失败: ${error.message}`);
       } finally {
           setIsLoading(false);
       }
@@ -64,8 +81,33 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
   const handleResetSimulation = () => {
       if(window.confirm("确定要重置模拟的 ERP 数据吗？\n下次同步时将重新生成新的库存数据。")) {
           resetMockErpData();
-          alert("模拟数据已重置。");
+          alert("模拟数据已重置。请重新点击连接。");
+          setStep('config');
       }
+  };
+
+  // Mock Data Editing Logic
+  const startEdit = (diff: typeof diffs[0]) => {
+      if (!isSimulation) return;
+      setEditingId(diff.recordId);
+      setEditValue(diff.erpVal.toString());
+  };
+
+  const saveEdit = (diff: typeof diffs[0]) => {
+      const newVal = parseFloat(editValue);
+      if (!isNaN(newVal)) {
+          // Update the persistent mock DB
+          updateMockErpItem(diff.sku, syncType === 'inventory' ? 'stock' : 'sales', newVal);
+          
+          // Update local UI list instantly
+          setDiffs(prev => prev.map(d => {
+              if (d.recordId === diff.recordId) {
+                  return { ...d, erpVal: newVal, diff: newVal - d.localVal };
+              }
+              return d;
+          }));
+      }
+      setEditingId(null);
   };
 
   const toggleSelect = (id: string) => {
@@ -76,15 +118,12 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
   };
 
   const handleSyncConfirm = () => {
-      // Create a brand new array to ensure React detects the state change
       const updatedRecords = records.map(r => {
           if (selectedDiffIds.has(r.id)) {
               const diffItem = diffs.find(d => d.recordId === r.id);
               if (diffItem) {
                   if (syncType === 'inventory') {
-                      const newQty = Number(diffItem.erpVal); // Force Number
-                      
-                      // Also recalculate totalCartons to keep consistency
+                      const newQty = Number(diffItem.erpVal);
                       const safeItemsPerBox = r.itemsPerBox > 0 ? r.itemsPerBox : 1;
                       const newTotalCartons = Math.ceil(newQty / safeItemsPerBox);
 
@@ -96,7 +135,7 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
                   } else {
                       return { 
                           ...r, 
-                          dailySales: Number(diffItem.erpVal) // Force Number
+                          dailySales: Number(diffItem.erpVal)
                       };
                   }
               }
@@ -109,7 +148,7 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
       setStep('config');
   };
 
-  // Fixed styles for inputs to ensure visibility
+  // Fixed styles for inputs
   const inputStyle = "w-full p-3 border border-gray-300 rounded-lg text-sm font-bold text-gray-900 bg-white focus:ring-2 focus:ring-blue-100 focus:border-blue-400 outline-none transition-all shadow-sm placeholder-gray-400";
 
   return (
@@ -156,18 +195,11 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
                         </button>
                     </div>
 
-                    <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 flex gap-3 items-start">
-                        <AlertCircle className="text-blue-600 shrink-0 mt-0.5" size={20} />
-                        <div className="text-sm text-blue-800">
-                            <p className="font-bold mb-1">如何获取密钥？</p>
-                            <p className="opacity-90 leading-relaxed">
-                                请点击领星 OMS 系统<strong>顶部导航栏</strong>的 <span className="bg-white px-1 rounded font-bold text-blue-700">API信息</span> 按钮。<br/>
-                                或者前往：<span className="font-medium">系统设置 {'>'} 开发者对接 {'>'} Open API</span> 查看。
-                            </p>
+                    <div className="space-y-4 bg-white p-6 rounded-xl border border-gray-200 shadow-sm relative overflow-hidden">
+                        <div className={`absolute top-0 right-0 px-4 py-1 text-[10px] font-bold uppercase tracking-wider rounded-bl-xl ${isSimulation ? 'bg-orange-100 text-orange-600' : 'bg-green-100 text-green-600'}`}>
+                            {isSimulation ? 'Simulation Mode' : 'Live Connection'}
                         </div>
-                    </div>
 
-                    <div className="space-y-4 bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
                         <h3 className="font-bold text-gray-800 flex items-center gap-2 border-b border-gray-100 pb-3 mb-3">
                             <Lock size={18} className="text-gray-400"/> 
                             API 授权配置
@@ -179,7 +211,7 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
                                 value={appId} 
                                 onChange={e => setAppId(e.target.value)}
                                 className={inputStyle}
-                                placeholder="在此粘贴领星的 App Key"
+                                placeholder="输入领星 App Key"
                             />
                         </div>
                         <div>
@@ -189,22 +221,21 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
                                 value={token} 
                                 onChange={e => setToken(e.target.value)}
                                 className={inputStyle}
-                                placeholder="在此粘贴领星的 App Secret"
+                                placeholder="输入领星 App Secret"
                             />
                         </div>
                         
-                        {/* Advanced: Proxy Config */}
                         <div className="pt-2">
                             <div className="flex items-center justify-between mb-1">
-                                <label className="block text-xs font-bold text-gray-400 uppercase">私有代理服务地址 (可选 / Advanced)</label>
-                                <span className="text-[10px] text-gray-400 bg-gray-100 px-2 rounded">真实对接必填</span>
+                                <label className="block text-xs font-bold text-gray-400 uppercase">私有代理地址 (后端接口)</label>
+                                <span className="text-[10px] text-gray-400 bg-gray-100 px-2 rounded">若为空则为模拟模式</span>
                             </div>
                             <input 
                                 type="text" 
                                 value={proxyUrl} 
                                 onChange={e => setProxyUrl(e.target.value)}
                                 className={`${inputStyle} text-xs font-normal border-dashed bg-gray-50 focus:bg-white`}
-                                placeholder="https://api.your-company.com/lingxing-proxy (留空则使用本地持久化模拟数据)"
+                                placeholder="https://api.your-company.com/lingxing-proxy"
                             />
                         </div>
                     </div>
@@ -213,31 +244,36 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
                         <button 
                             onClick={handleConnect}
                             disabled={isLoading}
-                            className="w-full bg-[#1890ff] hover:bg-blue-600 text-white font-bold py-3.5 rounded-xl shadow-lg shadow-blue-200 flex items-center justify-center gap-2 transition-all active:scale-95"
+                            className={`w-full font-bold py-3.5 rounded-xl shadow-lg flex items-center justify-center gap-2 transition-all active:scale-95 text-white ${isSimulation ? 'bg-orange-500 hover:bg-orange-600 shadow-orange-200' : 'bg-[#1890ff] hover:bg-blue-600 shadow-blue-200'}`}
                         >
                             {isLoading ? (
                                 <>
                                     <RefreshCw className="animate-spin" size={20} />
-                                    正在从领星 OMS 拉取数据...
+                                    {isSimulation ? '正在生成模拟数据...' : '正在连接 OMS...'}
                                 </>
                             ) : (
                                 <>
                                     <LinkIcon size={20} />
-                                    立即连接并比对差异
+                                    {isSimulation ? '进入模拟同步 (Simulation)' : '连接真实数据 (Connect)'}
                                 </>
                             )}
                         </button>
                         
-                        {!proxyUrl && (
-                            <div className="flex justify-center">
+                        {isSimulation && (
+                            <div className="flex justify-center text-center">
                                 <button 
                                     onClick={handleResetSimulation}
                                     className="text-xs text-gray-400 hover:text-red-500 flex items-center gap-1 transition-colors"
                                 >
                                     <Trash2 size={12} />
-                                    重置模拟数据 (Reset Demo Data)
+                                    重置模拟数据
                                 </button>
                             </div>
+                        )}
+                        {isSimulation && (
+                            <p className="text-[10px] text-center text-gray-400 px-4">
+                                提示：在模拟结果页，您可以点击数字修改“ERP 库存”，以手动对齐您的真实数据进行测试。
+                            </p>
                         )}
                     </div>
                 </div>
@@ -251,7 +287,7 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
                             <h3 className="font-bold text-gray-800 text-lg">
                                 {syncType === 'inventory' ? '库存' : '销量'}差异比对
                             </h3>
-                            <p className="text-xs text-gray-400">Syncing: {syncType === 'inventory' ? 'Quantity' : 'Daily Sales'}</p>
+                            <p className="text-xs text-gray-400">Syncing: {syncType === 'inventory' ? 'Quantity' : 'Daily Sales'} {isSimulation && '(Simulation)'}</p>
                         </div>
                         <span className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-xs font-bold">
                             发现 {diffs.length} 个差异项
@@ -261,7 +297,8 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
                     {diffs.length === 0 ? (
                         <div className="text-center py-10 bg-white rounded-xl border border-gray-200">
                             <Check className="mx-auto text-green-500 mb-2" size={40} />
-                            <p className="text-gray-600 font-medium">太棒了！本地数据与 OMS 完全一致。</p>
+                            <p className="text-gray-600 font-medium">数据完全一致！</p>
+                            {isSimulation && <p className="text-xs text-gray-400 mt-2">您可以点击“重置模拟数据”来测试差异情况。</p>}
                         </div>
                     ) : (
                         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm max-h-[400px] overflow-y-auto custom-scrollbar">
@@ -281,13 +318,16 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
                                         <th className="p-3 font-medium">产品 SKU</th>
                                         <th className="p-3 font-medium text-right">本地{syncType==='inventory'?'库存':'日销'}</th>
                                         <th className="p-3 font-medium text-center"></th>
-                                        <th className="p-3 font-medium text-blue-600">OMS 数据</th>
+                                        <th className="p-3 font-medium text-blue-600">
+                                            OMS 数据 
+                                            {isSimulation && <span className="text-[10px] font-normal text-gray-400 ml-1">(点击修改)</span>}
+                                        </th>
                                         <th className="p-3 font-medium text-right">差异</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-gray-100">
                                     {diffs.map(diff => (
-                                        <tr key={diff.recordId} className="hover:bg-gray-50 transition-colors">
+                                        <tr key={diff.recordId} className="hover:bg-gray-50 transition-colors group">
                                             <td className="p-3">
                                                 <input 
                                                     type="checkbox" 
@@ -301,9 +341,35 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
                                             </td>
                                             <td className="p-3 text-right font-mono text-gray-500">{diff.localVal}</td>
                                             <td className="p-3 text-center text-gray-300"><ArrowRight size={16} /></td>
-                                            <td className="p-3 font-mono font-bold text-blue-600">{diff.erpVal}</td>
+                                            
+                                            {/* Editable Cell */}
+                                            <td className="p-3 font-mono font-bold text-blue-600 relative">
+                                                {editingId === diff.recordId ? (
+                                                    <div className="flex items-center gap-1 absolute left-2 top-2 z-20">
+                                                        <input 
+                                                            type="number" 
+                                                            value={editValue}
+                                                            onChange={e => setEditValue(e.target.value)}
+                                                            className="w-20 p-1 border border-blue-400 rounded text-sm shadow-lg outline-none"
+                                                            autoFocus
+                                                            onKeyDown={e => e.key === 'Enter' && saveEdit(diff)}
+                                                        />
+                                                        <button onClick={() => saveEdit(diff)} className="bg-green-500 text-white p-1 rounded hover:bg-green-600"><Check size={14}/></button>
+                                                    </div>
+                                                ) : (
+                                                    <div 
+                                                        className={`flex items-center gap-2 ${isSimulation ? 'cursor-pointer hover:bg-blue-50 px-2 py-1 rounded -ml-2' : ''}`}
+                                                        onClick={() => startEdit(diff)}
+                                                        title={isSimulation ? "点击修改模拟数据" : ""}
+                                                    >
+                                                        {diff.erpVal}
+                                                        {isSimulation && <Edit2 size={12} className="opacity-0 group-hover:opacity-50 text-blue-400" />}
+                                                    </div>
+                                                )}
+                                            </td>
+
                                             <td className="p-3 text-right">
-                                                <span className={`px-2 py-0.5 rounded text-xs font-bold ${diff.diff > 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                                                <span className={`px-2 py-0.5 rounded text-xs font-bold ${diff.diff > 0 ? 'bg-green-100 text-green-700' : diff.diff < 0 ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-500'}`}>
                                                     {diff.diff > 0 ? '+' : ''}{diff.diff.toFixed(syncType === 'sales' ? 1 : 0)}
                                                 </span>
                                             </td>
