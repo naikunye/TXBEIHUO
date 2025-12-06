@@ -16,7 +16,7 @@ export interface MiaoshouSalesItem {
     avg_sales_30d: number;
 }
 
-// --- SHARED MOCK DATABASE (Connects to the same "Virtual Warehouse" as Lingxing) ---
+// --- SHARED MOCK DATABASE ---
 const STORAGE_KEY_MOCK_DB = 'tanxing_mock_erp_db_v1';
 
 const getMockDb = (): Record<string, { stock: number, sales: number }> => {
@@ -32,28 +32,40 @@ const saveMockDb = (db: Record<string, { stock: number, sales: number }>) => {
     localStorage.setItem(STORAGE_KEY_MOCK_DB, JSON.stringify(db));
 };
 
-const getOrGenerateMockData = (record: ReplenishmentRecord) => {
-    const db = getMockDb();
-    const cleanSku = record.sku.trim();
-    
-    // Check if we have data for this SKU
-    if (!db[cleanSku]) {
-        // If not found, generate random data ONCE and save it
-        // Miaoshou logic might vary slightly in randomness to feel "real"
-        const hasDrift = Math.random() > 0.3; 
-        const randomDiff = hasDrift ? Math.floor(Math.random() * 20) - 5 : 0;
-        const mockStock = Math.max(0, record.quantity + randomDiff);
-        
-        const volatility = 0.15;
-        const mockSales = Math.max(0, record.dailySales + (record.dailySales * volatility * (Math.random() - 0.5)));
+// Simulate "Miaoshou Only" products
+const MOCK_MS_EXTRA_ITEMS = [
+    { sku: 'MS-HOT-99', productName: 'RGB 机械键盘 (Miaoshou)', defaultStock: 200, defaultSales: 15 },
+    { sku: 'MS-ACC-01', productName: '电竞鼠标垫 XL', defaultStock: 80, defaultSales: 5 }
+];
 
-        db[cleanSku] = {
-            stock: mockStock,
-            sales: parseFloat(mockSales.toFixed(1))
-        };
-        saveMockDb(db);
-    }
+const getAndJitterMockData = (sku: string, productName: string, baseQty: number, baseSales: number, applyJitter: boolean) => {
+    const db = getMockDb();
+    const cleanSku = sku.trim();
     
+    if (!db[cleanSku]) {
+        db[cleanSku] = {
+            stock: Math.max(0, baseQty),
+            sales: parseFloat(baseSales.toFixed(1))
+        };
+    }
+
+    if (applyJitter) {
+        // Miaoshou slightly different jitter profile
+        const stockChange = Math.floor(Math.random() * 7) - 3; 
+        let newStock = db[cleanSku].stock + stockChange;
+        if (newStock < 0) newStock = 0;
+        
+        if (Math.random() > 0.9) newStock += 20; // Random small restock
+
+        db[cleanSku].stock = newStock;
+        
+        const salesChange = (Math.random() - 0.5) * 1.5;
+        let newSales = db[cleanSku].sales + salesChange;
+        if (newSales < 0) newSales = 0;
+        db[cleanSku].sales = parseFloat(newSales.toFixed(1));
+    }
+
+    saveMockDb(db);
     return db[cleanSku];
 };
 
@@ -83,17 +95,36 @@ export const fetchMiaoshouInventory = async (
   }
 
   // 2. Offline / Simulation Mode
-  await new Promise(resolve => setTimeout(resolve, 600)); // Slightly faster than Lingxing to feel different
+  await new Promise(resolve => setTimeout(resolve, 600)); 
   
-  return localRecords.map(record => {
-      const data = getOrGenerateMockData(record);
-      return {
+  const results: MiaoshouInventoryItem[] = [];
+
+  // A. Local
+  localRecords.forEach(record => {
+      const data = getAndJitterMockData(record.sku, record.productName, record.quantity, record.dailySales, true);
+      results.push({
           product_sku: record.sku,
           cn_name: record.productName,
           stock_quantity: data.stock, 
           shipping_quantity: 0
-      };
+      });
   });
+
+  // B. Discovery
+  MOCK_MS_EXTRA_ITEMS.forEach(extra => {
+      const exists = localRecords.some(r => r.sku.toLowerCase() === extra.sku.toLowerCase());
+      if (!exists) {
+          const data = getAndJitterMockData(extra.sku, extra.productName, extra.defaultStock, extra.defaultSales, false);
+          results.push({
+              product_sku: extra.sku,
+              cn_name: extra.productName,
+              stock_quantity: data.stock, 
+              shipping_quantity: 0
+          });
+      }
+  });
+
+  return results;
 };
 
 export const fetchMiaoshouSales = async (
@@ -104,7 +135,6 @@ export const fetchMiaoshouSales = async (
     proxyUrl?: string
   ): Promise<MiaoshouSalesItem[]> => {
     
-    // 1. Real API Mode
     if (proxyUrl && proxyUrl.startsWith('http')) {
         if (!appKey || !appSecret) throw new Error("真实连接需要 App Key 和 Secret");
         try {
@@ -121,16 +151,34 @@ export const fetchMiaoshouSales = async (
         }
     }
   
-    // 2. Offline / Simulation Mode
     await new Promise(resolve => setTimeout(resolve, 600));
     
-    return localRecords.map(record => {
-        const data = getOrGenerateMockData(record);
-        return {
+    const results: MiaoshouSalesItem[] = [];
+
+    // Local
+    localRecords.forEach(record => {
+        const data = getAndJitterMockData(record.sku, record.productName, record.quantity, record.dailySales, true);
+        results.push({
             product_sku: record.sku,
-            avg_sales_7d: data.sales, // Mock data usually flat
+            avg_sales_7d: data.sales,
             avg_sales_15d: data.sales,
             avg_sales_30d: data.sales
-        };
+        });
     });
+
+    // Discovery
+    MOCK_MS_EXTRA_ITEMS.forEach(extra => {
+        const exists = localRecords.some(r => r.sku.toLowerCase() === extra.sku.toLowerCase());
+        if (!exists) {
+            const data = getAndJitterMockData(extra.sku, extra.productName, extra.defaultStock, extra.defaultSales, false);
+            results.push({
+                product_sku: extra.sku,
+                avg_sales_7d: data.sales,
+                avg_sales_15d: data.sales,
+                avg_sales_30d: data.sales
+            });
+        }
+    });
+
+    return results;
   };

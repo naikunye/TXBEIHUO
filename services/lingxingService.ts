@@ -1,4 +1,3 @@
-
 import { ReplenishmentRecord } from "../types";
 
 // Interface for Lingxing Inventory Data
@@ -36,9 +35,15 @@ export const resetMockErpData = () => {
     localStorage.removeItem(STORAGE_KEY_MOCK_DB);
 };
 
+// Simulate "ERP Only" products that aren't in the local system yet
+const MOCK_ERP_EXTRA_ITEMS = [
+    { sku: 'LX-NEW-2025', productName: '2025新款无线充 (ERP)', defaultStock: 500, defaultSales: 35 },
+    { sku: 'LX-ACC-007', productName: '磁吸手机支架 Pro', defaultStock: 120, defaultSales: 8 }
+];
+
 export const updateMockErpItem = (sku: string, field: 'stock' | 'sales', value: number) => {
     const db = getMockDb();
-    const cleanSku = sku.trim(); // Normalize
+    const cleanSku = sku.trim(); 
     if (!db[cleanSku]) {
         db[cleanSku] = { stock: 0, sales: 0 };
     }
@@ -52,41 +57,47 @@ export const bulkImportRealData = (data: { sku: string; qty: number }[]) => {
     let count = 0;
     data.forEach(item => {
         const cleanSku = item.sku.trim();
-        // Create entry if missing
         if (!db[cleanSku]) db[cleanSku] = { stock: 0, sales: 0 };
-        
-        // Force update stock
         db[cleanSku].stock = item.qty;
-        
-        // Init sales if missing
         if (db[cleanSku].sales === undefined) db[cleanSku].sales = 0;
-        
         count++;
     });
     saveMockDb(db);
     return count;
 };
 
-const getOrGenerateMockData = (record: ReplenishmentRecord) => {
+// Helper to get data and optionally APPLY JITTER (simulate live changes)
+const getAndJitterMockData = (sku: string, productName: string, baseQty: number, baseSales: number, applyJitter: boolean) => {
     const db = getMockDb();
-    const cleanSku = record.sku.trim();
+    const cleanSku = sku.trim();
     
-    // Check if we have data for this SKU (Mocked or Imported)
+    // Initialize if missing
     if (!db[cleanSku]) {
-        // If not found, generate random data ONCE and save it
-        const hasDrift = Math.random() > 0.3; 
-        const randomDiff = hasDrift ? Math.floor(Math.random() * 30) - 10 : 0;
-        const mockStock = Math.max(0, record.quantity + (randomDiff === 0 && hasDrift ? 5 : randomDiff));
-        const volatility = 0.2;
-        const mockSales = Math.max(0, record.dailySales + (record.dailySales * volatility * (Math.random() - 0.5)));
-
         db[cleanSku] = {
-            stock: mockStock,
-            sales: parseFloat(mockSales.toFixed(1))
+            stock: Math.max(0, baseQty),
+            sales: parseFloat(baseSales.toFixed(1))
         };
-        saveMockDb(db);
     }
-    
+
+    // Apply Jitter (Simulate sales reducing stock, or inbound increasing it)
+    if (applyJitter) {
+        const stockChange = Math.floor(Math.random() * 5) - 2; // -2 to +2 variation
+        let newStock = db[cleanSku].stock + stockChange;
+        if (newStock < 0) newStock = 0;
+        
+        // Small chance of restocking event
+        if (Math.random() > 0.95) newStock += 50;
+
+        db[cleanSku].stock = newStock;
+        
+        // Sales fluctuation
+        const salesChange = (Math.random() - 0.5) * 2; // +/- 1
+        let newSales = db[cleanSku].sales + salesChange;
+        if (newSales < 0) newSales = 0;
+        db[cleanSku].sales = parseFloat(newSales.toFixed(1));
+    }
+
+    saveMockDb(db);
     return db[cleanSku];
 };
 
@@ -115,18 +126,41 @@ export const fetchLingxingInventory = async (
   }
 
   // 2. Offline / Simulation Mode
-  await new Promise(resolve => setTimeout(resolve, 300)); // Faster simulation
+  await new Promise(resolve => setTimeout(resolve, 600)); 
   
-  return localRecords.map(record => {
-      const data = getOrGenerateMockData(record);
-      return {
+  const results: LingxingInventoryItem[] = [];
+
+  // A. Process Local Records (Matched)
+  localRecords.forEach(record => {
+      // Simulate live change (jitter) so user sees updates
+      const data = getAndJitterMockData(record.sku, record.productName, record.quantity, record.dailySales, true);
+      results.push({
           sku: record.sku,
           productName: record.productName,
           fbaStock: data.stock, 
           localStock: 0,
           onWayStock: 0
-      };
+      });
   });
+
+  // B. Inject "ERP Only" Items (Discovery)
+  MOCK_ERP_EXTRA_ITEMS.forEach(extra => {
+      // Only add if not already matched by a local record (case-insensitive check)
+      const exists = localRecords.some(r => r.sku.toLowerCase() === extra.sku.toLowerCase());
+      if (!exists) {
+          // Don't apply jitter heavily to these static ones, or do it gently
+          const data = getAndJitterMockData(extra.sku, extra.productName, extra.defaultStock, extra.defaultSales, false);
+          results.push({
+              sku: extra.sku,
+              productName: extra.productName,
+              fbaStock: data.stock,
+              localStock: 0,
+              onWayStock: 0
+          });
+      }
+  });
+
+  return results;
 };
 
 export const fetchLingxingSales = async (
@@ -143,13 +177,27 @@ export const fetchLingxingSales = async (
   
     await new Promise(resolve => setTimeout(resolve, 300));
     
-    return localRecords.map(record => {
-        const data = getOrGenerateMockData(record);
-        return {
-            sku: record.sku,
-            avgDailySales: data.sales
-        };
+    // Combine local + extra for sales fetching too, technically sales should update both
+    // For simplicity, we just return updates for requested local records plus extras if we want fully robust sync
+    
+    const results: LingxingSalesItem[] = [];
+
+    // Local
+    localRecords.forEach(record => {
+        const data = getAndJitterMockData(record.sku, record.productName, record.quantity, record.dailySales, true);
+        results.push({ sku: record.sku, avgDailySales: data.sales });
     });
+
+    // Extras
+    MOCK_ERP_EXTRA_ITEMS.forEach(extra => {
+        const exists = localRecords.some(r => r.sku.toLowerCase() === extra.sku.toLowerCase());
+        if (!exists) {
+            const data = getAndJitterMockData(extra.sku, extra.productName, extra.defaultStock, extra.defaultSales, false);
+            results.push({ sku: extra.sku, avgDailySales: data.sales });
+        }
+    });
+
+    return results;
   };
 
 export const calculateInventoryDiff = (
@@ -166,7 +214,6 @@ export const calculateInventoryDiff = (
     }[] = [];
 
     localRecords.forEach(local => {
-        // Strict SKU matching (both trimmed)
         const erpItem = erpData.find(e => e.sku.trim() === local.sku.trim());
         if (erpItem) {
             const totalErp = erpItem.fbaStock;
