@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { ReplenishmentRecord } from '../types';
-import { X, Check, Database, Link as LinkIcon, Lock, ClipboardPaste, FileText, Save, ArrowRight, PlusCircle, AlertTriangle, TrendingUp, Package, RefreshCw, Key, Globe, Eye, EyeOff, Layers, Zap } from 'lucide-react';
+import { X, Check, Database, Link as LinkIcon, Lock, ClipboardPaste, FileText, Save, ArrowRight, PlusCircle, AlertTriangle, TrendingUp, Package, RefreshCw, Key, Globe, Eye, EyeOff, Layers, Zap, Clock, Power, HelpCircle, ExternalLink } from 'lucide-react';
 import { fetchLingxingInventory, fetchLingxingSales } from '../services/lingxingService';
 import { fetchMiaoshouInventory, fetchMiaoshouSales } from '../services/miaoshouService';
 
@@ -30,7 +30,12 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
   const [field2, setField2] = useState(''); 
   const [proxyUrl, setProxyUrl] = useState(''); 
   
+  // Auto Sync Settings
+  const [autoSync, setAutoSync] = useState(false);
+  const [syncInterval, setSyncInterval] = useState(60); // Minutes
+
   const [showSecret, setShowSecret] = useState(false);
+  const [showGuide, setShowGuide] = useState(false); // New: Help Guide State
   const [apiResults, setApiResults] = useState<SyncItem[]>([]);
   const [isApiLoading, setIsApiLoading] = useState(false);
 
@@ -41,6 +46,7 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
           setPasteData('');
           setApiResults([]);
           setIsApiLoading(false);
+          setShowGuide(false);
       }
   }, [isOpen, platform]);
 
@@ -49,6 +55,12 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
       setField1(localStorage.getItem(`${prefix}_app_id`) || '');
       setField2(localStorage.getItem(`${prefix}_token`) || '');
       setProxyUrl(localStorage.getItem(`${prefix}_proxy_url`) || '');
+      
+      // Global Auto Sync Settings
+      const savedAutoSync = localStorage.getItem('erp_auto_sync') === 'true';
+      const savedInterval = parseInt(localStorage.getItem('erp_sync_interval') || '60');
+      setAutoSync(savedAutoSync);
+      setSyncInterval(savedInterval);
   };
 
   const saveConfig = () => {
@@ -56,6 +68,11 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
       localStorage.setItem(`${prefix}_app_id`, field1);
       localStorage.setItem(`${prefix}_token`, field2);
       localStorage.setItem(`${prefix}_proxy_url`, proxyUrl);
+      
+      // Save global preference for whichever platform is active currently
+      localStorage.setItem('erp_active_platform', platform);
+      localStorage.setItem('erp_auto_sync', autoSync.toString());
+      localStorage.setItem('erp_sync_interval', syncInterval.toString());
   };
 
   // --- Logic 1: Parse Paste Data ---
@@ -204,6 +221,7 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
   if (!isOpen) return null;
 
   const handleApply = () => {
+      saveConfig(); // Ensure auto settings are saved
       const updates = [...records];
       const newRecords: ReplenishmentRecord[] = [];
       let updateCount = 0;
@@ -366,7 +384,18 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
 
                 {/* 2. Input Area (Changes based on Tab) */}
                 <div className="flex-1 flex flex-col">
-                    <label className="block text-xs font-bold text-gray-500 uppercase mb-2">2. 数据来源</label>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-2 flex justify-between items-center">
+                        <span>2. 数据来源</span>
+                        {activeTab === 'api' && (
+                            <button 
+                                onClick={() => setShowGuide(!showGuide)}
+                                className={`flex items-center gap-1 text-[10px] px-2 py-0.5 rounded transition-colors ${showGuide ? 'bg-gray-200 text-gray-700' : 'text-blue-500 hover:bg-blue-50'}`}
+                            >
+                                <HelpCircle size={10} />
+                                {showGuide ? '隐藏指引' : '如何获取凭证?'}
+                            </button>
+                        )}
+                    </label>
                     
                     {activeTab === 'import' ? (
                         <div className="flex-1 flex flex-col">
@@ -387,6 +416,31 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
                         </div>
                     ) : (
                         <div className="space-y-4 animate-fade-in">
+                             {/* HELP GUIDE SECTION */}
+                             {showGuide && (
+                                 <div className={`text-xs p-3 rounded-lg border mb-2 leading-relaxed ${isLingxing ? 'bg-blue-50 border-blue-100 text-blue-800' : 'bg-orange-50 border-orange-100 text-orange-800'}`}>
+                                     <h4 className="font-bold flex items-center gap-1 mb-2">
+                                         {isLingxing ? '领星对接指引' : '秒手对接指引'}
+                                         <ExternalLink size={10} />
+                                     </h4>
+                                     {isLingxing ? (
+                                         <ol className="list-decimal list-inside space-y-1 opacity-90">
+                                             <li>登录领星 OMS 系统</li>
+                                             <li>进入 <strong>设置 (Settings)</strong> -&gt; <strong>开发者工具 (Developer)</strong></li>
+                                             <li>创建一个新的 Access Token</li>
+                                             <li>复制 App ID 和 Token 到下方</li>
+                                         </ol>
+                                     ) : (
+                                         <ol className="list-decimal list-inside space-y-1 opacity-90">
+                                             <li>访问 <a href="#" className="underline font-bold">秒手开放平台 (Open Platform)</a></li>
+                                             <li>注册开发者账号并创建<strong>“自研应用”</strong></li>
+                                             <li>在应用详情页获取 <strong>App Key</strong> 和 <strong>App Secret</strong></li>
+                                             <li>注意：需配置 IP 白名单或使用下方代理</li>
+                                         </ol>
+                                     )}
+                                 </div>
+                             )}
+
                              <div>
                                  <label className="text-[10px] text-gray-500 font-bold mb-1 block">
                                      {isLingxing ? 'App ID' : 'App Key'}
@@ -439,9 +493,41 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
                                         onChange={e => setProxyUrl(e.target.value)}
                                      />
                                  </div>
-                                 <p className="text-[10px] text-gray-400 mt-1">
-                                    * 若未配置代理，系统将使用模拟数据进行演示。
+                                 <p className="text-[10px] text-gray-400 mt-1 leading-tight">
+                                    * 浏览器安全策略限制直接调用第三方 API。<br/>
+                                    * 若未配置代理，系统将使用<strong>模拟数据</strong>演示。
                                  </p>
+                             </div>
+
+                             {/* Auto Sync Settings */}
+                             <div className="bg-gray-100 p-3 rounded-xl mt-4 border border-gray-200">
+                                 <div className="flex items-center justify-between mb-2">
+                                     <span className="text-xs font-bold text-gray-600 flex items-center gap-1">
+                                         <Power size={12} className={autoSync ? 'text-green-500' : 'text-gray-400'}/> 
+                                         自动化托管
+                                     </span>
+                                     <button 
+                                        onClick={() => setAutoSync(!autoSync)}
+                                        className={`w-8 h-4 rounded-full p-0.5 transition-colors duration-300 ${autoSync ? 'bg-green-500' : 'bg-gray-300'}`}
+                                     >
+                                         <div className={`w-3 h-3 bg-white rounded-full shadow-sm transform transition-transform duration-300 ${autoSync ? 'translate-x-4' : 'translate-x-0'}`}></div>
+                                     </button>
+                                 </div>
+                                 {autoSync && (
+                                     <div className="flex items-center gap-2 animate-fade-in">
+                                         <Clock size={12} className="text-gray-400" />
+                                         <select 
+                                            value={syncInterval}
+                                            onChange={(e) => setSyncInterval(parseInt(e.target.value))}
+                                            className="text-xs bg-white border border-gray-300 rounded px-2 py-1 outline-none focus:border-blue-500 flex-1"
+                                         >
+                                             <option value={15}>每 15 分钟 (高频)</option>
+                                             <option value={30}>每 30 分钟</option>
+                                             <option value={60}>每 1 小时 (推荐)</option>
+                                             <option value={240}>每 4 小时</option>
+                                         </select>
+                                     </div>
+                                 )}
                              </div>
 
                              <button 

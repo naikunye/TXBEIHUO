@@ -1,5 +1,4 @@
-
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   LayoutDashboard, 
   Plus, 
@@ -55,7 +54,8 @@ import {
   Trash2,
   Printer,
   CalendarClock,
-  RefreshCw // Import new icon
+  RefreshCw,
+  Clock // Import new icon
 } from 'lucide-react';
 import { ReplenishmentRecord, Store, CalculatedMetrics } from './types';
 import { MOCK_DATA_INITIAL } from './constants';
@@ -78,10 +78,12 @@ import { ConfirmDialog } from './components/ConfirmDialog';
 import { RecycleBinModal } from './components/RecycleBinModal';
 import { LabelGeneratorModal } from './components/LabelGeneratorModal'; 
 import { RestockPlanModal } from './components/RestockPlanModal'; 
-import { ErpSyncModal } from './components/ErpSyncModal'; // Import
+import { ErpSyncModal } from './components/ErpSyncModal'; 
 import { ToastContainer, ToastMessage, ToastType } from './components/Toast'; 
 import { analyzeInventory, generateAdStrategy, generateSelectionStrategy, generateMarketingContent, analyzeLogisticsChannels } from './services/geminiService';
 import { supabase, isSupabaseConfigured } from './lib/supabaseClient';
+import { fetchLingxingInventory, fetchLingxingSales } from './services/lingxingService';
+import { fetchMiaoshouInventory, fetchMiaoshouSales } from './services/miaoshouService';
 
 type ViewState = 'overview' | 'inventory' | 'analytics' | 'calculator' | 'logistics' | 'marketing';
 
@@ -110,6 +112,7 @@ function App() {
   const [records, setRecords] = useState<ReplenishmentRecord[]>([]);
   const [isDataLoaded, setIsDataLoaded] = useState(false);
   const [lastErpSync, setLastErpSync] = useState<Date | null>(null);
+  const [isAutoSyncActive, setIsAutoSyncActive] = useState(false); // Track if background sync is enabled
 
   // --- ERP Table State (Sorting & Pagination) ---
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>({ key: 'date', direction: 'desc' });
@@ -131,7 +134,7 @@ function App() {
   const [isRestockPlanOpen, setIsRestockPlanOpen] = useState(false);
 
   // --- ERP Sync Modal State ---
-  const [isErpSyncOpen, setIsErpSyncOpen] = useState(false); // NEW State
+  const [isErpSyncOpen, setIsErpSyncOpen] = useState(false); 
 
   // --- Delete Confirmation & Trash State ---
   const [deleteConfirm, setDeleteConfirm] = useState<{ isOpen: boolean, id: string | null }>({ isOpen: false, id: null });
@@ -163,6 +166,9 @@ function App() {
   // --- Toast State ---
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
+  // Refs for auto-sync intervals
+  const autoSyncRef = useRef<number | null>(null);
+
   const addToast = (message: string, type: ToastType = 'info') => {
     const id = Date.now().toString();
     setToasts((prev) => [...prev, { id, message, type }]);
@@ -191,6 +197,125 @@ function App() {
           catch(err) { console.error('Cloud Delete Error:', err); }
       }
   };
+
+  // --- Auto-Sync Logic (Background Polling) ---
+  const performBackgroundSync = async () => {
+      if (!isDataLoaded || records.length === 0) return;
+
+      const enabled = localStorage.getItem('erp_auto_sync') === 'true';
+      if (!enabled) return;
+
+      const platform = localStorage.getItem('erp_active_platform') || 'lingxing';
+      const prefix = platform === 'lingxing' ? 'lx' : 'ms';
+      const appId = localStorage.getItem(`${prefix}_app_id`);
+      const token = localStorage.getItem(`${prefix}_token`);
+      const proxyUrl = localStorage.getItem(`${prefix}_proxy_url`) || undefined;
+
+      if (!appId || !token) return; // Silent fail if no credentials
+
+      try {
+          console.log(`[AutoSync] Starting ${platform} sync...`);
+          
+          let updatedRecords = [...records];
+          let hasChanges = false;
+
+          // 1. Fetch Inventory
+          if (platform === 'lingxing') {
+              const invData = await fetchLingxingInventory(appId, token, records, proxyUrl);
+              invData.forEach(item => {
+                  const idx = updatedRecords.findIndex(r => r.sku === item.sku);
+                  if (idx !== -1 && updatedRecords[idx].quantity !== item.fbaStock) {
+                      updatedRecords[idx].quantity = item.fbaStock;
+                      hasChanges = true;
+                  }
+              });
+          } else {
+              const invData = await fetchMiaoshouInventory(appId, token, records, proxyUrl);
+              invData.forEach(item => {
+                  const idx = updatedRecords.findIndex(r => r.sku === item.product_sku);
+                  if (idx !== -1 && updatedRecords[idx].quantity !== item.stock_quantity) {
+                      updatedRecords[idx].quantity = item.stock_quantity;
+                      hasChanges = true;
+                  }
+              });
+          }
+
+          // 2. Fetch Sales (Simpler update for sales to avoid too many requests, maybe skip in background or do light update)
+          // For now, let's update sales too as it's critical for DOS
+          if (platform === 'lingxing') {
+              const salesData = await fetchLingxingSales(appId, token, records, 30, proxyUrl);
+              salesData.forEach(item => {
+                  const idx = updatedRecords.findIndex(r => r.sku === item.sku);
+                  if (idx !== -1 && updatedRecords[idx].dailySales !== item.avgDailySales) {
+                      updatedRecords[idx].dailySales = item.avgDailySales;
+                      hasChanges = true;
+                  }
+              });
+          } else {
+              const salesData = await fetchMiaoshouSales(appId, token, records, 30, proxyUrl);
+              salesData.forEach(item => {
+                  const idx = updatedRecords.findIndex(r => r.sku === item.product_sku);
+                  if (idx !== -1 && updatedRecords[idx].dailySales !== item.avg_sales_30d) {
+                      updatedRecords[idx].dailySales = item.avg_sales_30d;
+                      hasChanges = true;
+                  }
+              });
+          }
+
+          if (hasChanges) {
+              setRecords(updatedRecords);
+              setLastErpSync(new Date());
+              addToast(`自动同步完成: 更新了 ${platform === 'lingxing' ? '领星' : '秒手'} 数据`, 'success');
+              
+              // Sync to cloud if needed
+              if (workspaceId && isSupabaseConfigured()) {
+                  for(const rec of updatedRecords) await syncItemToCloud(rec);
+              }
+          } else {
+              console.log('[AutoSync] No changes detected.');
+          }
+
+      } catch (err) {
+          console.error('[AutoSync] Failed', err);
+          // Don't toast error to avoid annoying user in background, just log
+      }
+  };
+
+  // Setup Interval
+  useEffect(() => {
+      if (!isDataLoaded) return;
+
+      const checkAndSetupInterval = () => {
+          const enabled = localStorage.getItem('erp_auto_sync') === 'true';
+          const intervalMins = parseInt(localStorage.getItem('erp_sync_interval') || '60');
+          
+          setIsAutoSyncActive(enabled);
+
+          if (autoSyncRef.current) {
+              clearInterval(autoSyncRef.current);
+              autoSyncRef.current = null;
+          }
+
+          if (enabled) {
+              // Initial sync after 5s to ensure load
+              // setTimeout(performBackgroundSync, 5000); 
+              
+              const intervalMs = intervalMins * 60 * 1000;
+              autoSyncRef.current = window.setInterval(performBackgroundSync, intervalMs);
+              console.log(`[AutoSync] Enabled. Interval: ${intervalMins} mins`);
+          }
+      };
+
+      // Check on mount and when modal closes (potentially changing settings)
+      checkAndSetupInterval();
+
+      // Listen for localstorage changes isn't trivial in same window without event dispatch, 
+      // but we re-check when modal closes via `useEffect` dependency on `isErpSyncOpen` below.
+      
+      return () => {
+          if (autoSyncRef.current) clearInterval(autoSyncRef.current);
+      };
+  }, [isDataLoaded, isErpSyncOpen]); // Re-run when sync modal closes to apply new settings
 
   // --- Keyboard Shortcuts ---
   useEffect(() => {
@@ -605,7 +730,7 @@ function App() {
       // Force new array reference to ensure React triggers re-render
       setRecords([...updatedRecords]);
       setLastErpSync(new Date()); // Update timestamp
-      addToast("领星 OMS 数据同步成功！", 'success');
+      addToast("领星/秒手 ERP 数据同步成功！", 'success');
       
       // Batch save to cloud
       if (workspaceId && isSupabaseConfigured()) {
@@ -797,6 +922,11 @@ function App() {
                         <List size={18} className="text-gray-400" />
                         <span className="text-sm font-semibold text-gray-700">库存清单</span>
                         <span className="text-xs bg-gray-200 text-gray-600 px-2 py-0.5 rounded-full">{processedData.length}</span>
+                        {isAutoSyncActive && (
+                            <span className="hidden sm:flex items-center gap-1 bg-green-100 text-green-700 px-2 py-0.5 rounded-full text-xs font-bold border border-green-200 animate-pulse">
+                                <Clock size={10} /> Auto: ON
+                            </span>
+                        )}
                       </div>
                       <div className="flex items-center gap-2">
                           {/* New ERP Sync Button with Timestamp */}
@@ -811,7 +941,7 @@ function App() {
                                 className="flex items-center gap-1.5 text-sm font-bold text-blue-600 bg-blue-50 px-3 py-1.5 rounded-lg hover:bg-blue-100 transition-colors shadow-sm border border-blue-200"
                               >
                                 <RefreshCw size={16} /> 
-                                <span className="hidden sm:inline">同步领星 ERP</span>
+                                <span className="hidden sm:inline">ERP 同步</span>
                                 <span className="sm:hidden">ERP</span>
                               </button>
                           </div>
