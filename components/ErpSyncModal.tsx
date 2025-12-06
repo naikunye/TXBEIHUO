@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { ReplenishmentRecord } from '../types';
-import { X, Check, Database, Link as LinkIcon, Lock, ClipboardPaste, FileText, Save, ArrowRight, PlusCircle, AlertTriangle, TrendingUp, Package, RefreshCw, Key, Globe, Eye, EyeOff, Layers, Zap, Clock, Power, HelpCircle, ExternalLink, PlayCircle, ServerOff, Wifi, Code, Copy, Terminal, Download, Folder, FileCode, AlertCircle, Search } from 'lucide-react';
+import { X, Check, Database, Link as LinkIcon, Lock, ClipboardPaste, FileText, Save, ArrowRight, PlusCircle, AlertTriangle, TrendingUp, Package, RefreshCw, Key, Globe, Eye, EyeOff, Layers, Zap, Clock, Power, HelpCircle, ExternalLink, PlayCircle, ServerOff, Wifi, Code, Copy, Terminal, Download, Folder, FileCode, AlertCircle, Search, Bug } from 'lucide-react';
 import { fetchLingxingInventory, fetchLingxingSales } from '../services/lingxingService';
 import { fetchMiaoshouInventory, fetchMiaoshouSales } from '../services/miaoshouService';
 
@@ -30,8 +30,9 @@ const CODE_VERCEL = `{
   ]
 }`;
 
+// Updated Proxy Code: Handles both URL path routing AND Query Param routing for maximum compatibility
 const CODE_PROXY = `export default async function handler(req, res) {
-  // 1. 设置跨域头 (允许探行前端访问)
+  // 1. 设置跨域头
   res.setHeader('Access-Control-Allow-Credentials', true);
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,POST');
@@ -39,28 +40,27 @@ const CODE_PROXY = `export default async function handler(req, res) {
 
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  // 2. 健康检查 (防止 404 误解)
+  // 2. 健康检查
   if (!req.body || req.method === 'GET') {
       return res.status(200).json({ 
           status: "ok", 
           message: "Tanxing Proxy is Running!",
-          time: new Date().toISOString()
+          url: req.url 
       });
   }
 
   try {
     const { appId, accessToken, appKey, appSecret, skus } = req.body;
+    // 兼容：既支持 URL 路径判断，也支持 Query 参数判断 (?endpoint=inventory)
+    // 这是为了解决 Vercel 路由重写失败时的 404 问题
+    const urlStr = req.url || '';
+    const queryEndpoint = req.query?.endpoint || '';
     
-    // ----------------------------------------
-    // 这里是为了演示的模拟逻辑。
-    // 真实使用时，请替换为 fetch() 调用领星/秒手接口
-    // ----------------------------------------
-    
-    // 模拟库存返回
-    if (req.url.includes('inventory')) {
+    // --- 模拟库存返回 ---
+    if (urlStr.includes('inventory') || queryEndpoint === 'inventory') {
       const mockData = (skus || []).map(sku => ({
         sku: sku,
-        product_sku: sku, // 兼容秒手
+        product_sku: sku,
         productName: \`[Proxy] \${sku}\`,
         cn_name: \`[Proxy] \${sku}\`,
         fbaStock: Math.floor(Math.random() * 200) + 20,
@@ -76,8 +76,8 @@ const CODE_PROXY = `export default async function handler(req, res) {
       return res.status(200).json(mockData);
     }
 
-    // 模拟销量返回
-    if (req.url.includes('sales')) {
+    // --- 模拟销量返回 ---
+    if (urlStr.includes('sales') || queryEndpoint === 'sales') {
       const mockData = (skus || []).map(sku => ({
         sku: sku, product_sku: sku,
         avgDailySales: (Math.random() * 10).toFixed(1),
@@ -86,7 +86,7 @@ const CODE_PROXY = `export default async function handler(req, res) {
       return res.status(200).json(mockData);
     }
 
-    res.status(404).json({ error: "Unknown endpoint" });
+    res.status(404).json({ error: "Unknown endpoint", receivedUrl: urlStr });
 
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -107,6 +107,7 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
   const [proxyUrl, setProxyUrl] = useState(''); 
   const [isTestingProxy, setIsTestingProxy] = useState(false);
   const [proxyStatus, setProxyStatus] = useState<'idle' | 'success' | 'error'>('idle');
+  const [proxyStatusMsg, setProxyStatusMsg] = useState('');
   
   // Auto Sync Settings
   const [autoSync, setAutoSync] = useState(false);
@@ -130,6 +131,7 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
           setShowProxySetup(false);
           setConnectionMode(null);
           setProxyStatus('idle');
+          setProxyStatusMsg('');
       }
   }, [isOpen, platform]);
 
@@ -167,47 +169,53 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
       document.body.removeChild(link);
   };
 
-  // --- Auto-Detect Proxy URL Logic ---
+  // --- Auto-Detect Proxy URL Logic (Enhanced) ---
   const handleTestConnection = async () => {
       if (!proxyUrl) return;
       setIsTestingProxy(true);
       setProxyStatus('idle');
+      setProxyStatusMsg('');
 
       let cleanUrl = proxyUrl.trim().replace(/\/$/, "");
       
-      // Attempt 1: Try URL as provided
-      try {
-          const res = await fetch(cleanUrl);
-          const json = await res.json();
-          if (json.status === 'ok') {
-              setProxyStatus('success');
-              setIsTestingProxy(false);
-              alert("✅ 连接成功！代理服务器正常运行。");
-              return;
-          }
-      } catch (e) {
-          // Ignore, try next
-      }
+      // Probing List: Priorities
+      // 1. Exact URL provided
+      // 2. URL + /api/proxy (Standard Vercel path)
+      // 3. URL + /api (If user renamed to index.js)
+      // 4. URL + /proxy (If user uploaded flat)
+      
+      const probePaths = [
+          cleanUrl,
+          `${cleanUrl}/api/proxy`,
+          `${cleanUrl}/api`,
+          `${cleanUrl}/proxy`
+      ];
 
-      // Attempt 2: Try appending /api/proxy (Common mistake: user inputs root URL but file is in api/proxy.js and no rewrite)
-      try {
-          const altUrl = `${cleanUrl}/api/proxy`;
-          const res = await fetch(altUrl);
-          const json = await res.json();
-          if (json.status === 'ok') {
-              setProxyStatus('success');
-              setProxyUrl(altUrl); // AUTO FIX THE URL
-              setIsTestingProxy(false);
-              alert(`✅ 连接成功！\n\n注意：您的代理服务位于 ${altUrl}。\n系统已自动为您修正了链接。`);
-              return;
+      for (const url of probePaths) {
+          try {
+              console.log("Probing:", url);
+              const res = await fetch(url);
+              const contentType = res.headers.get("content-type");
+              
+              if (res.ok && contentType && contentType.includes("application/json")) {
+                  const json = await res.json();
+                  if (json.status === 'ok') {
+                      setProxyStatus('success');
+                      setProxyStatusMsg(`成功连接到: ${url}`);
+                      setProxyUrl(url); // Auto-correct the URL in the input
+                      setIsTestingProxy(false);
+                      // alert(`✅ 连接成功！\n\n系统已自动修正链接为：\n${url}`);
+                      return;
+                  }
+              }
+          } catch (e) {
+              console.log("Probe failed for:", url);
           }
-      } catch (e) {
-          // Ignore
       }
 
       setProxyStatus('error');
+      setProxyStatusMsg('无法连接。请检查 Vercel 部署状态 (404/500)。');
       setIsTestingProxy(false);
-      alert("❌ 连接失败 (404/500)。\n\n请检查：\n1. Vercel 部署是否成功（三个绿勾）。\n2. 点击右上方「如何搭建」核对 api 文件夹结构。");
   };
 
   // --- Logic 1: Parse Paste Data ---
@@ -670,19 +678,25 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
                                             className={`w-full pl-9 pr-3 py-2 rounded-lg border text-sm focus:ring-2 outline-none transition-all ${proxyStatus === 'success' ? 'border-green-300 focus:ring-green-100 bg-green-50 text-green-700' : proxyStatus === 'error' ? 'border-red-300 focus:ring-red-100 bg-red-50 text-red-700' : 'border-gray-300'}`}
                                             placeholder="https://your-app.vercel.app" 
                                             value={proxyUrl} 
-                                            onChange={e => { setProxyUrl(e.target.value); setProxyStatus('idle'); }}
+                                            onChange={e => { setProxyUrl(e.target.value); setProxyStatus('idle'); setProxyStatusMsg(''); }}
                                         />
                                      </div>
                                      <button 
                                         onClick={handleTestConnection}
                                         disabled={isTestingProxy || !proxyUrl}
                                         className="bg-gray-100 hover:bg-gray-200 text-gray-600 p-2 rounded-lg border border-gray-300 transition-colors disabled:opacity-50"
-                                        title="自动检测并修复链接"
+                                        title="自动检测并修复链接 (智能探测 /api/proxy)"
                                     >
                                         {isTestingProxy ? <RefreshCw className="animate-spin" size={16}/> : <Search size={16}/>}
                                     </button>
                                  </div>
-                                 {proxyStatus === 'success' && <p className="text-[10px] text-green-600 mt-1 flex items-center gap-1"><Check size={10}/> 连接成功</p>}
+                                 {proxyStatus === 'success' && <p className="text-[10px] text-green-600 mt-1 flex items-center gap-1"><Check size={10}/> {proxyStatusMsg || '连接成功'}</p>}
+                                 {proxyStatus === 'error' && (
+                                     <div className="mt-2 text-[10px] text-red-500 bg-red-50 p-2 rounded border border-red-100 space-y-1">
+                                         <p className="font-bold flex items-center gap-1"><AlertTriangle size={10}/> {proxyStatusMsg}</p>
+                                         <p>请点击右上角「如何搭建」检查 api 文件夹结构。</p>
+                                     </div>
+                                 )}
                              </div>
 
                              {/* Split Action Buttons */}
