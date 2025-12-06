@@ -126,6 +126,79 @@ export const analyzeInventory = async (records: ReplenishmentRecord[]) => {
   }
 };
 
+export const analyzeLogisticsChannels = async (records: ReplenishmentRecord[]) => {
+  try {
+    const ai = getAiClient();
+    // Prepare data focused on logistics metrics
+    const dataSummary = records.map(r => {
+      const m = calculateMetrics(r);
+      return {
+        sku: r.sku,
+        name: r.productName,
+        qty: r.quantity,
+        totalWeightKg: m.totalWeightKg.toFixed(1),
+        totalVolumeCbm: m.totalVolumeCbm.toFixed(3),
+        currentMethod: r.shippingMethod,
+        shippingCostCNY: m.firstLegCostCNY.toFixed(0),
+        productValueCNY: (r.quantity * r.unitPriceCNY).toFixed(0),
+        logisticsRatio: ((m.firstLegCostCNY / ((r.quantity * r.unitPriceCNY) || 1)) * 100).toFixed(1) + '%',
+        turnoverDays: m.daysOfSupply.toFixed(0)
+      };
+    });
+
+    const prompt = `
+      你是一位资深的跨境电商物流专家，专注于头程物流渠道优化 (Head Haul Optimization)。
+      请根据以下产品的物流属性（重量、体积）、货值占比和周转情况，生成一份《头程物流渠道优选报告》。
+
+      数据摘要: ${JSON.stringify(dataSummary)}
+
+      **分析逻辑与目标：**
+      1. **降本增效 (空转海)**: 找出当前走空运 (Air)，但物流成本占比过高(>30%)、重量/体积较大、或者非急缺货(周转>45天)的产品，强烈建议转为海运 (Sea)。计算预计节省金额。
+      2. **时效保障 (海转空)**: 找出当前走海运 (Sea)，但库存告急(<15天)或新品测款(qty<50)的产品，建议紧急切换空运 (Air) 以防断货。
+      3. **泡重优化**: 识别体积大但重量轻的产品，建议优化包装。
+      4. **拼箱建议**: 如果总 CBM 较大(>5 CBM)，给出拼箱(LCL)或整柜建议。
+
+      **输出要求：**
+      1. 直接输出 HTML 代码，不包含 Markdown 标记。
+      2. 使用 Tailwind CSS 美化，主色调使用 Cyan/Sky/Blue，体现"物流"与"速度"感。
+      3. 使用表格或卡片形式列出具体的 SKU 建议。
+      
+      HTML 结构参考：
+      <div class="space-y-6">
+         <!-- 概览卡片 -->
+         <div class="bg-cyan-50 p-5 rounded-xl border border-cyan-100 shadow-sm">
+             <h4 class="font-bold text-cyan-800 flex items-center gap-2 text-lg mb-3">
+               🚢 物流优化概览
+             </h4>
+             <p class="text-sm text-cyan-700">...</p>
+         </div>
+         
+         <!-- 建议列表 -->
+         <div class="grid grid-cols-1 gap-4">
+            <!-- Item -->
+            <div class="bg-white p-4 rounded-xl border border-gray-100 shadow-sm flex items-start gap-4">
+               <div class="bg-blue-100 text-blue-600 p-2 rounded-lg font-bold text-xs">建议海运</div>
+               <div>
+                  <h5 class="font-bold text-gray-800">SKU: ...</h5>
+                  <p class="text-xs text-gray-500 mt-1">原因: 物流成本占比 40%，且库存充足...</p>
+               </div>
+            </div>
+         </div>
+      </div>
+    `;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: prompt,
+    });
+
+    return response.text;
+  } catch (error) {
+    console.error("Gemini Logistics Analysis Failed:", error);
+    return formatErrorHtml(error, "Logistics Optimization");
+  }
+};
+
 export const generateAdStrategy = async (records: ReplenishmentRecord[]) => {
   try {
     const ai = getAiClient();

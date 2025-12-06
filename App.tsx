@@ -80,7 +80,7 @@ import { LabelGeneratorModal } from './components/LabelGeneratorModal';
 import { RestockPlanModal } from './components/RestockPlanModal'; 
 import { ErpSyncModal } from './components/ErpSyncModal'; // Import
 import { ToastContainer, ToastMessage, ToastType } from './components/Toast'; 
-import { analyzeInventory, generateAdStrategy, generateSelectionStrategy, generateMarketingContent } from './services/geminiService';
+import { analyzeInventory, generateAdStrategy, generateSelectionStrategy, generateMarketingContent, analyzeLogisticsChannels } from './services/geminiService';
 import { supabase, isSupabaseConfigured } from './lib/supabaseClient';
 
 type ViewState = 'overview' | 'inventory' | 'analytics' | 'calculator' | 'logistics' | 'marketing';
@@ -172,6 +172,26 @@ function App() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
+  // --- Helper: Generic Cloud Sync ---
+  const syncItemToCloud = async (item: ReplenishmentRecord | Store) => {
+      if (workspaceId && isSupabaseConfigured()) {
+        try {
+            await supabase.from('replenishment_data').upsert({ 
+                id: item.id, 
+                workspace_id: workspaceId, 
+                json_content: item 
+            });
+        } catch (err) { console.error('Cloud Sync Error:', err); }
+      }
+  };
+
+  const deleteItemFromCloud = async (id: string) => {
+      if (workspaceId && isSupabaseConfigured()) {
+          try { await supabase.from('replenishment_data').delete().eq('id', id); } 
+          catch(err) { console.error('Cloud Delete Error:', err); }
+      }
+  };
+
   // --- Keyboard Shortcuts ---
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
@@ -200,24 +220,35 @@ function App() {
                     setSyncStatus('disconnected');
                     addToast(`无法加载云端数据: ${error.message}`, 'error');
                 } else if (data) {
-                    const cloudRecords = data.map(row => row.json_content as ReplenishmentRecord);
-                    setRecords(cloudRecords);
+                    // Separate Records and Stores based on unique fields
+                    const rawItems = data.map(row => row.json_content);
+                    
+                    // Records have 'sku', Stores have 'platform' but no 'sku'
+                    const loadedRecords = rawItems.filter((item: any) => item.sku) as ReplenishmentRecord[];
+                    const loadedStores = rawItems.filter((item: any) => item.platform && !item.sku) as Store[];
+
+                    setRecords(loadedRecords);
+                    if (loadedStores.length > 0) {
+                        setStores(loadedStores);
+                    }
                 }
             } catch (err) {
                 setSyncStatus('disconnected');
                 addToast("连接云端数据库失败，请检查网络", 'error');
             }
         } else {
+            // Local fallback
             await new Promise(r => setTimeout(r, 200)); 
-            const saved = localStorage.getItem('tanxing_records');
-            if (saved) {
-                try {
-                    setRecords(JSON.parse(saved));
-                } catch (e) {
-                    setRecords([]);
-                }
+            const savedRecords = localStorage.getItem('tanxing_records');
+            if (savedRecords) {
+                try { setRecords(JSON.parse(savedRecords)); } catch (e) { setRecords([]); }
             } else {
                 setRecords([...MOCK_DATA_INITIAL]);
+            }
+            
+            const savedStores = localStorage.getItem('tanxing_stores');
+            if (savedStores) {
+                try { setStores(JSON.parse(savedStores)); } catch (e) { setStores([]); }
             }
         }
         setIsDataLoaded(true);
@@ -247,9 +278,7 @@ function App() {
           // Perform cloud purge if connected
           if (workspaceId && isSupabaseConfigured()) {
               itemsToPurge.forEach(async (item) => {
-                  try {
-                      await supabase.from('replenishment_data').delete().eq('id', item.id);
-                  } catch (e) { console.error('Cloud purge failed', e); }
+                  deleteItemFromCloud(item.id);
               });
           }
       }
@@ -269,18 +298,31 @@ function App() {
            if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
                const newRecord = payload.new;
                if (newRecord.workspace_id !== workspaceId) return;
-               const content = newRecord.json_content as ReplenishmentRecord;
-               if (content && content.id) {
+               
+               const content = newRecord.json_content;
+               
+               if (content.sku) {
+                   // It's a ReplenishmentRecord
                    setRecords(prev => {
                        const exists = prev.some(r => r.id === content.id);
                        if (exists) return prev.map(r => r.id === content.id ? content : r);
                        else return [content, ...prev];
                    });
+               } else if (content.platform) {
+                   // It's a Store
+                   setStores(prev => {
+                       const exists = prev.some(s => s.id === content.id);
+                       if (exists) return prev.map(s => s.id === content.id ? content : s);
+                       else return [...prev, content];
+                   });
                }
+
            } else if (payload.eventType === 'DELETE') {
                const deletedId = payload.old.id;
                if (deletedId) {
+                   // Try to remove from both lists (ID is unique anyway)
                    setRecords(prev => prev.filter(r => r.id !== deletedId));
+                   setStores(prev => prev.filter(s => s.id !== deletedId));
                }
            }
         }
@@ -304,8 +346,9 @@ function App() {
   }, [records, isDataLoaded]);
 
   useEffect(() => {
+      if (!isDataLoaded) return;
       localStorage.setItem('tanxing_stores', JSON.stringify(stores));
-  }, [stores]);
+  }, [stores, isDataLoaded]); // Added isDataLoaded dependency
 
   useEffect(() => {
       if (workspaceId) localStorage.setItem('tanxing_current_workspace', workspaceId);
@@ -390,6 +433,7 @@ function App() {
       const store: Store = { ...newStore, id: Date.now().toString() };
       setStores(prev => [...prev, store]);
       addToast(`店铺 "${store.name}" 已添加`, 'success');
+      syncItemToCloud(store); // SYNC TO CLOUD
   };
 
   const handleDeleteStore = (id: string) => {
@@ -397,14 +441,7 @@ function App() {
           setStores(prev => prev.filter(s => s.id !== id));
           if (activeStoreId === id) setActiveStoreId('all');
           addToast('店铺已删除', 'info');
-      }
-  };
-
-  const saveToCloud = async (record: ReplenishmentRecord) => {
-      if (workspaceId && isSupabaseConfigured()) {
-        try {
-            await supabase.from('replenishment_data').upsert({ id: record.id, workspace_id: workspaceId, json_content: record });
-        } catch (err) { console.error(err); }
+          deleteItemFromCloud(id); // SYNC TO CLOUD
       }
   };
 
@@ -422,7 +459,7 @@ function App() {
     });
     closeModal();
     addToast(editingRecord ? "产品更新成功" : "新产品已添加", 'success');
-    saveToCloud(finalRecord);
+    syncItemToCloud(finalRecord);
   };
   
   const initiateDelete = (id: string) => {
@@ -445,7 +482,7 @@ function App() {
       // Find full record to save to cloud as "Deleted"
       const recordToUpdate = records.find(r => r.id === id);
       if (recordToUpdate) {
-          saveToCloud({ ...recordToUpdate, ...updatedRecord } as ReplenishmentRecord);
+          syncItemToCloud({ ...recordToUpdate, ...updatedRecord } as ReplenishmentRecord);
       }
 
       addToast("已移至回收站，7天后将自动清理", 'info');
@@ -461,7 +498,7 @@ function App() {
       
       const recordToRestore = records.find(r => r.id === id);
       if (recordToRestore) {
-          saveToCloud({ ...recordToRestore, isDeleted: false, deletedAt: undefined } as ReplenishmentRecord);
+          syncItemToCloud({ ...recordToRestore, isDeleted: false, deletedAt: undefined } as ReplenishmentRecord);
       }
       addToast("记录已恢复", 'success');
   };
@@ -471,9 +508,7 @@ function App() {
       setRecords(prev => prev.filter(r => r.id !== id));
       addToast("记录已永久删除", 'error');
       
-      if (workspaceId && isSupabaseConfigured()) {
-          try { await supabase.from('replenishment_data').delete().eq('id', id); } catch(err) { console.error(err); }
-      }
+      deleteItemFromCloud(id);
   };
 
   const openDistributeModal = (e: React.MouseEvent, record: ReplenishmentRecord) => {
@@ -506,7 +541,7 @@ function App() {
           addToast(`已为 ${record.sku} 创建补货计划`, 'success');
       }
       
-      await saveToCloud(newRecord);
+      await syncItemToCloud(newRecord);
   };
 
   // NEW: Open Label Modal
@@ -551,8 +586,8 @@ function App() {
           return list;
       });
 
-      await saveToCloud(newRecord);
-      if (updatedSourceRecord) await saveToCloud(updatedSourceRecord);
+      await syncItemToCloud(newRecord);
+      if (updatedSourceRecord) await syncItemToCloud(updatedSourceRecord);
       addToast('操作成功', 'success');
   };
 
@@ -576,7 +611,7 @@ function App() {
       if (workspaceId && isSupabaseConfigured()) {
           // Simple loop for now, ideally batch upsert
           for(const rec of updatedRecords) {
-              await saveToCloud(rec);
+              await syncItemToCloud(rec);
           }
       }
   };
@@ -603,6 +638,15 @@ function App() {
     setIsAnalyzing(false);
     if (currentView !== 'inventory') setCurrentView('inventory');
     addToast("AI 诊断报告生成完毕", 'success');
+  };
+
+  const handleLogisticsAnalysis = async () => {
+    setIsAnalyzing(true); setAiAnalysis(null); setAnalysisTitle('头程物流渠道优选报告');
+    const result = await analyzeLogisticsChannels(processedData);
+    setAiAnalysis(result.replace(/^```html/, '').replace(/```$/, ''));
+    setIsAnalyzing(false);
+    if (currentView !== 'inventory') setCurrentView('inventory');
+    addToast("物流分析报告已生成", 'success');
   };
 
   const handleAdStrategy = async () => {
@@ -716,8 +760,8 @@ function App() {
                     <div className="relative z-10">
                       <div className="flex items-center justify-between mb-4 pb-4 border-b border-purple-50">
                         <div className="flex items-center gap-3">
-                          <div className={`p-2 rounded-lg ${analysisTitle.includes('TikTok') ? 'bg-pink-100' : analysisTitle.includes('选品') ? 'bg-orange-100' : 'bg-purple-100'}`}>
-                            {analysisTitle.includes('TikTok') ? <Megaphone className="text-pink-600 h-5 w-5" /> : analysisTitle.includes('选品') ? <Compass className="text-orange-600 h-5 w-5" /> : <BrainCircuit className="text-purple-600 h-5 w-5" />}
+                          <div className={`p-2 rounded-lg ${analysisTitle.includes('TikTok') ? 'bg-pink-100' : analysisTitle.includes('选品') ? 'bg-orange-100' : analysisTitle.includes('物流') ? 'bg-cyan-100' : 'bg-purple-100'}`}>
+                            {analysisTitle.includes('TikTok') ? <Megaphone className="text-pink-600 h-5 w-5" /> : analysisTitle.includes('选品') ? <Compass className="text-orange-600 h-5 w-5" /> : analysisTitle.includes('物流') ? <Container className="text-cyan-600 h-5 w-5" /> : <BrainCircuit className="text-purple-600 h-5 w-5" />}
                           </div>
                           <h3 className="font-bold text-lg text-gray-800">{analysisTitle}</h3>
                         </div>
@@ -1138,11 +1182,15 @@ function App() {
                   <>
                     {currentView !== 'marketing' && (
                         <>
+                            <button onClick={handleLogisticsAnalysis} disabled={isAnalyzing} className="flex items-center gap-2 bg-cyan-50 text-cyan-700 px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-cyan-100 transition-colors border border-cyan-200 shadow-sm">
+                                {isAnalyzing && analysisTitle.includes('物流') ? <Loader2 className="animate-spin h-4 w-4" /> : <Container className="h-4 w-4" />}
+                                物流渠道分析
+                            </button>
                             <button onClick={handleAdStrategy} disabled={isAnalyzing} className="flex items-center gap-2 bg-pink-50 text-pink-700 px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-pink-100 transition-colors border border-pink-200 shadow-sm">{isAnalyzing && analysisTitle.includes('TikTok') ? <Loader2 className="animate-spin h-4 w-4" /> : <Megaphone className="h-4 w-4" />}TikTok 投放建议</button>
                             <button onClick={handleSelectionStrategy} disabled={isAnalyzing} className="flex items-center gap-2 bg-orange-50 text-orange-700 px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-orange-100 transition-colors border border-orange-200 shadow-sm">{isAnalyzing && analysisTitle.includes('选品') ? <Loader2 className="animate-spin h-4 w-4" /> : <Compass className="h-4 w-4" />}美区选品策略</button>
                         </>
                     )}
-                    {currentView === 'inventory' && (<button onClick={handleSmartAnalysis} disabled={isAnalyzing} className="flex items-center gap-2 bg-white text-purple-700 px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-purple-50 transition-colors border border-purple-200 shadow-sm">{isAnalyzing && !analysisTitle.includes('TikTok') && !analysisTitle.includes('选品') ? <Loader2 className="animate-spin h-4 w-4" /> : <BrainCircuit className="h-4 w-4" />}{isAnalyzing && !analysisTitle.includes('TikTok') && !analysisTitle.includes('选品') ? '正在分析...' : '智能诊断'}</button>)}
+                    {currentView === 'inventory' && (<button onClick={handleSmartAnalysis} disabled={isAnalyzing} className="flex items-center gap-2 bg-white text-purple-700 px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-purple-50 transition-colors border border-purple-200 shadow-sm">{isAnalyzing && !analysisTitle.includes('TikTok') && !analysisTitle.includes('选品') && !analysisTitle.includes('物流') ? <Loader2 className="animate-spin h-4 w-4" /> : <BrainCircuit className="h-4 w-4" />}{isAnalyzing && !analysisTitle.includes('TikTok') && !analysisTitle.includes('选品') && !analysisTitle.includes('物流') ? '正在分析...' : '智能诊断'}</button>)}
                     {currentView === 'inventory' && (<button onClick={openAddModal} className="flex items-center gap-2 bg-blue-600 text-white px-5 py-2.5 rounded-xl hover:bg-blue-700 transition shadow-lg shadow-blue-200 font-bold active:scale-95 transform"><Plus size={18} />添加产品</button>)}
                   </>
                 )}

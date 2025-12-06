@@ -626,35 +626,41 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
                   <input required type="number" step="0.01" name="salesPriceUSD" value={formData.salesPriceUSD} onChange={handleChange} className={`${inputClass} font-bold text-blue-600`} />
                 </div>
                 
-                {/* TikTok Fees */}
-                <div>
-                   <label className={labelClass}>平台佣金 (%)</label>
-                   <div className="relative">
-                        <Percent className="absolute right-3 top-3 text-gray-400" size={14} />
-                        <input required type="number" step="0.1" name="platformFeeRate" value={formData.platformFeeRate} onChange={handleChange} className={inputClass} placeholder="2.0" />
-                   </div>
-                   <p className="text-[10px] text-gray-400 mt-0.5">TikTok Shop 佣金</p>
-                </div>
-                <div>
-                   <label className={labelClass}>达人带货佣金 (%)</label>
-                   <div className="relative">
-                        <Percent className="absolute right-3 top-3 text-gray-400" size={14} />
-                        <input required type="number" step="1" name="affiliateCommissionRate" value={formData.affiliateCommissionRate} onChange={handleChange} className={inputClass} placeholder="15.0" />
-                   </div>
-                   <p className="text-[10px] text-gray-400 mt-0.5">联盟推广费</p>
+                {/* Visual Group for TikTok Fees */}
+                <div className="col-span-2 bg-purple-100/50 p-3 rounded-lg border border-purple-100">
+                    <div className="flex items-center gap-2 mb-3">
+                        <Tag size={14} className="text-purple-500" />
+                        <span className="text-xs font-bold text-purple-800 uppercase">TikTok Cost Structure</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                        <div>
+                           <label className={labelClass}>平台佣金 (%)</label>
+                           <div className="relative">
+                                <Percent className="absolute right-3 top-3 text-gray-400" size={14} />
+                                <input required type="number" step="0.1" name="platformFeeRate" value={formData.platformFeeRate} onChange={handleChange} className={inputClass} placeholder="2.0" />
+                           </div>
+                           <p className="text-[10px] text-gray-400 mt-0.5">TikTok Shop 佣金</p>
+                        </div>
+                        <div>
+                           <label className={labelClass}>达人带货佣金 (%)</label>
+                           <div className="relative">
+                                <Percent className="absolute right-3 top-3 text-gray-400" size={14} />
+                                <input required type="number" step="1" name="affiliateCommissionRate" value={formData.affiliateCommissionRate} onChange={handleChange} className={inputClass} placeholder="15.0" />
+                           </div>
+                           <p className="text-[10px] text-gray-400 mt-0.5">联盟推广费</p>
+                        </div>
+                        <div>
+                           <label className={labelClass}>每单固定费 ($)</label>
+                           <div className="relative">
+                                <DollarSign className="absolute right-3 top-3 text-gray-400" size={14} />
+                                <input required type="number" step="0.01" name="additionalFixedFeeUSD" value={formData.additionalFixedFeeUSD} onChange={handleChange} className={inputClass} placeholder="0.30" />
+                           </div>
+                           <p className="text-[10px] text-gray-400 mt-0.5">交易定额费 (如 $0.3)</p>
+                        </div>
+                    </div>
                 </div>
 
-                {/* NEW: Transaction Fee */}
-                <div>
-                   <label className={labelClass}>每单固定费 ($)</label>
-                   <div className="relative">
-                        <DollarSign className="absolute right-3 top-3 text-gray-400" size={14} />
-                        <input required type="number" step="0.01" name="additionalFixedFeeUSD" value={formData.additionalFixedFeeUSD} onChange={handleChange} className={inputClass} placeholder="0.30" />
-                   </div>
-                   <p className="text-[10px] text-gray-400 mt-0.5">交易定额费 (如 $0.3)</p>
-                </div>
-
-                {/* NEW: Return Rate */}
+                {/* Other Costs */}
                 <div>
                    <label className={labelClass}>预估退货率 (%)</label>
                    <div className="relative">
@@ -668,7 +674,7 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
                   <label className={labelClass}>尾程派送费 ($)</label>
                   <input required type="number" step="0.01" name="lastMileCostUSD" value={formData.lastMileCostUSD} onChange={handleChange} className={inputClass} />
                 </div>
-                <div>
+                <div className="col-span-2">
                   <label className={labelClass}>预估广告费 ($)</label>
                   <input required type="number" step="0.01" name="adCostUSD" value={formData.adCostUSD} onChange={handleChange} className={inputClass} />
                 </div>
