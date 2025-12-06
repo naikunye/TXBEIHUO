@@ -790,9 +790,12 @@ function App() {
                           <th scope="col" onClick={() => handleSort('metrics.firstLegCostCNY')} className="w-44 px-4 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider cursor-pointer hover:text-blue-600 group select-none">
                               <div className="flex items-center">资金投入 (Total) {getSortIcon('metrics.firstLegCostCNY')}</div>
                           </th>
-                          <th scope="col" onClick={() => handleSort('metrics.daysOfSupply')} className="w-48 px-4 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider cursor-pointer hover:text-blue-600 group select-none">
-                              <div className="flex items-center">库存健康 (DOS) {getSortIcon('metrics.daysOfSupply')}</div>
+                          
+                          {/* UPDATED HEADER: Stock Quantity */}
+                          <th scope="col" onClick={() => handleSort('quantity')} className="w-48 px-4 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider cursor-pointer hover:text-blue-600 group select-none">
+                              <div className="flex items-center">库存数量 (Stock) {getSortIcon('quantity')}</div>
                           </th>
+
                           <th scope="col" onClick={() => handleSort('metrics.marginRate')} className="w-36 px-4 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider cursor-pointer hover:text-blue-600 group select-none">
                               <div className="flex items-center">销售表现 {getSortIcon('metrics.marginRate')}</div>
                           </th>
@@ -836,7 +839,7 @@ function App() {
                                   <div className="min-w-0 flex-1">
                                     <div className="text-sm font-medium text-gray-900 line-clamp-2 leading-tight" title={record.productName}>{record.productName}</div>
                                     <div className="text-xs text-gray-400 mt-0.5">{record.date}</div>
-                                    <div className="inline-flex items-center gap-2 mt-1 bg-gray-100 px-2 py-0.5 rounded text-[10px] text-gray-600"><span>Qty: {record.quantity}</span></div>
+                                    {/* Removed small Qty badge from here */}
                                   </div>
                                 </div>
                               </td>
@@ -857,29 +860,34 @@ function App() {
                                       <span className="text-[10px] text-gray-500 flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-orange-400"></span>运: {formatCurrency(shippingTotalCNY, 'CNY')}</span>
                                   </div>
                               </td>
-                              {/* Visual Inventory Health */}
+                              
+                              {/* UPDATED COLUMN: Inventory (Stock Quantity) */}
                               <td onClick={() => openEditModal(record)} className="px-4 py-3 whitespace-nowrap cursor-pointer">
-                                <div className="space-y-1.5">
-                                  <div className="flex justify-between items-center text-xs">
-                                      <span className={`font-bold ${m.stockStatus === 'Critical' ? 'text-red-600' : 'text-gray-700'}`}>
-                                          {m.daysOfSupply < 999 ? `${m.daysOfSupply.toFixed(0)} 天` : '∞'}
-                                      </span>
-                                      <span className="text-[10px] text-gray-400">{record.dailySales}/天</span>
-                                  </div>
-                                  {/* Progress Bar */}
-                                  <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                                      <div 
+                                <div className="flex flex-col gap-1">
+                                    <div className="flex items-baseline justify-between">
+                                        <span className="text-lg font-bold text-gray-800">{record.quantity} <span className="text-xs text-gray-400 font-normal">pcs</span></span>
+                                        <span className={`text-xs font-bold ${m.stockStatus === 'Critical' ? 'text-red-600' : 'text-gray-500'}`}>
+                                            {m.daysOfSupply < 999 ? `${m.daysOfSupply.toFixed(0)}天` : '∞'}
+                                        </span>
+                                    </div>
+                                    
+                                    {/* Progress Bar */}
+                                    <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                                        <div 
                                         className={`h-full rounded-full ${dosColor} transition-all duration-500`} 
                                         style={{ width: `${Math.min(dosPercent, 100)}%` }}
-                                      ></div>
-                                  </div>
-                                  <div className="flex items-center gap-1">
-                                      {m.stockStatus === 'Critical' && <span className="text-[10px] text-red-500 flex items-center gap-0.5"><AlertTriangle size={10}/> 急需补货</span>}
-                                      {m.stockStatus === 'Low' && <span className="text-[10px] text-yellow-600 flex items-center gap-0.5"><Hourglass size={10}/> 建议备货</span>}
-                                      {m.stockStatus === 'Healthy' && <span className="text-[10px] text-green-600 flex items-center gap-0.5">库存健康</span>}
-                                  </div>
+                                        ></div>
+                                    </div>
+
+                                    <div className="flex justify-between items-center mt-0.5">
+                                        <span className="text-[10px] text-gray-400">日销: {record.dailySales}</span>
+                                        {m.stockStatus === 'Critical' && <span className="text-[10px] text-red-500 font-medium">急需补货</span>}
+                                        {m.stockStatus === 'Low' && <span className="text-[10px] text-yellow-600 font-medium">建议备货</span>}
+                                        {m.stockStatus === 'Healthy' && <span className="text-[10px] text-green-600 font-medium">健康</span>}
+                                    </div>
                                 </div>
                               </td>
+
                               <td onClick={() => openEditModal(record)} className="px-4 py-3 whitespace-nowrap cursor-pointer">
                                 <div className="text-sm font-bold text-gray-900 font-mono flex items-center gap-1">
                                     ${record.salesPriceUSD.toFixed(2)}
