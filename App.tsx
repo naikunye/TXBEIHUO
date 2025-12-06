@@ -205,53 +205,57 @@ function App() {
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
   }, []);
 
-  // --- Storage Effects (Existing) ---
-  useEffect(() => {
-    const loadData = async () => {
-        if (workspaceId && isSupabaseConfigured()) {
-            setSyncStatus('connecting');
-            try {
-                const { data, error } = await supabase
-                    .from('replenishment_data')
-                    .select('json_content')
-                    .eq('workspace_id', workspaceId);
+  // --- Core Data Loading Function ---
+  const loadData = async () => {
+    if (workspaceId && isSupabaseConfigured()) {
+        setSyncStatus('connecting');
+        try {
+            // FIX: Added limit(10000) to ensure we don't miss items if data > 1000
+            const { data, error } = await supabase
+                .from('replenishment_data')
+                .select('json_content')
+                .eq('workspace_id', workspaceId)
+                .limit(10000); 
 
-                if (error) {
-                    setSyncStatus('disconnected');
-                    addToast(`无法加载云端数据: ${error.message}`, 'error');
-                } else if (data) {
-                    // Separate Records and Stores based on unique fields
-                    const rawItems = data.map(row => row.json_content);
-                    
-                    // Records have 'sku', Stores have 'platform' but no 'sku'
-                    const loadedRecords = rawItems.filter((item: any) => item.sku) as ReplenishmentRecord[];
-                    const loadedStores = rawItems.filter((item: any) => item.platform && !item.sku) as Store[];
-
-                    setRecords(loadedRecords);
-                    // Force update stores even if empty to reflect cloud state
-                    setStores(loadedStores); 
-                }
-            } catch (err) {
+            if (error) {
                 setSyncStatus('disconnected');
-                addToast("连接云端数据库失败，请检查网络", 'error');
+                addToast(`无法加载云端数据: ${error.message}`, 'error');
+            } else if (data) {
+                // Separate Records and Stores based on unique fields
+                const rawItems = data.map(row => row.json_content);
+                
+                // Records have 'sku', Stores have 'platform' but no 'sku'
+                const loadedRecords = rawItems.filter((item: any) => item.sku) as ReplenishmentRecord[];
+                const loadedStores = rawItems.filter((item: any) => item.platform && !item.sku) as Store[];
+
+                setRecords(loadedRecords);
+                setStores(loadedStores); // Always update stores from cloud truth
+                console.log('Data synced:', loadedRecords.length, 'records,', loadedStores.length, 'stores');
             }
-        } else {
-            // Local fallback
-            await new Promise(r => setTimeout(r, 200)); 
-            const savedRecords = localStorage.getItem('tanxing_records');
-            if (savedRecords) {
-                try { setRecords(JSON.parse(savedRecords)); } catch (e) { setRecords([]); }
-            } else {
-                setRecords([...MOCK_DATA_INITIAL]);
-            }
-            
-            const savedStores = localStorage.getItem('tanxing_stores');
-            if (savedStores) {
-                try { setStores(JSON.parse(savedStores)); } catch (e) { setStores([]); }
-            }
+        } catch (err) {
+            setSyncStatus('disconnected');
+            addToast("连接云端数据库失败，请检查网络", 'error');
         }
-        setIsDataLoaded(true);
-    };
+    } else {
+        // Local fallback
+        await new Promise(r => setTimeout(r, 200)); 
+        const savedRecords = localStorage.getItem('tanxing_records');
+        if (savedRecords) {
+            try { setRecords(JSON.parse(savedRecords)); } catch (e) { setRecords([]); }
+        } else {
+            setRecords([...MOCK_DATA_INITIAL]);
+        }
+        
+        const savedStores = localStorage.getItem('tanxing_stores');
+        if (savedStores) {
+            try { setStores(JSON.parse(savedStores)); } catch (e) { setStores([]); }
+        }
+    }
+    setIsDataLoaded(true);
+  };
+
+  // --- Storage Effects ---
+  useEffect(() => {
     loadData();
   }, [workspaceId]);
 
@@ -308,7 +312,7 @@ function App() {
                        else return [content, ...prev];
                    });
                } else if (content.platform) {
-                   // It's a Store
+                   // It's a Store - STRICT CHECK to avoid confusion with Records
                    setStores(prev => {
                        const exists = prev.some(s => s.id === content.id);
                        if (exists) return prev.map(s => s.id === content.id ? content : s);
@@ -442,6 +446,12 @@ function App() {
           addToast('店铺已删除', 'info');
           deleteItemFromCloud(id); // SYNC TO CLOUD
       }
+  };
+
+  const handleOpenStoreManager = () => {
+      setIsStoreManagerOpen(true);
+      // Force refresh data from cloud when opening manager to ensure consistency
+      if (workspaceId) loadData(); 
   };
 
   const handleSaveRecord = async (recordData: Omit<ReplenishmentRecord, 'id'>) => {
@@ -1097,7 +1107,7 @@ function App() {
 
         <div className="px-4 pt-4 pb-2">
            <div className="relative">
-             <div className="bg-slate-800 rounded-lg p-2 flex items-center justify-between cursor-pointer hover:bg-slate-700 transition-colors border border-slate-700" onClick={() => setIsStoreManagerOpen(true)}>
+             <div className="bg-slate-800 rounded-lg p-2 flex items-center justify-between cursor-pointer hover:bg-slate-700 transition-colors border border-slate-700" onClick={handleOpenStoreManager}>
                 <div className="flex items-center gap-2 overflow-hidden"><StoreIcon size={16} className="text-slate-400 shrink-0"/><span className="text-sm font-medium truncate">店铺管理</span></div>
                 <div className="bg-slate-600 text-[10px] px-1.5 rounded">{stores.length}</div>
              </div>
