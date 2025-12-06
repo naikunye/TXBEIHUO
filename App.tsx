@@ -730,7 +730,12 @@ function App() {
       // Force new array reference to ensure React triggers re-render
       setRecords([...updatedRecords]);
       setLastErpSync(new Date()); // Update timestamp
-      addToast("领星/秒手 ERP 数据同步成功！", 'success');
+      
+      // Force Reset Filters to ensure visibility
+      setStatusFilter('All');
+      setCurrentPage(1);
+      setSortConfig({ key: 'date', direction: 'desc' });
+      addToast("领星/秒手 ERP 数据同步成功！列表已刷新。", 'success');
       
       // Batch save to cloud
       if (workspaceId && isSupabaseConfigured()) {

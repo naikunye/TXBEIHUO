@@ -225,9 +225,10 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
       let createCount = 0;
 
       // 1. Organize changes for O(1) lookup
-      // Use lowercased, trimmed SKU as key to be robust against minor formatting differences
       displayItems.forEach(item => {
+          if (!item.sku) return; // Skip invalid items
           const key = item.sku.trim().toLowerCase();
+          
           if (item.status === 'match') {
               changesMap.set(key, item);
           } else if (item.status === 'new') {
@@ -252,37 +253,30 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
           }
       });
 
-      // 2. Map existing records to NEW objects if they have changes (Immutable Update)
+      // 2. Map existing records to NEW objects if they have changes
       const updatedRecords = records.map(record => {
-          const key = record.sku.trim().toLowerCase();
-          const change = changesMap.get(key);
+          const sku = record.sku ? record.sku.trim().toLowerCase() : '';
+          const change = changesMap.get(sku);
           
           if (change) {
               updateCount++;
-              // Return a BRAND NEW object spread from the old one + overrides
-              // This ensures React sees a new reference and triggers a re-render
               return {
                   ...record,
                   quantity: syncType === 'inventory' ? change.newVal : record.quantity,
                   dailySales: syncType === 'sales' ? change.newVal : record.dailySales,
-                  // If updating inventory, auto-recalculate total cartons based on itemsPerBox
+                  // Auto-recalculate total cartons if inventory changed
                   totalCartons: syncType === 'inventory' 
                       ? Math.ceil(change.newVal / (record.itemsPerBox > 0 ? record.itemsPerBox : 1)) 
                       : record.totalCartons
               };
           }
-          // Return the original record if no change (keeps reference stability for unchanged items)
           return record; 
       });
 
+      // Combine new and updated records into a fresh array
       const finalRecords = [...newRecords, ...updatedRecords];
-      onUpdateRecords(finalRecords);
-
-      let msg = '';
-      if (updateCount > 0) msg += `成功更新 ${updateCount} 条${syncType === 'inventory' ? '库存' : '销量'}数据。`;
-      if (createCount > 0) msg += ` 并新建 ${createCount} 个产品档案。`;
-      alert(msg || "数据未发生变化");
       
+      onUpdateRecords(finalRecords);
       onClose();
   };
 
