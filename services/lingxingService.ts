@@ -16,6 +16,32 @@ export interface LingxingSalesItem {
     avgDailySales: number; // Calculated average
 }
 
+// --- STABLE MOCK DATABASE ---
+// This ensures that "ERP" data remains consistent during the session.
+// Once you sync, the numbers will match and stay matched until you reload.
+const MOCK_ERP_DB: Record<string, { stock: number, sales: number }> = {};
+
+const getOrGenerateMockData = (record: ReplenishmentRecord) => {
+    if (!MOCK_ERP_DB[record.sku]) {
+        // Generate once and store it
+        const hasDrift = Math.random() > 0.3; // 70% chance of being different initially
+        const randomDiff = hasDrift ? Math.floor(Math.random() * 20) - 5 : 0;
+        
+        // Ensure strictly positive
+        const mockStock = Math.max(0, record.quantity + (randomDiff === 0 && hasDrift ? 5 : randomDiff));
+        
+        // Mock Sales
+        const volatility = 0.2;
+        const mockSales = Math.max(0, record.dailySales + (record.dailySales * volatility * (Math.random() - 0.5)));
+
+        MOCK_ERP_DB[record.sku] = {
+            stock: mockStock,
+            sales: parseFloat(mockSales.toFixed(1))
+        };
+    }
+    return MOCK_ERP_DB[record.sku];
+};
+
 /**
  * 模拟调用领星 API 获取库存数据
  * 如果提供了 proxyUrl，则尝试发起真实请求 (需要用户自己搭建简单的后端代理)
@@ -48,21 +74,15 @@ export const fetchLingxingInventory = async (
   }
 
   // 2. Mock Mode (Simulation)
-  await new Promise(resolve => setTimeout(resolve, 1500));
+  await new Promise(resolve => setTimeout(resolve, 800)); // Faster simulation
   
   return localRecords.map(record => {
-      // Simulate inventory drift
-      // Increase drift probability to 70% (0.3 threshold) for better demo experience
-      const hasDrift = Math.random() > 0.3; 
-      const randomDiff = hasDrift ? Math.floor(Math.random() * 20) - 5 : 0;
+      const mockData = getOrGenerateMockData(record);
       
-      // Ensure we don't accidentally return the EXACT same value if randomDiff ends up 0
-      const finalStock = Math.max(0, record.quantity + (randomDiff === 0 && hasDrift ? 5 : randomDiff));
-
       return {
           sku: record.sku,
           productName: record.productName,
-          fbaStock: finalStock,
+          fbaStock: mockData.stock, // Returns the consistent mock value
           localStock: 0,
           onWayStock: Math.floor(Math.random() * 50)
       };
@@ -89,18 +109,14 @@ export const fetchLingxingSales = async (
     }
   
     // 2. Mock Mode
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    await new Promise(resolve => setTimeout(resolve, 1000));
     
     return localRecords.map(record => {
-        // Simulate sales velocity changes
-        // Sales might fluctuate by +/- 20% from current setting
-        const volatility = 0.2;
-        const current = record.dailySales || 1;
-        const fluctuation = current * volatility * (Math.random() - 0.5) * 2;
+        const mockData = getOrGenerateMockData(record);
         
         return {
             sku: record.sku,
-            avgDailySales: parseFloat((current + fluctuation).toFixed(1))
+            avgDailySales: mockData.sales
         };
     });
   };
@@ -125,6 +141,7 @@ export const calculateInventoryDiff = (
         const erpItem = erpData.find(e => e.sku === local.sku);
         if (erpItem) {
             const totalErp = erpItem.fbaStock;
+            // Only add to diff list if there is an ACTUAL difference
             if (local.quantity !== totalErp) {
                 diffs.push({
                     recordId: local.id,

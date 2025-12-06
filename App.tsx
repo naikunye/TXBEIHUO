@@ -109,6 +109,7 @@ function App() {
   // --- Data State ---
   const [records, setRecords] = useState<ReplenishmentRecord[]>([]);
   const [isDataLoaded, setIsDataLoaded] = useState(false);
+  const [lastErpSync, setLastErpSync] = useState<Date | null>(null);
 
   // --- ERP Table State (Sorting & Pagination) ---
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>({ key: 'date', direction: 'desc' });
@@ -568,6 +569,7 @@ function App() {
   const handleErpUpdate = async (updatedRecords: ReplenishmentRecord[]) => {
       // Force new array reference to ensure React triggers re-render
       setRecords([...updatedRecords]);
+      setLastErpSync(new Date()); // Update timestamp
       addToast("领星 OMS 数据同步成功！", 'success');
       
       // Batch save to cloud
@@ -753,15 +755,22 @@ function App() {
                         <span className="text-xs bg-gray-200 text-gray-600 px-2 py-0.5 rounded-full">{processedData.length}</span>
                       </div>
                       <div className="flex items-center gap-2">
-                          {/* New ERP Sync Button */}
-                          <button 
-                            onClick={() => setIsErpSyncOpen(true)}
-                            className="flex items-center gap-1.5 text-sm font-bold text-blue-600 bg-blue-50 px-3 py-1.5 rounded-lg hover:bg-blue-100 transition-colors shadow-sm border border-blue-200"
-                          >
-                             <RefreshCw size={16} /> 
-                             <span className="hidden sm:inline">同步领星 ERP</span>
-                             <span className="sm:hidden">ERP</span>
-                          </button>
+                          {/* New ERP Sync Button with Timestamp */}
+                          <div className="flex items-center gap-2">
+                              {lastErpSync && (
+                                  <span className="text-[10px] text-gray-400 hidden sm:inline">
+                                      上次同步: {lastErpSync.toLocaleTimeString()}
+                                  </span>
+                              )}
+                              <button 
+                                onClick={() => setIsErpSyncOpen(true)}
+                                className="flex items-center gap-1.5 text-sm font-bold text-blue-600 bg-blue-50 px-3 py-1.5 rounded-lg hover:bg-blue-100 transition-colors shadow-sm border border-blue-200"
+                              >
+                                <RefreshCw size={16} /> 
+                                <span className="hidden sm:inline">同步领星 ERP</span>
+                                <span className="sm:hidden">ERP</span>
+                              </button>
+                          </div>
 
                           <button onClick={() => setIsRestockPlanOpen(true)} className="flex items-center gap-1.5 text-sm font-bold text-white bg-slate-900 px-3 py-1.5 rounded-lg hover:bg-slate-800 transition-colors shadow-sm">
                              <CalendarClock size={16} className="text-emerald-400" /> 
