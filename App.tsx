@@ -228,9 +228,8 @@ function App() {
                     const loadedStores = rawItems.filter((item: any) => item.platform && !item.sku) as Store[];
 
                     setRecords(loadedRecords);
-                    if (loadedStores.length > 0) {
-                        setStores(loadedStores);
-                    }
+                    // Force update stores even if empty to reflect cloud state
+                    setStores(loadedStores); 
                 }
             } catch (err) {
                 setSyncStatus('disconnected');
@@ -348,7 +347,7 @@ function App() {
   useEffect(() => {
       if (!isDataLoaded) return;
       localStorage.setItem('tanxing_stores', JSON.stringify(stores));
-  }, [stores, isDataLoaded]); // Added isDataLoaded dependency
+  }, [stores, isDataLoaded]); 
 
   useEffect(() => {
       if (workspaceId) localStorage.setItem('tanxing_current_workspace', workspaceId);
