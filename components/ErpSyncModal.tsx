@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { ReplenishmentRecord } from '../types';
-import { X, Check, Database, Link as LinkIcon, Lock, ClipboardPaste, FileText, Save, ArrowRight, PlusCircle, AlertTriangle, TrendingUp, Package, RefreshCw, Key, Globe, Eye, EyeOff, Layers, Zap, Clock, Power, HelpCircle, ExternalLink, PlayCircle, ServerOff, Wifi, Code, Copy, Terminal } from 'lucide-react';
+import { X, Check, Database, Link as LinkIcon, Lock, ClipboardPaste, FileText, Save, ArrowRight, PlusCircle, AlertTriangle, TrendingUp, Package, RefreshCw, Key, Globe, Eye, EyeOff, Layers, Zap, Clock, Power, HelpCircle, ExternalLink, PlayCircle, ServerOff, Wifi, Code, Copy, Terminal, Download } from 'lucide-react';
 import { fetchLingxingInventory, fetchLingxingSales } from '../services/lingxingService';
 import { fetchMiaoshouInventory, fetchMiaoshouSales } from '../services/miaoshouService';
 
@@ -153,9 +153,15 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
       localStorage.setItem('erp_sync_interval', syncInterval.toString());
   };
 
-  const copyToClipboard = (text: string) => {
-      navigator.clipboard.writeText(text);
-      alert("代码已复制！");
+  const downloadFile = (filename: string, content: string) => {
+      const blob = new Blob([content], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
   };
 
   // --- Logic 1: Parse Paste Data ---
@@ -469,15 +475,17 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
                         </button>
                     </div>
                     <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                        <div className="text-xs text-gray-500 mb-2">
-                            请在本地新建文件夹 <code className="bg-gray-100 px-1 rounded">tanxing-proxy</code>，并创建以下 3 个文件，然后推送到 GitHub 并部署到 Vercel。
+                        <div className="text-xs text-gray-500 mb-2 bg-yellow-50 p-2 rounded border border-yellow-100">
+                            <strong>请注意：</strong> 下载文件后，请在本地创建一个文件夹 (例如 <code>tanxing-proxy</code>)，将所有文件放入其中。
+                            <br/>
+                            特别是 <code>proxy.js</code>，必须放入该文件夹下的 <code>api</code> 子文件夹中。
                         </div>
 
                         {/* File 1 */}
                         <div className="space-y-1">
                             <div className="flex justify-between items-center text-xs font-bold text-gray-700 px-2">
                                 <span>1. package.json <span className="text-red-500">(必须)</span></span>
-                                <button onClick={() => copyToClipboard(CODE_PACKAGE)} className="flex items-center gap-1 text-blue-600 hover:underline"><Copy size={12}/> 复制</button>
+                                <button onClick={() => downloadFile('package.json', CODE_PACKAGE)} className="flex items-center gap-1 text-blue-600 hover:underline border border-blue-200 px-2 py-0.5 rounded bg-blue-50"><Download size={12}/> 下载文件</button>
                             </div>
                             <pre className="bg-slate-900 text-green-400 p-4 rounded-xl text-[10px] font-mono overflow-x-auto">{CODE_PACKAGE}</pre>
                         </div>
@@ -486,7 +494,7 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
                         <div className="space-y-1">
                             <div className="flex justify-between items-center text-xs font-bold text-gray-700 px-2">
                                 <span>2. vercel.json <span className="text-red-500">(核心路由配置)</span></span>
-                                <button onClick={() => copyToClipboard(CODE_VERCEL)} className="flex items-center gap-1 text-blue-600 hover:underline"><Copy size={12}/> 复制</button>
+                                <button onClick={() => downloadFile('vercel.json', CODE_VERCEL)} className="flex items-center gap-1 text-blue-600 hover:underline border border-blue-200 px-2 py-0.5 rounded bg-blue-50"><Download size={12}/> 下载文件</button>
                             </div>
                             <pre className="bg-slate-900 text-yellow-400 p-4 rounded-xl text-[10px] font-mono overflow-x-auto">{CODE_VERCEL}</pre>
                         </div>
@@ -494,8 +502,8 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
                         {/* File 3 */}
                         <div className="space-y-1">
                             <div className="flex justify-between items-center text-xs font-bold text-gray-700 px-2">
-                                <span>3. api/proxy.js <span className="text-red-500">(放入 api 文件夹)</span></span>
-                                <button onClick={() => copyToClipboard(CODE_PROXY)} className="flex items-center gap-1 text-blue-600 hover:underline"><Copy size={12}/> 复制</button>
+                                <span>3. proxy.js <span className="text-red-500">(⚠️ 请放入 api 文件夹)</span></span>
+                                <button onClick={() => downloadFile('proxy.js', CODE_PROXY)} className="flex items-center gap-1 text-blue-600 hover:underline border border-blue-200 px-2 py-0.5 rounded bg-blue-50"><Download size={12}/> 下载文件</button>
                             </div>
                             <pre className="bg-slate-900 text-blue-300 p-4 rounded-xl text-[10px] font-mono overflow-x-auto h-40 custom-scrollbar">{CODE_PROXY}</pre>
                         </div>
