@@ -17,22 +17,18 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
   const [step, setStep] = useState<'config' | 'import' | 'result'>('config');
   const [syncType, setSyncType] = useState<SyncType>('inventory');
   
-  // Config State
-  const [appId, setAppId] = useState('');
-  const [token, setToken] = useState(''); 
-  const [proxyUrl, setProxyUrl] = useState(''); 
+  // FIX: Use lazy initialization to ensure localStorage is read immediately on mount
+  const [appId, setAppId] = useState(() => localStorage.getItem('lx_app_id') || '');
+  const [token, setToken] = useState(() => localStorage.getItem('lx_token') || ''); 
+  const [proxyUrl, setProxyUrl] = useState(() => localStorage.getItem('lx_proxy_url') || ''); 
   
   // Import State
   const [pasteData, setPasteData] = useState('');
 
-  // Load saved config ONCE on mount/open
-  useEffect(() => {
-      if (isOpen) {
-          setAppId(localStorage.getItem('lx_app_id') || '');
-          setToken(localStorage.getItem('lx_token') || '');
-          setProxyUrl(localStorage.getItem('lx_proxy_url') || '');
-      }
-  }, [isOpen]);
+  // Persist changes immediately
+  useEffect(() => { localStorage.setItem('lx_app_id', appId); }, [appId]);
+  useEffect(() => { localStorage.setItem('lx_token', token); }, [token]);
+  useEffect(() => { localStorage.setItem('lx_proxy_url', proxyUrl); }, [proxyUrl]);
 
   const [isLoading, setIsLoading] = useState(false);
   const [diffs, setDiffs] = useState<any[]>([]);
@@ -44,15 +40,7 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
 
   const isSimulation = !proxyUrl || !proxyUrl.startsWith('http');
 
-  // Save config when clicking Connect
-  const saveConfig = () => {
-      localStorage.setItem('lx_app_id', appId);
-      localStorage.setItem('lx_token', token);
-      localStorage.setItem('lx_proxy_url', proxyUrl);
-  };
-
   const handleConnect = async () => {
-      saveConfig();
       setIsLoading(true);
       setEditingId(null);
       try {
@@ -87,12 +75,16 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
       const parsed: { sku: string; qty: number }[] = [];
       
       lines.forEach(line => {
-          // Supports "SKU, Qty" or "SKU \t Qty" or "SKU Qty"
-          const parts = line.replace(/,/g, ' ').split(/[\t\s]+/).filter(Boolean);
+          // Robust parsing: Remove commas (like "1,000"), replace tabs/multiple spaces with single space
+          const cleanLine = line.replace(/,/g, '').trim();
+          const parts = cleanLine.split(/[\t\s]+/).filter(Boolean);
+          
           if (parts.length >= 2) {
-              const sku = parts[0];
-              const qty = parseFloat(parts[parts.length-1]); // Assume last part is number
-              if (!isNaN(qty)) {
+              const sku = parts[0]; // First part is SKU
+              const qtyStr = parts[parts.length-1]; // Last part is Qty
+              const qty = parseFloat(qtyStr); 
+              
+              if (sku && !isNaN(qty)) {
                   parsed.push({ sku, qty });
               }
           }
@@ -100,19 +92,27 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
 
       if (parsed.length > 0) {
           const count = bulkImportRealData(parsed);
-          alert(`成功导入 ${count} 条真实数据！\n系统现在将使用这些数据进行比对。`);
-          setPasteData('');
-          // Auto proceed to connect logic (which uses the newly saved mock DB)
-          handleConnect();
+          
+          // Count matches against current records
+          const matchedCount = records.filter(r => parsed.some(p => p.sku.trim() === r.sku.trim())).length;
+          
+          if (matchedCount === 0) {
+              alert(`⚠️ 成功解析 ${parsed.length} 条数据，但没有一条与当前系统中的 SKU 匹配！\n\n请检查：\n1. 您在系统中添加产品了吗？\n2. SKU 是否完全一致？(例如 MA-001 vs MA001)`);
+          } else {
+              alert(`✅ 成功导入 ${parsed.length} 条数据！\n其中 ${matchedCount} 条匹配到了本地产品。\n\n系统将立即开始比对...`);
+              setPasteData('');
+              // Auto proceed
+              handleConnect();
+          }
       } else {
-          alert("未能识别有效数据。请确保格式为：SKU 数量 (每行一条)");
+          alert("❌ 未能识别有效数据。\n\n请确保格式为：SKU  数量\n例如：\nMA-001  100\nCP-Q1M  50");
       }
   };
 
   const handleResetSimulation = () => {
-      if(window.confirm("确定要重置所有数据吗？\n这将清除所有手动导入或模拟的数据。")) {
+      if(window.confirm("确定要重置所有缓存数据吗？\n如果之前手动导入过数据，也会被清空，下次将显示随机模拟数据。")) {
           resetMockErpData();
-          alert("数据已重置。");
+          alert("缓存已清空。");
           setStep('config');
       }
   };
@@ -242,16 +242,24 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
                     <h3 className="font-bold text-gray-800 flex items-center gap-2">
                         <UploadCloud size={20} className="text-blue-600"/> 导入真实数据
                     </h3>
-                    <p className="text-xs text-gray-500">请从 Excel 复制两列：SKU 和 数量 (Quantity)，然后粘贴到下方。</p>
+                    <div className="bg-blue-50 text-blue-800 p-3 rounded-lg text-xs leading-relaxed">
+                        <strong>使用说明：</strong>
+                        <ol className="list-decimal pl-4 mt-1 space-y-1">
+                            <li>打开您的 Excel 表格或 ERP 导出单。</li>
+                            <li>复制两列数据：<strong>SKU 列</strong> 和 <strong>数量 列</strong> (顺序不限)。</li>
+                            <li>直接粘贴到下方文本框中。</li>
+                            <li>点击“确认导入”，系统将自动匹配本地商品。</li>
+                        </ol>
+                    </div>
                     <textarea 
                         className="flex-1 w-full p-4 border border-gray-300 rounded-xl font-mono text-xs bg-gray-50 focus:ring-2 focus:ring-blue-500 outline-none resize-none"
-                        placeholder={`Example:\nSKU001 100\nSKU002 50\n...`}
+                        placeholder={`粘贴区域 (支持 Excel 直接粘贴)\nExample:\nMA-001   100\nCP-Q1M   50\n...`}
                         value={pasteData}
                         onChange={e => setPasteData(e.target.value)}
                     ></textarea>
                     <div className="flex gap-3">
                         <button onClick={() => setStep('config')} className="flex-1 py-3 rounded-xl border border-gray-300 font-bold text-gray-600">取消</button>
-                        <button onClick={handleBulkImport} className="flex-[2] bg-blue-600 text-white font-bold py-3 rounded-xl shadow-lg hover:bg-blue-700">确认导入</button>
+                        <button onClick={handleBulkImport} className="flex-[2] bg-blue-600 text-white font-bold py-3 rounded-xl shadow-lg hover:bg-blue-700">确认导入 & 开始比对</button>
                     </div>
                 </div>
             )}
@@ -271,6 +279,13 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
                         <div className="text-center py-10 bg-white rounded-xl border border-gray-200">
                             <Check className="mx-auto text-green-500 mb-2" size={40} />
                             <p className="text-gray-600 font-medium">数据完全一致！</p>
+                            <p className="text-xs text-gray-400 mt-2">
+                                我们比对了您的数据，没有发现任何差异。<br/>
+                                (如果您刚导入了数据，说明导入值与本地值相同)
+                            </p>
+                            <div className="mt-4">
+                                <button onClick={() => setStep('config')} className="text-blue-500 text-xs font-bold hover:underline">返回重试</button>
+                            </div>
                         </div>
                     ) : (
                         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm max-h-[400px] overflow-y-auto custom-scrollbar">

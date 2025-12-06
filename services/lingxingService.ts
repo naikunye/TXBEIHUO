@@ -38,22 +38,29 @@ export const resetMockErpData = () => {
 
 export const updateMockErpItem = (sku: string, field: 'stock' | 'sales', value: number) => {
     const db = getMockDb();
-    if (!db[sku]) {
-        db[sku] = { stock: 0, sales: 0 };
+    const cleanSku = sku.trim(); // Normalize
+    if (!db[cleanSku]) {
+        db[cleanSku] = { stock: 0, sales: 0 };
     }
-    db[sku][field] = value;
+    db[cleanSku][field] = value;
     saveMockDb(db);
 };
 
-// NEW: Bulk Import Real Data
+// NEW: Bulk Import Real Data with Normalization
 export const bulkImportRealData = (data: { sku: string; qty: number }[]) => {
     const db = getMockDb();
     let count = 0;
     data.forEach(item => {
-        if (!db[item.sku]) db[item.sku] = { stock: 0, sales: 0 };
-        db[item.sku].stock = item.qty;
-        // Also update sales randomly if missing to avoid 0
-        if (!db[item.sku].sales) db[item.sku].sales = Math.floor(item.qty * 0.1);
+        const cleanSku = item.sku.trim();
+        // Create entry if missing
+        if (!db[cleanSku]) db[cleanSku] = { stock: 0, sales: 0 };
+        
+        // Force update stock
+        db[cleanSku].stock = item.qty;
+        
+        // Init sales if missing
+        if (db[cleanSku].sales === undefined) db[cleanSku].sales = 0;
+        
         count++;
     });
     saveMockDb(db);
@@ -62,22 +69,25 @@ export const bulkImportRealData = (data: { sku: string; qty: number }[]) => {
 
 const getOrGenerateMockData = (record: ReplenishmentRecord) => {
     const db = getMockDb();
+    const cleanSku = record.sku.trim();
     
-    if (!db[record.sku]) {
-        // Default random generation if no real data imported
+    // Check if we have data for this SKU (Mocked or Imported)
+    if (!db[cleanSku]) {
+        // If not found, generate random data ONCE and save it
         const hasDrift = Math.random() > 0.3; 
         const randomDiff = hasDrift ? Math.floor(Math.random() * 30) - 10 : 0;
         const mockStock = Math.max(0, record.quantity + (randomDiff === 0 && hasDrift ? 5 : randomDiff));
         const volatility = 0.2;
         const mockSales = Math.max(0, record.dailySales + (record.dailySales * volatility * (Math.random() - 0.5)));
 
-        db[record.sku] = {
+        db[cleanSku] = {
             stock: mockStock,
             sales: parseFloat(mockSales.toFixed(1))
         };
         saveMockDb(db);
     }
-    return db[record.sku];
+    
+    return db[cleanSku];
 };
 
 export const fetchLingxingInventory = async (
@@ -105,8 +115,7 @@ export const fetchLingxingInventory = async (
   }
 
   // 2. Offline / Simulation Mode
-  // If user imported data, this will return that REAL data.
-  await new Promise(resolve => setTimeout(resolve, 500)); 
+  await new Promise(resolve => setTimeout(resolve, 300)); // Faster simulation
   
   return localRecords.map(record => {
       const data = getOrGenerateMockData(record);
@@ -132,7 +141,7 @@ export const fetchLingxingSales = async (
         throw new Error("暂未检测到有效的后端代理服务");
     }
   
-    await new Promise(resolve => setTimeout(resolve, 500));
+    await new Promise(resolve => setTimeout(resolve, 300));
     
     return localRecords.map(record => {
         const data = getOrGenerateMockData(record);
@@ -157,7 +166,8 @@ export const calculateInventoryDiff = (
     }[] = [];
 
     localRecords.forEach(local => {
-        const erpItem = erpData.find(e => e.sku === local.sku);
+        // Strict SKU matching (both trimmed)
+        const erpItem = erpData.find(e => e.sku.trim() === local.sku.trim());
         if (erpItem) {
             const totalErp = erpItem.fbaStock;
             if (local.quantity !== totalErp) {
@@ -189,7 +199,7 @@ export const calculateSalesDiff = (
     }[] = [];
 
     localRecords.forEach(local => {
-        const erpItem = erpData.find(e => e.sku === local.sku);
+        const erpItem = erpData.find(e => e.sku.trim() === local.sku.trim());
         if (erpItem) {
             if (Math.abs(local.dailySales - erpItem.avgDailySales) > 0.1) {
                 diffs.push({
