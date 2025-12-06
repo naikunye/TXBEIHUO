@@ -28,6 +28,10 @@ export interface ReplenishmentRecord {
   unitPriceCNY: number; // 采购单价 (RMB)
   unitWeightKg: number; // 单个重量
   
+  // Supply Chain Params (New for Smart Restock)
+  leadTimeDays?: number; // 生产+头程总时长 (days)
+  safetyStockDays?: number; // 安全库存天数 (days)
+  
   // Packing Info (New)
   boxLengthCm: number;
   boxWidthCm: number;
@@ -59,6 +63,10 @@ export interface ReplenishmentRecord {
   // Warehouse Info
   warehouse: string;
   status: 'Planning' | 'Shipped' | 'Arrived';
+
+  // Trash Bin Logic (New)
+  isDeleted?: boolean;
+  deletedAt?: string; // ISO Date string
 }
 
 // Calculated Metrics (Computed on the fly)

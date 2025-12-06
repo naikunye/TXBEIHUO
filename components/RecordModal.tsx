@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { ReplenishmentRecord, Store } from '../types';
-import { X, Upload, Image as ImageIcon, Plane, Ship, RefreshCcw, Package, Box, Percent, Zap, BarChart, Tag, Calculator, DollarSign, RotateCcw, Scale, Store as StoreIcon } from 'lucide-react';
+import { X, Upload, Image as ImageIcon, Plane, Ship, RefreshCcw, Package, Box, Percent, Zap, BarChart, Tag, Calculator, DollarSign, RotateCcw, Scale, Store as StoreIcon, Clock, ShieldCheck } from 'lucide-react';
 import { EXCHANGE_RATE } from '../constants';
 
 interface RecordModalProps {
@@ -24,6 +24,11 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
     dailySales: 0, // Default
     unitPriceCNY: 0,
     unitWeightKg: 0,
+    
+    // Supply Chain Defaults
+    leadTimeDays: 30, // Default 30 days
+    safetyStockDays: 15, // Default 15 days
+
     // Packing Defaults
     boxLengthCm: 0,
     boxWidthCm: 0,
@@ -208,7 +213,7 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
               {initialData ? `编辑: ${initialData.productName}` : '新增备货计划'}
             </h2>
             <p className="text-sm text-gray-500">
-              {initialData ? '完善箱规信息以获得更准确的体积计算' : '填写详细信息以计算精准利润'}
+              {initialData ? '完善参数以获得更准确的智能补货建议' : '填写详细信息以计算精准利润'}
             </p>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 bg-white p-2 rounded-full shadow-sm hover:shadow transition">
@@ -223,7 +228,7 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
             <div className="flex items-center gap-2 mb-2 pb-2 border-b border-gray-100 justify-between">
               <div className="flex items-center gap-2">
                 <span className="w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold text-sm">1</span>
-                <h3 className="text-base font-bold text-gray-800">产品与店铺信息</h3>
+                <h3 className="text-base font-bold text-gray-800">产品与供应链</h3>
               </div>
               
               {/* Store Selector Highlight */}
@@ -331,10 +336,24 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
                     </div>
                   </div>
 
-                  <div className="md:col-span-2">
-                    <label className={labelClass}>目的仓库</label>
-                    <input type="text" name="warehouse" value={formData.warehouse} onChange={handleChange} className={inputClass} />
+                  {/* Supply Chain Params (New) */}
+                  <div className="grid grid-cols-2 gap-4 md:col-span-2 bg-yellow-50 p-3 rounded-lg border border-yellow-100">
+                      <div>
+                          <label className={`${labelClass} text-yellow-800`}>生产+物流总时效 (Days)</label>
+                          <div className="relative">
+                              <Clock className="absolute left-3 top-3 text-yellow-500" size={16} />
+                              <input type="number" name="leadTimeDays" value={formData.leadTimeDays} onChange={handleChange} className={`${inputClass} pl-10 border-yellow-200`} placeholder="30" />
+                          </div>
+                      </div>
+                      <div>
+                          <label className={`${labelClass} text-yellow-800`}>安全库存天数 (Days)</label>
+                          <div className="relative">
+                              <ShieldCheck className="absolute left-3 top-3 text-yellow-500" size={16} />
+                              <input type="number" name="safetyStockDays" value={formData.safetyStockDays} onChange={handleChange} className={`${inputClass} pl-10 border-yellow-200`} placeholder="15" />
+                          </div>
+                      </div>
                   </div>
+
               </div>
             </div>
           </div>
@@ -587,6 +606,10 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
                         />
                     </div>
                  </div>
+                 <div className="md:col-span-1">
+                    <label className={labelClass}>目的仓库</label>
+                    <input type="text" name="warehouse" value={formData.warehouse} onChange={handleChange} className={inputClass} />
+                  </div>
              </div>
           </div>
 

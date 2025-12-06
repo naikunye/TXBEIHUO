@@ -49,7 +49,13 @@ import {
   ChevronsLeft,
   ChevronsRight,
   UserCircle,
-  Command // Import Command Icon
+  Command,
+  CopyPlus,
+  MoreHorizontal,
+  Trash2,
+  Printer,
+  CalendarClock,
+  RefreshCw // Import new icon
 } from 'lucide-react';
 import { ReplenishmentRecord, Store, CalculatedMetrics } from './types';
 import { MOCK_DATA_INITIAL } from './constants';
@@ -67,7 +73,12 @@ import { MarketingDashboard } from './components/MarketingDashboard';
 import { DataBackupModal } from './components/DataBackupModal';
 import { StoreManagerModal } from './components/StoreManagerModal';
 import { DistributeModal } from './components/DistributeModal'; 
-import { CommandPalette } from './components/CommandPalette'; // Import Component
+import { CommandPalette } from './components/CommandPalette'; 
+import { ConfirmDialog } from './components/ConfirmDialog';
+import { RecycleBinModal } from './components/RecycleBinModal';
+import { LabelGeneratorModal } from './components/LabelGeneratorModal'; 
+import { RestockPlanModal } from './components/RestockPlanModal'; 
+import { ErpSyncModal } from './components/ErpSyncModal'; // Import
 import { ToastContainer, ToastMessage, ToastType } from './components/Toast'; 
 import { analyzeInventory, generateAdStrategy, generateSelectionStrategy, generateMarketingContent } from './services/geminiService';
 import { supabase, isSupabaseConfigured } from './lib/supabaseClient';
@@ -110,6 +121,20 @@ function App() {
   // --- Distribute Modal State ---
   const [isDistributeModalOpen, setIsDistributeModalOpen] = useState(false);
   const [distributeSourceRecord, setDistributeSourceRecord] = useState<ReplenishmentRecord | null>(null);
+
+  // --- Label Modal State ---
+  const [isLabelModalOpen, setIsLabelModalOpen] = useState(false);
+  const [labelRecord, setLabelRecord] = useState<ReplenishmentRecord | null>(null);
+
+  // --- Restock Plan Modal State ---
+  const [isRestockPlanOpen, setIsRestockPlanOpen] = useState(false);
+
+  // --- ERP Sync Modal State ---
+  const [isErpSyncOpen, setIsErpSyncOpen] = useState(false); // NEW State
+
+  // --- Delete Confirmation & Trash State ---
+  const [deleteConfirm, setDeleteConfirm] = useState<{ isOpen: boolean, id: string | null }>({ isOpen: false, id: null });
+  const [isRecycleBinOpen, setIsRecycleBinOpen] = useState(false);
 
   // --- Command Palette State ---
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
@@ -199,6 +224,36 @@ function App() {
     loadData();
   }, [workspaceId]);
 
+  // --- Auto Cleanup of Old Trash ---
+  useEffect(() => {
+      if (!isDataLoaded || records.length === 0) return;
+      
+      const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+      const now = Date.now();
+      
+      // Identify items to purge
+      const itemsToPurge = records.filter(r => 
+          r.isDeleted && 
+          r.deletedAt && 
+          (now - new Date(r.deletedAt).getTime() > SEVEN_DAYS_MS)
+      );
+
+      if (itemsToPurge.length > 0) {
+          // Perform local purge
+          setRecords(prev => prev.filter(r => !itemsToPurge.some(p => p.id === r.id)));
+          console.log(`Auto-purged ${itemsToPurge.length} old items.`);
+          
+          // Perform cloud purge if connected
+          if (workspaceId && isSupabaseConfigured()) {
+              itemsToPurge.forEach(async (item) => {
+                  try {
+                      await supabase.from('replenishment_data').delete().eq('id', item.id);
+                  } catch (e) { console.error('Cloud purge failed', e); }
+              });
+          }
+      }
+  }, [records, isDataLoaded, workspaceId]);
+
   useEffect(() => {
     if (!workspaceId || !isSupabaseConfigured()) {
         setSyncStatus('disconnected');
@@ -261,6 +316,8 @@ function App() {
   const processedData = useMemo(() => {
     // 1. Filter
     let filtered = records.filter(record => {
+      if (record.isDeleted) return false; // Hide deleted items from main view!
+
       const q = searchQuery.toLowerCase();
       const matchesSearch =
         record.productName.toLowerCase().includes(q) ||
@@ -299,6 +356,9 @@ function App() {
 
     return enriched;
   }, [records, searchQuery, statusFilter, activeStoreId, sortConfig]);
+
+  // Derived Deleted Records for Trash Bin
+  const deletedRecords = useMemo(() => records.filter(r => r.isDeleted), [records]);
 
   const paginatedRecords = useMemo(() => {
       const startIndex = (currentPage - 1) * itemsPerPage;
@@ -352,7 +412,8 @@ function App() {
     if (editingRecord) {
         finalRecord = { ...recordData, id: editingRecord.id };
     } else {
-        finalRecord = { ...recordData, id: Math.random().toString(36).substring(7) };
+        // Use purely timestamp based ID for absolute safety
+        finalRecord = { ...recordData, id: Date.now().toString() };
     }
     setRecords(prev => {
         if (editingRecord) return prev.map(r => r.id === editingRecord.id ? finalRecord : r);
@@ -363,10 +424,52 @@ function App() {
     saveToCloud(finalRecord);
   };
   
-  const handleDeleteRecord = async (id: string) => {
-      if(!window.confirm("确定要删除这条记录吗？")) return;
+  const initiateDelete = (id: string) => {
+      setDeleteConfirm({ isOpen: true, id });
+  };
+
+  // NEW: Soft Delete Logic
+  const confirmSoftDelete = async () => {
+      const id = deleteConfirm.id;
+      if (!id) return;
+      
+      const now = new Date().toISOString();
+      const updatedRecord: Partial<ReplenishmentRecord> = { isDeleted: true, deletedAt: now };
+
+      setRecords(prev => prev.map(r => {
+          if (r.id === id) return { ...r, ...updatedRecord };
+          return r;
+      }));
+
+      // Find full record to save to cloud as "Deleted"
+      const recordToUpdate = records.find(r => r.id === id);
+      if (recordToUpdate) {
+          saveToCloud({ ...recordToUpdate, ...updatedRecord } as ReplenishmentRecord);
+      }
+
+      addToast("已移至回收站，7天后将自动清理", 'info');
+      setDeleteConfirm({ isOpen: false, id: null });
+  };
+
+  // NEW: Restore Logic
+  const handleRestoreRecord = (id: string) => {
+      setRecords(prev => prev.map(r => {
+          if (r.id === id) return { ...r, isDeleted: false, deletedAt: undefined };
+          return r;
+      }));
+      
+      const recordToRestore = records.find(r => r.id === id);
+      if (recordToRestore) {
+          saveToCloud({ ...recordToRestore, isDeleted: false, deletedAt: undefined } as ReplenishmentRecord);
+      }
+      addToast("记录已恢复", 'success');
+  };
+
+  // NEW: Hard Delete Logic
+  const handleHardDeleteRecord = async (id: string) => {
       setRecords(prev => prev.filter(r => r.id !== id));
-      addToast("记录已删除", 'info');
+      addToast("记录已永久删除", 'error');
+      
       if (workspaceId && isSupabaseConfigured()) {
           try { await supabase.from('replenishment_data').delete().eq('id', id); } catch(err) { console.error(err); }
       }
@@ -378,9 +481,43 @@ function App() {
       setIsDistributeModalOpen(true);
   };
 
+  // Quick Reorder: Clones record with 'Planning' status and resets date
+  // FIX: Added automatic filter switching to 'Planning' or 'All' to ensure visibility
+  const handleQuickReorder = async (e: React.MouseEvent, record: ReplenishmentRecord) => {
+      e.stopPropagation();
+      
+      const newRecordId = Date.now().toString();
+      const newRecord: ReplenishmentRecord = {
+          ...record,
+          id: newRecordId,
+          date: new Date().toISOString().split('T')[0],
+          status: 'Planning',
+          // Keep quantity and other settings same as last time for speed
+      };
+      
+      setRecords(prev => [newRecord, ...prev]);
+      
+      // Ensure the user sees the new record by switching filter if necessary
+      if (statusFilter !== 'All' && statusFilter !== 'Planning') {
+          setStatusFilter('Planning');
+          addToast('已切换至“计划中”视图查看新订单', 'info');
+      } else {
+          addToast(`已为 ${record.sku} 创建补货计划`, 'success');
+      }
+      
+      await saveToCloud(newRecord);
+  };
+
+  // NEW: Open Label Modal
+  const openLabelGenerator = (e: React.MouseEvent, record: ReplenishmentRecord) => {
+      e.stopPropagation();
+      setLabelRecord(record);
+      setIsLabelModalOpen(true);
+  };
+
   const handleDistributeConfirm = async (mode: 'transfer' | 'clone', targetStoreId: string, quantity: number) => {
       if (!distributeSourceRecord) return;
-      const newRecordId = Math.random().toString(36).substring(7);
+      const newRecordId = Date.now().toString();
       const itemsPerBox = distributeSourceRecord.itemsPerBox || 1;
       const newTotalCartons = Math.ceil(quantity / itemsPerBox);
       const manualWeightRatio = distributeSourceRecord.manualTotalWeightKg 
@@ -425,6 +562,19 @@ function App() {
   const handleImportData = (newRecords: ReplenishmentRecord[]) => {
       setRecords(newRecords);
       addToast(`成功导入 ${newRecords.length} 条数据`, 'success');
+  };
+
+  // --- ERP Sync Handler ---
+  const handleErpUpdate = async (updatedRecords: ReplenishmentRecord[]) => {
+      setRecords(updatedRecords);
+      
+      // Batch save to cloud
+      if (workspaceId && isSupabaseConfigured()) {
+          // Simple loop for now, ideally batch upsert
+          for(const rec of updatedRecords) {
+              await saveToCloud(rec);
+          }
+      }
   };
 
   // --- Command Palette Handlers ---
@@ -600,9 +750,27 @@ function App() {
                         <span className="text-sm font-semibold text-gray-700">库存清单</span>
                         <span className="text-xs bg-gray-200 text-gray-600 px-2 py-0.5 rounded-full">{processedData.length}</span>
                       </div>
-                      <button onClick={handleExportCSV} className="text-gray-500 hover:text-blue-600 text-sm font-medium flex items-center gap-1 transition-colors px-3 py-1.5 hover:bg-white rounded-lg border border-transparent hover:border-gray-200 hover:shadow-sm">
-                         <Download size={16} /> 导出报表 (CSV)
-                      </button>
+                      <div className="flex items-center gap-2">
+                          {/* New ERP Sync Button */}
+                          <button 
+                            onClick={() => setIsErpSyncOpen(true)}
+                            className="flex items-center gap-1.5 text-sm font-bold text-blue-600 bg-blue-50 px-3 py-1.5 rounded-lg hover:bg-blue-100 transition-colors shadow-sm border border-blue-200"
+                          >
+                             <RefreshCw size={16} /> 
+                             <span className="hidden sm:inline">同步领星 ERP</span>
+                             <span className="sm:hidden">ERP</span>
+                          </button>
+
+                          <button onClick={() => setIsRestockPlanOpen(true)} className="flex items-center gap-1.5 text-sm font-bold text-white bg-slate-900 px-3 py-1.5 rounded-lg hover:bg-slate-800 transition-colors shadow-sm">
+                             <CalendarClock size={16} className="text-emerald-400" /> 
+                             <span className="hidden sm:inline">智能补货规划</span>
+                             <span className="sm:hidden">补货</span>
+                          </button>
+                          <button onClick={handleExportCSV} className="text-gray-500 hover:text-blue-600 text-sm font-medium flex items-center gap-1 transition-colors px-3 py-1.5 hover:bg-white rounded-lg border border-transparent hover:border-gray-200 hover:shadow-sm">
+                             <Download size={16} /> 
+                             <span className="hidden sm:inline">导出</span>
+                          </button>
+                      </div>
                    </div>
                   
                   {/* ERP-style Data Grid */}
@@ -620,8 +788,8 @@ function App() {
                           <th scope="col" onClick={() => handleSort('metrics.firstLegCostCNY')} className="w-44 px-4 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider cursor-pointer hover:text-blue-600 group select-none">
                               <div className="flex items-center">资金投入 (Total) {getSortIcon('metrics.firstLegCostCNY')}</div>
                           </th>
-                          <th scope="col" onClick={() => handleSort('metrics.daysOfSupply')} className="w-44 px-4 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider cursor-pointer hover:text-blue-600 group select-none">
-                              <div className="flex items-center">库存状态 (DOS) {getSortIcon('metrics.daysOfSupply')}</div>
+                          <th scope="col" onClick={() => handleSort('metrics.daysOfSupply')} className="w-48 px-4 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider cursor-pointer hover:text-blue-600 group select-none">
+                              <div className="flex items-center">库存健康 (DOS) {getSortIcon('metrics.daysOfSupply')}</div>
                           </th>
                           <th scope="col" onClick={() => handleSort('metrics.marginRate')} className="w-36 px-4 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider cursor-pointer hover:text-blue-600 group select-none">
                               <div className="flex items-center">销售表现 {getSortIcon('metrics.marginRate')}</div>
@@ -637,10 +805,18 @@ function App() {
                           const shippingTotalCNY = m.firstLegCostCNY;
                           const totalInvestCNY = productTotalCNY + shippingTotalCNY;
                           const store = stores.find(s => s.id === record.storeId);
+                          
+                          // DOS Bar Calculation (Max 60 days for bar full width)
+                          const dosValue = Math.min(m.daysOfSupply, 60);
+                          const dosPercent = (dosValue / 60) * 100;
+                          let dosColor = 'bg-green-500';
+                          if (m.daysOfSupply < 15) dosColor = 'bg-red-500';
+                          else if (m.daysOfSupply < 30) dosColor = 'bg-yellow-500';
+                          else if (m.daysOfSupply > 90) dosColor = 'bg-blue-400';
 
                           return (
-                            <tr key={record.id} className="hover:bg-blue-50/50 transition-colors group cursor-pointer relative" onClick={() => openEditModal(record)}>
-                              <td className="px-4 py-3 whitespace-nowrap">
+                            <tr key={record.id} className="hover:bg-blue-50/50 transition-colors group">
+                              <td onClick={() => openEditModal(record)} className="px-4 py-3 whitespace-nowrap cursor-pointer">
                                 <div className="flex items-center gap-2 mb-1">
                                     {store ? <span className={`w-2 h-2 rounded-full ${store.color}`} title={store.name}></span> : <span className="w-2 h-2 rounded-full bg-gray-300" title="未分配"></span>}
                                     <div className="text-sm text-gray-900 font-bold font-mono truncate" title={record.sku}>{record.sku}</div>
@@ -650,7 +826,7 @@ function App() {
                                   <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium border ${getStatusBadge(record.status)}`}>{getStatusLabel(record.status)}</span>
                                 </div>
                               </td>
-                              <td className="px-4 py-3">
+                              <td onClick={() => openEditModal(record)} className="px-4 py-3 cursor-pointer">
                                 <div className="flex items-center">
                                   <div className="flex-shrink-0 h-10 w-10 mr-3">
                                     {record.imageUrl ? <img className="h-10 w-10 rounded-lg object-cover border border-gray-100" src={record.imageUrl} alt="" /> : <div className="h-10 w-10 rounded-lg bg-gray-100 flex items-center justify-center text-gray-400 border border-gray-100"><Package size={18} /></div>}
@@ -662,7 +838,7 @@ function App() {
                                   </div>
                                 </div>
                               </td>
-                              <td className="px-4 py-3 whitespace-nowrap">
+                              <td onClick={() => openEditModal(record)} className="px-4 py-3 whitespace-nowrap cursor-pointer">
                                 <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium border mb-1 ${record.shippingMethod === 'Air' ? 'bg-sky-50 text-sky-700 border-sky-100' : 'bg-indigo-50 text-indigo-700 border-indigo-100'}`}>
                                   {record.shippingMethod === 'Air' ? <Plane className="w-3 h-3 mr-1"/> : <Ship className="w-3 h-3 mr-1"/>}
                                   {record.shippingMethod === 'Air' ? '空运' : '海运'}
@@ -672,41 +848,85 @@ function App() {
                                   <div className="text-xs text-gray-400 font-mono">{m.totalVolumeCbm > 0 ? `${m.totalVolumeCbm.toFixed(3)} CBM` : '-'}</div>
                                 </div>
                               </td>
-                              <td className="px-4 py-3 whitespace-nowrap">
+                              <td onClick={() => openEditModal(record)} className="px-4 py-3 whitespace-nowrap cursor-pointer">
                                   <div className="flex flex-col gap-0.5">
                                       <span className="text-sm font-bold text-blue-900 font-mono">{formatCurrency(totalInvestCNY, 'CNY')}</span>
                                       <span className="text-[10px] text-gray-500 flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-blue-400"></span>货: {formatCurrency(productTotalCNY, 'CNY')}</span>
                                       <span className="text-[10px] text-gray-500 flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-orange-400"></span>运: {formatCurrency(shippingTotalCNY, 'CNY')}</span>
                                   </div>
                               </td>
-                              <td className="px-4 py-3 whitespace-nowrap">
-                                <div className="space-y-1">
-                                  {m.stockStatus !== 'Unknown' ? (
-                                    <>
-                                        <div className="flex items-center gap-2">
-                                            {m.stockStatus === 'Critical' && <AlertTriangle size={14} className="text-red-500" />}
-                                            {m.stockStatus === 'Low' && <Hourglass size={14} className="text-yellow-500" />}
-                                            {m.stockStatus === 'Healthy' && <div className="w-2 h-2 rounded-full bg-green-500"></div>}
-                                            {m.stockStatus === 'Overstock' && <AlertTriangle size={14} className="text-orange-500" />}
-                                            <span className={`text-xs font-bold ${m.stockStatus === 'Critical' ? 'text-red-600' : m.stockStatus === 'Low' ? 'text-yellow-700' : m.stockStatus === 'Overstock' ? 'text-orange-600' : 'text-green-600'}`}>{m.daysOfSupply.toFixed(0)} 天周转</span>
-                                        </div>
-                                        <div className="text-[10px] text-gray-400">日销: {record.dailySales} / 现货: {record.quantity}</div>
-                                    </>
-                                  ) : <span className="text-xs text-gray-400 italic">待输入日销量</span>}
+                              {/* Visual Inventory Health */}
+                              <td onClick={() => openEditModal(record)} className="px-4 py-3 whitespace-nowrap cursor-pointer">
+                                <div className="space-y-1.5">
+                                  <div className="flex justify-between items-center text-xs">
+                                      <span className={`font-bold ${m.stockStatus === 'Critical' ? 'text-red-600' : 'text-gray-700'}`}>
+                                          {m.daysOfSupply < 999 ? `${m.daysOfSupply.toFixed(0)} 天` : '∞'}
+                                      </span>
+                                      <span className="text-[10px] text-gray-400">{record.dailySales}/天</span>
+                                  </div>
+                                  {/* Progress Bar */}
+                                  <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                                      <div 
+                                        className={`h-full rounded-full ${dosColor} transition-all duration-500`} 
+                                        style={{ width: `${Math.min(dosPercent, 100)}%` }}
+                                      ></div>
+                                  </div>
+                                  <div className="flex items-center gap-1">
+                                      {m.stockStatus === 'Critical' && <span className="text-[10px] text-red-500 flex items-center gap-0.5"><AlertTriangle size={10}/> 急需补货</span>}
+                                      {m.stockStatus === 'Low' && <span className="text-[10px] text-yellow-600 flex items-center gap-0.5"><Hourglass size={10}/> 建议备货</span>}
+                                      {m.stockStatus === 'Healthy' && <span className="text-[10px] text-green-600 flex items-center gap-0.5">库存健康</span>}
+                                  </div>
                                 </div>
                               </td>
-                              <td className="px-4 py-3 whitespace-nowrap">
-                                <div className="text-sm font-bold text-gray-900 font-mono">${record.salesPriceUSD.toFixed(2)}</div>
-                                <div className={`text-[10px] font-medium mt-1 inline-block px-1.5 py-0.5 rounded ${m.marginRate < 15 ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>毛利: {m.marginRate.toFixed(1)}%</div>
+                              <td onClick={() => openEditModal(record)} className="px-4 py-3 whitespace-nowrap cursor-pointer">
+                                <div className="text-sm font-bold text-gray-900 font-mono flex items-center gap-1">
+                                    ${record.salesPriceUSD.toFixed(2)}
+                                </div>
+                                <div className={`text-[10px] font-medium mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded ${m.marginRate < 15 ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-700'}`}>
+                                    {m.marginRate > 20 ? <TrendingUp size={10} /> : null}
+                                    毛利: {m.marginRate.toFixed(1)}%
+                                </div>
                               </td>
                               <td className="px-4 py-3 whitespace-nowrap text-right">
-                                <div className="flex flex-col items-end gap-2">
-                                    <button onClick={(e) => handleTableMarketingClick(e, record)} className="bg-gradient-to-r from-indigo-500 to-purple-500 text-white text-[10px] px-2 py-1 rounded flex items-center gap-1 hover:shadow-md transition-all active:scale-95" title="生成 TikTok 脚本与文案"><Wand2 size={10} /> 内容</button>
-                                    <div className="flex items-center gap-2">
-                                        <button onClick={(e) => openDistributeModal(e, record)} className="text-[10px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded border border-blue-100 hover:bg-blue-100 transition-colors flex items-center gap-1"><ArrowRightLeft size={10} /> 分发</button>
-                                        <div className={`text-xs px-2 py-0.5 rounded-full font-bold inline-flex items-center gap-1 ${m.roi > 30 ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-600'}`}>ROI: {m.roi.toFixed(0)}%</div>
-                                    </div>
-                                    <button onClick={(e) => { e.stopPropagation(); handleDeleteRecord(record.id); }} className="text-[10px] text-gray-300 hover:text-red-500 underline self-end">删除</button>
+                                <div className="flex items-center justify-end gap-1">
+                                    <button 
+                                        onClick={(e) => handleTableMarketingClick(e, record)} 
+                                        className="p-1.5 rounded hover:bg-purple-100 text-purple-600 transition-colors"
+                                        title="AI 营销"
+                                    >
+                                        <Wand2 size={14} />
+                                    </button>
+                                    <button 
+                                        onClick={(e) => openLabelGenerator(e, record)} 
+                                        className="p-1.5 rounded hover:bg-slate-100 text-slate-600 transition-colors"
+                                        title="打印箱唛 (本地备份)"
+                                    >
+                                        <Printer size={14} />
+                                    </button>
+                                    <button 
+                                        onClick={(e) => openDistributeModal(e, record)} 
+                                        className="p-1.5 rounded hover:bg-blue-100 text-blue-600 transition-colors"
+                                        title="分发/转移"
+                                    >
+                                        <ArrowRightLeft size={14} />
+                                    </button>
+                                    <button 
+                                        onClick={(e) => handleQuickReorder(e, record)} 
+                                        className="p-1.5 rounded hover:bg-green-100 text-green-600 transition-colors active:bg-green-200"
+                                        title="一键补货"
+                                    >
+                                        <CopyPlus size={14} />
+                                    </button>
+                                    <button 
+                                        onClick={(e) => { 
+                                            e.stopPropagation(); 
+                                            initiateDelete(record.id); 
+                                        }} 
+                                        className="p-1.5 rounded hover:bg-red-100 text-gray-400 hover:text-red-600 transition-colors"
+                                        title="删除"
+                                    >
+                                        <Trash2 size={14} />
+                                    </button>
                                 </div>
                               </td>
                             </tr>
@@ -842,6 +1062,21 @@ function App() {
           <button onClick={() => setCurrentView('calculator')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${currentView === 'calculator' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><Calculator size={20} /><span className="font-medium">智能试算</span></button>
           <button onClick={() => setCurrentView('logistics')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${currentView === 'logistics' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><Search size={20} /><span className="font-medium">物流查询</span></button>
           <button onClick={() => setIsBackupOpen(true)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all text-slate-400 hover:bg-slate-800 hover:text-white`}><FileJson size={20} /><span className="font-medium">数据备份</span></button>
+          
+          {/* Recycle Bin Button */}
+          <button 
+            onClick={() => setIsRecycleBinOpen(true)} 
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all text-slate-400 hover:bg-slate-800 hover:text-red-400 group relative`}
+          >
+              <Trash2 size={20} />
+              <span className="font-medium">回收站</span>
+              {deletedRecords.length > 0 && (
+                  <span className="absolute right-4 bg-red-500 text-white text-[10px] w-5 h-5 flex items-center justify-center rounded-full font-bold">
+                      {deletedRecords.length}
+                  </span>
+              )}
+          </button>
+
           <button onClick={() => setIsSettingsOpen(true)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${isSettingsOpen ? 'bg-slate-800 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><Settings size={20} /><span className="font-medium">系统设置</span></button>
         </nav>
         
@@ -901,6 +1136,37 @@ function App() {
       <CloudConnect isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} currentWorkspaceId={workspaceId} onConnect={setWorkspaceId} onDisconnect={() => setWorkspaceId(null)} isSyncing={syncStatus === 'connecting'} />
       <StoreManagerModal isOpen={isStoreManagerOpen} onClose={() => setIsStoreManagerOpen(false)} stores={stores} onAddStore={handleAddStore} onDeleteStore={handleDeleteStore} />
       <RecordModal isOpen={isModalOpen} onClose={closeModal} onSave={handleSaveRecord} initialData={editingRecord} stores={stores} defaultStoreId={activeStoreId} />
+      <ConfirmDialog isOpen={deleteConfirm.isOpen} onClose={() => setDeleteConfirm({isOpen: false, id: null})} onConfirm={confirmSoftDelete} title="确认删除产品" message="此操作会将产品移至回收站，保留7天后自动永久删除。" />
+      <RecycleBinModal 
+        isOpen={isRecycleBinOpen} 
+        onClose={() => setIsRecycleBinOpen(false)} 
+        deletedRecords={deletedRecords}
+        onRestore={handleRestoreRecord}
+        onDeleteForever={handleHardDeleteRecord}
+      />
+      
+      {/* Label Generator Modal */}
+      <LabelGeneratorModal 
+        isOpen={isLabelModalOpen} 
+        onClose={() => setIsLabelModalOpen(false)} 
+        record={labelRecord} 
+      />
+
+      {/* Restock Plan Modal */}
+      <RestockPlanModal 
+        isOpen={isRestockPlanOpen}
+        onClose={() => setIsRestockPlanOpen(false)}
+        records={records}
+      />
+
+      {/* NEW: ERP Sync Modal */}
+      <ErpSyncModal 
+        isOpen={isErpSyncOpen}
+        onClose={() => setIsErpSyncOpen(false)}
+        records={records}
+        onUpdateRecords={handleErpUpdate}
+      />
+
       {/* Distribute Modal */}
       <DistributeModal isOpen={isDistributeModalOpen} onClose={() => setIsDistributeModalOpen(false)} sourceRecord={distributeSourceRecord} stores={stores} onConfirm={handleDistributeConfirm} />
       <CommandPalette 
