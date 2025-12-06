@@ -24,23 +24,21 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
   // Import State
   const [pasteData, setPasteData] = useState('');
 
-  // API State (Shared fields, but keys mean different things)
-  // Field 1: App ID (Lingxing) OR App Key (Miaoshou)
+  // API State
   const [field1, setField1] = useState('');
-  // Field 2: Access Token (Lingxing) OR App Secret (Miaoshou)
   const [field2, setField2] = useState(''); 
   const [proxyUrl, setProxyUrl] = useState(''); 
   
   // Auto Sync Settings
   const [autoSync, setAutoSync] = useState(false);
-  const [syncInterval, setSyncInterval] = useState(60); // Minutes
+  const [syncInterval, setSyncInterval] = useState(60);
 
   const [showSecret, setShowSecret] = useState(false);
-  const [showGuide, setShowGuide] = useState(false); // New: Help Guide State
+  const [showGuide, setShowGuide] = useState(false);
   const [apiResults, setApiResults] = useState<SyncItem[]>([]);
   const [isApiLoading, setIsApiLoading] = useState(false);
 
-  // Load Config based on Platform
+  // Load Config
   useEffect(() => {
       if (isOpen) {
           loadConfig(platform);
@@ -57,7 +55,6 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
       setField2(localStorage.getItem(`${prefix}_token`) || '');
       setProxyUrl(localStorage.getItem(`${prefix}_proxy_url`) || '');
       
-      // Global Auto Sync Settings
       const savedAutoSync = localStorage.getItem('erp_auto_sync') === 'true';
       const savedInterval = parseInt(localStorage.getItem('erp_sync_interval') || '60');
       setAutoSync(savedAutoSync);
@@ -70,7 +67,6 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
       localStorage.setItem(`${prefix}_token`, field2);
       localStorage.setItem(`${prefix}_proxy_url`, proxyUrl);
       
-      // Save global preference for whichever platform is active currently
       localStorage.setItem('erp_active_platform', platform);
       localStorage.setItem('erp_auto_sync', autoSync.toString());
       localStorage.setItem('erp_sync_interval', syncInterval.toString());
@@ -140,7 +136,7 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
 
   // --- Logic 2: API Fetch ---
   const handleApiSync = async () => {
-    saveConfig(); // Save before fetch
+    saveConfig(); 
     setIsApiLoading(true);
     setApiResults([]);
     
@@ -181,7 +177,6 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
                 });
             }
         } else {
-            // MIAOSHOU LOGIC
             if (syncType === 'inventory') {
                 const data = await fetchMiaoshouInventory(field1, field2, records, proxyUrl);
                 fetchedItems = data.map(item => {
@@ -216,31 +211,23 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
     }
   };
 
-  // --- Unified Display Items ---
   const displayItems = activeTab === 'import' ? parsedPasteItems : apiResults;
 
   if (!isOpen) return null;
 
+  // --- CORE FIX: Immutable State Update Logic ---
   const handleApply = () => {
-      saveConfig(); // Ensure auto settings are saved
-      const updates = [...records];
+      saveConfig();
+      
+      const changesMap = new Map<string, SyncItem>();
       const newRecords: ReplenishmentRecord[] = [];
       let updateCount = 0;
       let createCount = 0;
 
+      // 1. Organize changes for O(1) lookup
       displayItems.forEach(item => {
           if (item.status === 'match') {
-              const recordIndex = updates.findIndex(r => r.sku === item.sku);
-              if (recordIndex !== -1) {
-                  if (syncType === 'inventory') {
-                      updates[recordIndex].quantity = item.newVal;
-                      const perBox = updates[recordIndex].itemsPerBox || 1;
-                      updates[recordIndex].totalCartons = Math.ceil(item.newVal / perBox);
-                  } else {
-                      updates[recordIndex].dailySales = item.newVal;
-                  }
-                  updateCount++;
-              }
+              changesMap.set(item.sku, item);
           } else if (item.status === 'new') {
               const newRecord: ReplenishmentRecord = {
                   id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
@@ -256,14 +243,33 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
                   shippingMethod: 'Air', shippingUnitPriceCNY: 0, materialCostCNY: 0, customsFeeCNY: 0, portFeeCNY: 0,
                   salesPriceUSD: 0, lastMileCostUSD: 0, adCostUSD: 0, platformFeeRate: 2, affiliateCommissionRate: 0, additionalFixedFeeUSD: 0, returnRate: 0,
                   warehouse: 'Default Warehouse',
-                  storeId: currentStoreId || undefined, // Assign to current store if selected
+                  storeId: currentStoreId || undefined, 
               };
               newRecords.push(newRecord);
               createCount++;
           }
       });
 
-      const finalRecords = [...newRecords, ...updates];
+      // 2. Map existing records to NEW objects if they have changes (Immutable Update)
+      const updatedRecords = records.map(record => {
+          const change = changesMap.get(record.sku);
+          if (change) {
+              updateCount++;
+              // Return a BRAND NEW object spread from the old one + overrides
+              return {
+                  ...record,
+                  quantity: syncType === 'inventory' ? change.newVal : record.quantity,
+                  dailySales: syncType === 'sales' ? change.newVal : record.dailySales,
+                  // If updating inventory, auto-recalculate total cartons based on itemsPerBox
+                  totalCartons: syncType === 'inventory' 
+                      ? Math.ceil(change.newVal / (record.itemsPerBox || 1)) 
+                      : record.totalCartons
+              };
+          }
+          return record; // Return original reference if no change
+      });
+
+      const finalRecords = [...newRecords, ...updatedRecords];
       onUpdateRecords(finalRecords);
 
       let msg = '';
@@ -278,15 +284,12 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
   const newCount = displayItems.filter(i => i.status === 'new').length;
 
   const isSales = syncType === 'sales';
-  
-  // Dynamic Theming based on Platform & Sync Type
   const isLingxing = platform === 'lingxing';
   const brandColor = isLingxing ? 'bg-blue-600' : 'bg-orange-600';
   const brandColorHover = isLingxing ? 'hover:bg-blue-700' : 'hover:bg-orange-700';
   const brandText = isLingxing ? 'text-blue-600' : 'text-orange-600';
   const brandBorder = isLingxing ? 'border-blue-600' : 'border-orange-600';
   const brandLightBg = isLingxing ? 'bg-blue-50' : 'bg-orange-50';
-
   const typeColor = isSales ? 'text-green-600' : brandText;
 
   return (
@@ -384,7 +387,7 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
                     </div>
                 </div>
 
-                {/* 2. Input Area (Changes based on Tab) */}
+                {/* 2. Input Area */}
                 <div className="flex-1 flex flex-col">
                     <label className="block text-xs font-bold text-gray-500 uppercase mb-2 flex justify-between items-center">
                         <span>2. 数据来源</span>
