@@ -16,16 +16,39 @@ export interface LingxingSalesItem {
     avgDailySales: number; // Calculated average
 }
 
-// --- STABLE MOCK DATABASE ---
-// This ensures that "ERP" data remains consistent during the session.
-// Once you sync, the numbers will match and stay matched until you reload.
-const MOCK_ERP_DB: Record<string, { stock: number, sales: number }> = {};
+// --- PERSISTENT MOCK DATABASE ---
+// Key used for localStorage
+const STORAGE_KEY_MOCK_DB = 'tanxing_mock_erp_db_v1';
+
+// Helper to get DB from storage
+const getMockDb = (): Record<string, { stock: number, sales: number }> => {
+    try {
+        const str = localStorage.getItem(STORAGE_KEY_MOCK_DB);
+        return str ? JSON.parse(str) : {};
+    } catch (e) {
+        return {};
+    }
+};
+
+// Helper to save DB to storage
+const saveMockDb = (db: Record<string, { stock: number, sales: number }>) => {
+    localStorage.setItem(STORAGE_KEY_MOCK_DB, JSON.stringify(db));
+};
+
+// Reset function for testing
+export const resetMockErpData = () => {
+    localStorage.removeItem(STORAGE_KEY_MOCK_DB);
+};
 
 const getOrGenerateMockData = (record: ReplenishmentRecord) => {
-    if (!MOCK_ERP_DB[record.sku]) {
-        // Generate once and store it
-        const hasDrift = Math.random() > 0.3; // 70% chance of being different initially
-        const randomDiff = hasDrift ? Math.floor(Math.random() * 20) - 5 : 0;
+    const db = getMockDb();
+    
+    // If this SKU doesn't exist in our "ERP", create it once and save it.
+    if (!db[record.sku]) {
+        // Generate stable mock data
+        // Logic: 70% chance of having a discrepancy initially
+        const hasDrift = Math.random() > 0.3; 
+        const randomDiff = hasDrift ? Math.floor(Math.random() * 30) - 10 : 0; // -10 to +20 variance
         
         // Ensure strictly positive
         const mockStock = Math.max(0, record.quantity + (randomDiff === 0 && hasDrift ? 5 : randomDiff));
@@ -34,12 +57,15 @@ const getOrGenerateMockData = (record: ReplenishmentRecord) => {
         const volatility = 0.2;
         const mockSales = Math.max(0, record.dailySales + (record.dailySales * volatility * (Math.random() - 0.5)));
 
-        MOCK_ERP_DB[record.sku] = {
+        db[record.sku] = {
             stock: mockStock,
             sales: parseFloat(mockSales.toFixed(1))
         };
+        
+        saveMockDb(db);
     }
-    return MOCK_ERP_DB[record.sku];
+    
+    return db[record.sku];
 };
 
 /**
@@ -74,7 +100,7 @@ export const fetchLingxingInventory = async (
   }
 
   // 2. Mock Mode (Simulation)
-  await new Promise(resolve => setTimeout(resolve, 800)); // Faster simulation
+  await new Promise(resolve => setTimeout(resolve, 600)); // Simulate network latency
   
   return localRecords.map(record => {
       const mockData = getOrGenerateMockData(record);
@@ -82,9 +108,9 @@ export const fetchLingxingInventory = async (
       return {
           sku: record.sku,
           productName: record.productName,
-          fbaStock: mockData.stock, // Returns the consistent mock value
+          fbaStock: mockData.stock, // Returns the consistent persistent value
           localStock: 0,
-          onWayStock: Math.floor(Math.random() * 50)
+          onWayStock: Math.floor(Math.random() * 50) // This can remain random for "Inbound" noise
       };
   });
 };
@@ -109,7 +135,7 @@ export const fetchLingxingSales = async (
     }
   
     // 2. Mock Mode
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    await new Promise(resolve => setTimeout(resolve, 600));
     
     return localRecords.map(record => {
         const mockData = getOrGenerateMockData(record);

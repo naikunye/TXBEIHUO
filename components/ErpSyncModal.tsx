@@ -1,8 +1,8 @@
 
 import React, { useState } from 'react';
 import { ReplenishmentRecord } from '../types';
-import { fetchLingxingInventory, fetchLingxingSales, calculateInventoryDiff, calculateSalesDiff } from '../services/lingxingService';
-import { X, RefreshCw, ArrowRight, Check, AlertCircle, Database, Link as LinkIcon, Lock, TrendingUp, Package } from 'lucide-react';
+import { fetchLingxingInventory, fetchLingxingSales, calculateInventoryDiff, calculateSalesDiff, resetMockErpData } from '../services/lingxingService';
+import { X, RefreshCw, ArrowRight, Check, AlertCircle, Database, Link as LinkIcon, Lock, TrendingUp, Package, Trash2 } from 'lucide-react';
 
 interface ErpSyncModalProps {
   isOpen: boolean;
@@ -61,6 +61,13 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
       }
   };
 
+  const handleResetSimulation = () => {
+      if(window.confirm("确定要重置模拟的 ERP 数据吗？\n下次同步时将重新生成新的库存数据。")) {
+          resetMockErpData();
+          alert("模拟数据已重置。");
+      }
+  };
+
   const toggleSelect = (id: string) => {
       const next = new Set(selectedDiffIds);
       if (next.has(id)) next.delete(id);
@@ -98,7 +105,6 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
       });
       
       onUpdateRecords(updatedRecords);
-      // alert(`成功同步 ${selectedDiffIds.size} 条${syncType === 'inventory' ? '库存' : '销量'}数据！`);
       onClose();
       setStep('config');
   };
@@ -198,28 +204,42 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
                                 value={proxyUrl} 
                                 onChange={e => setProxyUrl(e.target.value)}
                                 className={`${inputStyle} text-xs font-normal border-dashed bg-gray-50 focus:bg-white`}
-                                placeholder="https://api.your-company.com/lingxing-proxy (留空则使用演示数据)"
+                                placeholder="https://api.your-company.com/lingxing-proxy (留空则使用本地持久化模拟数据)"
                             />
                         </div>
                     </div>
 
-                    <button 
-                        onClick={handleConnect}
-                        disabled={isLoading}
-                        className="w-full bg-[#1890ff] hover:bg-blue-600 text-white font-bold py-3.5 rounded-xl shadow-lg shadow-blue-200 flex items-center justify-center gap-2 transition-all active:scale-95"
-                    >
-                        {isLoading ? (
-                            <>
-                                <RefreshCw className="animate-spin" size={20} />
-                                正在从领星 OMS 拉取数据...
-                            </>
-                        ) : (
-                            <>
-                                <LinkIcon size={20} />
-                                立即连接并比对差异
-                            </>
+                    <div className="flex flex-col gap-3">
+                        <button 
+                            onClick={handleConnect}
+                            disabled={isLoading}
+                            className="w-full bg-[#1890ff] hover:bg-blue-600 text-white font-bold py-3.5 rounded-xl shadow-lg shadow-blue-200 flex items-center justify-center gap-2 transition-all active:scale-95"
+                        >
+                            {isLoading ? (
+                                <>
+                                    <RefreshCw className="animate-spin" size={20} />
+                                    正在从领星 OMS 拉取数据...
+                                </>
+                            ) : (
+                                <>
+                                    <LinkIcon size={20} />
+                                    立即连接并比对差异
+                                </>
+                            )}
+                        </button>
+                        
+                        {!proxyUrl && (
+                            <div className="flex justify-center">
+                                <button 
+                                    onClick={handleResetSimulation}
+                                    className="text-xs text-gray-400 hover:text-red-500 flex items-center gap-1 transition-colors"
+                                >
+                                    <Trash2 size={12} />
+                                    重置模拟数据 (Reset Demo Data)
+                                </button>
+                            </div>
                         )}
-                    </button>
+                    </div>
                 </div>
             )}
 
