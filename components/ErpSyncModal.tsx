@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { ReplenishmentRecord } from '../types';
-import { X, Check, Database, Link as LinkIcon, Lock, ClipboardPaste, FileText, Save, ArrowRight, PlusCircle, AlertTriangle, TrendingUp, Package, RefreshCw, Key, Globe, Eye, EyeOff, Layers, Zap, Clock, Power, HelpCircle, ExternalLink } from 'lucide-react';
+import { X, Check, Database, Link as LinkIcon, Lock, ClipboardPaste, FileText, Save, ArrowRight, PlusCircle, AlertTriangle, TrendingUp, Package, RefreshCw, Key, Globe, Eye, EyeOff, Layers, Zap, Clock, Power, HelpCircle, ExternalLink, PlayCircle, ServerOff, Wifi } from 'lucide-react';
 import { fetchLingxingInventory, fetchLingxingSales } from '../services/lingxingService';
 import { fetchMiaoshouInventory, fetchMiaoshouSales } from '../services/miaoshouService';
 
@@ -9,7 +9,7 @@ interface ErpSyncModalProps {
   onClose: () => void;
   records: ReplenishmentRecord[];
   onUpdateRecords: (updatedRecords: ReplenishmentRecord[]) => void;
-  currentStoreId?: string; // New prop
+  currentStoreId?: string; 
 }
 
 type SyncType = 'inventory' | 'sales';
@@ -37,6 +37,7 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
   const [showGuide, setShowGuide] = useState(false);
   const [apiResults, setApiResults] = useState<SyncItem[]>([]);
   const [isApiLoading, setIsApiLoading] = useState(false);
+  const [connectionMode, setConnectionMode] = useState<'real' | 'simulated' | null>(null);
 
   // Load Config
   useEffect(() => {
@@ -46,6 +47,7 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
           setApiResults([]);
           setIsApiLoading(false);
           setShowGuide(false);
+          setConnectionMode(null);
       }
   }, [isOpen, platform]);
 
@@ -106,7 +108,6 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
                   let rawSku = parts[0]; 
                   let extractedName = qtyIndex > 1 ? parts.slice(1, qtyIndex).join(' ') : rawSku;
 
-                  // ROBUST MATCHING
                   const match = records.find(r => 
                       (r.sku || '').trim().toLowerCase() === rawSku.trim().toLowerCase() ||
                       (r.productName || '').toLowerCase().includes(rawSku.toLowerCase())
@@ -114,7 +115,7 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
 
                   if (match) {
                       results.push({
-                          sku: match.sku, // Use matched SKU to ensure consistency
+                          sku: match.sku, 
                           name: match.productName,
                           oldVal: syncType === 'inventory' ? match.quantity : match.dailySales,
                           newVal: newVal,
@@ -136,14 +137,21 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
   }, [pasteData, records, syncType]);
 
   // --- Logic 2: API Fetch ---
-  const handleApiSync = async () => {
+  const handleApiSync = async (forceSimulation = false) => {
     saveConfig(); 
     setIsApiLoading(true);
     setApiResults([]);
+    setConnectionMode(null);
     
+    // Explicitly set mode
+    const isRealMode = !forceSimulation && !!(proxyUrl && proxyUrl.startsWith('http'));
+    setConnectionMode(isRealMode ? 'real' : 'simulated');
+
     try {
-        if (!field1 || !field2) {
-            if (!window.confirm("未填写完整凭证，是否使用模拟数据进行演示？")) {
+        // Validation for Real Mode
+        if (isRealMode) {
+            if (!field1 || !field2) {
+                alert("真实连接模式下，App ID 和 Token 不能为空。");
                 setIsApiLoading(false);
                 return;
             }
@@ -151,14 +159,16 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
 
         let fetchedItems: SyncItem[] = [];
         
+        // Pass undefined proxyUrl if forcing simulation, otherwise use the state
+        const effectiveProxyUrl = forceSimulation ? undefined : proxyUrl;
+
         if (platform === 'lingxing') {
             if (syncType === 'inventory') {
-                const data = await fetchLingxingInventory(field1, field2, records, proxyUrl);
+                const data = await fetchLingxingInventory(field1, field2, records, effectiveProxyUrl);
                 fetchedItems = data.map(item => {
-                    // ROBUST MATCHING
                     const match = records.find(r => (r.sku || '').trim().toLowerCase() === (item.sku || '').trim().toLowerCase());
                     return {
-                        sku: match ? match.sku : item.sku, // Use local SKU if matched
+                        sku: match ? match.sku : item.sku, 
                         name: item.productName || match?.productName || item.sku,
                         oldVal: match ? match.quantity : 0,
                         newVal: item.fbaStock,
@@ -166,7 +176,7 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
                     };
                 });
             } else {
-                const data = await fetchLingxingSales(field1, field2, records, 30, proxyUrl);
+                const data = await fetchLingxingSales(field1, field2, records, 30, effectiveProxyUrl);
                 fetchedItems = data.map(item => {
                     const match = records.find(r => (r.sku || '').trim().toLowerCase() === (item.sku || '').trim().toLowerCase());
                     return {
@@ -179,8 +189,9 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
                 });
             }
         } else {
+            // Miaoshou Logic
             if (syncType === 'inventory') {
-                const data = await fetchMiaoshouInventory(field1, field2, records, proxyUrl);
+                const data = await fetchMiaoshouInventory(field1, field2, records, effectiveProxyUrl);
                 fetchedItems = data.map(item => {
                     const match = records.find(r => (r.sku || '').trim().toLowerCase() === (item.product_sku || '').trim().toLowerCase());
                     return {
@@ -192,7 +203,7 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
                     };
                 });
             } else {
-                const data = await fetchMiaoshouSales(field1, field2, records, 30, proxyUrl);
+                const data = await fetchMiaoshouSales(field1, field2, records, 30, effectiveProxyUrl);
                 fetchedItems = data.map(item => {
                     const match = records.find(r => (r.sku || '').trim().toLowerCase() === (item.product_sku || '').trim().toLowerCase());
                     return {
@@ -205,9 +216,24 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
                 });
             }
         }
+        
         setApiResults(fetchedItems);
+        
+        // If real mode returns empty, user might be confused
+        if (isRealMode && fetchedItems.length === 0) {
+            const retrySim = window.confirm("API 连接成功但未返回任何数据。\n可能是权限问题或没有对应 SKU。\n\n是否切换到「模拟数据模式」来体验功能？");
+            if (retrySim) {
+                handleApiSync(true); // Recursive call for simulation
+                return;
+            }
+        }
+
     } catch (e: any) {
-        alert("同步失败: " + e.message);
+        console.error(e);
+        const retrySim = window.confirm(`连接失败: ${e.message}\n\n是否切换到「模拟数据模式」来演示？`);
+        if (retrySim) {
+            handleApiSync(true);
+        }
     } finally {
         setIsApiLoading(false);
     }
@@ -217,7 +243,6 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
 
   if (!isOpen) return null;
 
-  // --- CORE FIX: Immutable State Update Logic ---
   const handleApply = () => {
       saveConfig();
       
@@ -226,10 +251,8 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
       let updateCount = 0;
       let createCount = 0;
 
-      // 1. Organize changes for O(1) lookup
       displayItems.forEach(item => {
-          if (!item.sku) return; // Skip invalid items
-          // Use normalized key
+          if (!item.sku) return; 
           const key = item.sku.trim().toLowerCase();
           
           if (item.status === 'match') {
@@ -256,9 +279,7 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
           }
       });
 
-      // 2. Map existing records to NEW objects if they have changes
       const updatedRecords = records.map(record => {
-          // Use normalized key for lookup
           const sku = record.sku ? record.sku.trim().toLowerCase() : '';
           const change = changesMap.get(sku);
           
@@ -268,7 +289,6 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
                   ...record,
                   quantity: syncType === 'inventory' ? change.newVal : record.quantity,
                   dailySales: syncType === 'sales' ? change.newVal : record.dailySales,
-                  // Auto-recalculate total cartons if inventory changed
                   totalCartons: syncType === 'inventory' 
                       ? Math.ceil(change.newVal / (record.itemsPerBox > 0 ? record.itemsPerBox : 1)) 
                       : record.totalCartons
@@ -277,9 +297,7 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
           return record; 
       });
 
-      // Combine new and updated records into a fresh array
       const finalRecords = [...newRecords, ...updatedRecords];
-      
       onUpdateRecords(finalRecords);
       onClose();
   };
@@ -296,13 +314,15 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
   const brandLightBg = isLingxing ? 'bg-blue-50' : 'bg-orange-50';
   const typeColor = isSales ? 'text-green-600' : brandText;
 
+  // Helper to check if Real API is ready
+  const isRealApiReady = !!(field1 && field2 && proxyUrl && proxyUrl.startsWith('http'));
+
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black bg-opacity-50 backdrop-blur-sm p-4 animate-fade-in">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[90vh] flex flex-col relative overflow-hidden">
         
         {/* Header */}
         <div className="bg-slate-900 px-5 py-4 flex justify-between items-center text-white shrink-0 relative overflow-hidden">
-            {/* Background Decor */}
             <div className={`absolute top-0 right-0 w-64 h-full ${isLingxing ? 'bg-blue-900' : 'bg-orange-900'} opacity-20 transform skew-x-12 translate-x-10`}></div>
 
             <div className="flex items-center gap-4 z-10">
@@ -320,7 +340,6 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
                 </div>
             </div>
             
-            {/* Platform Switcher in Header */}
             <div className="flex items-center gap-2 bg-slate-800 p-1 rounded-lg border border-slate-700 z-10">
                 <button 
                     onClick={() => setPlatform('lingxing')}
@@ -355,13 +374,12 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
             </button>
         </div>
 
-        {/* Content Body */}
         <div className="flex-1 overflow-hidden flex flex-col md:flex-row bg-white">
             
-            {/* Left Panel: Configuration & Input */}
+            {/* Left Panel */}
             <div className="w-full md:w-1/3 border-r border-gray-200 flex flex-col p-5 bg-gray-50 overflow-y-auto">
                 
-                {/* 1. Mode Selection (Common) */}
+                {/* 1. Mode Selection */}
                 <div className="mb-6">
                     <label className="block text-xs font-bold text-gray-500 uppercase mb-2">1. 同步目标</label>
                     <div className="flex flex-col gap-2">
@@ -408,10 +426,6 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
                     
                     {activeTab === 'import' ? (
                         <div className="flex-1 flex flex-col">
-                            <div className={`mb-2 text-[10px] p-2 rounded border ${isSales ? 'bg-green-50 border-green-200 text-green-700' : `${brandLightBg} ${brandBorder} ${brandText}`}`}>
-                                <strong>💡 操作提示:</strong><br/>
-                                请从{isLingxing ? '领星' : '秒手'}报表中复制 <strong>SKU</strong> 和 <strong>{isSales ? '销量' : '库存'}</strong> 两列数据粘贴到下方。
-                            </div>
                             <textarea 
                                 className="flex-1 w-full p-3 border rounded-xl text-xs font-mono bg-white outline-none resize-none shadow-inner focus:ring-2 border-gray-300 transition-all"
                                 style={{ '--tw-ring-color': isLingxing ? '#3b82f6' : '#ea580c' } as React.CSSProperties}
@@ -425,132 +439,65 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
                         </div>
                     ) : (
                         <div className="space-y-4 animate-fade-in">
-                             {/* HELP GUIDE SECTION */}
-                             {showGuide && (
-                                 <div className={`text-xs p-3 rounded-lg border mb-2 leading-relaxed ${isLingxing ? 'bg-blue-50 border-blue-100 text-blue-800' : 'bg-orange-50 border-orange-100 text-orange-800'}`}>
-                                     <h4 className="font-bold flex items-center gap-1 mb-2">
-                                         {isLingxing ? '领星对接指引' : '秒手对接指引'}
-                                         <ExternalLink size={10} />
-                                     </h4>
-                                     {isLingxing ? (
-                                         <ol className="list-decimal list-inside space-y-1 opacity-90">
-                                             <li>登录领星 OMS 系统</li>
-                                             <li>进入 <strong>设置 (Settings)</strong> -&gt; <strong>开发者工具 (Developer)</strong></li>
-                                             <li>创建一个新的 Access Token</li>
-                                             <li>复制 App ID 和 Token 到下方</li>
-                                         </ol>
-                                     ) : (
-                                         <ol className="list-decimal list-inside space-y-1 opacity-90">
-                                             <li>访问 <a href="#" className="underline font-bold">秒手开放平台 (Open Platform)</a></li>
-                                             <li>注册开发者账号并创建<strong>“自研应用”</strong></li>
-                                             <li>在应用详情页获取 <strong>App Key</strong> 和 <strong>App Secret</strong></li>
-                                             <li>注意：需配置 IP 白名单或使用下方代理</li>
-                                         </ol>
-                                     )}
-                                 </div>
-                             )}
-
+                             {/* Creds Inputs */}
                              <div>
-                                 <label className="text-[10px] text-gray-500 font-bold mb-1 block">
-                                     {isLingxing ? 'App ID' : 'App Key'}
-                                 </label>
+                                 <label className="text-[10px] text-gray-500 font-bold mb-1 block">{isLingxing ? 'App ID' : 'App Key'}</label>
                                  <div className="relative">
                                      <Lock className="absolute left-3 top-2.5 text-gray-400" size={14} />
-                                     <input 
-                                        type="text" 
-                                        className="w-full pl-9 pr-3 py-2 rounded-lg border border-gray-300 text-sm focus:ring-2 focus:ring-opacity-50 outline-none"
-                                        style={{ '--tw-ring-color': isLingxing ? '#93c5fd' : '#fdba74' } as React.CSSProperties}
-                                        placeholder={isLingxing ? "Enter App ID" : "Enter App Key"}
-                                        value={field1}
-                                        onChange={e => setField1(e.target.value)}
-                                     />
+                                     <input type="text" className="w-full pl-9 pr-3 py-2 rounded-lg border border-gray-300 text-sm focus:ring-2 outline-none" placeholder={isLingxing ? "Enter App ID" : "Enter App Key"} value={field1} onChange={e => setField1(e.target.value)} />
                                  </div>
                              </div>
                              <div>
-                                 <label className="text-[10px] text-gray-500 font-bold mb-1 block">
-                                     {isLingxing ? 'Access Token' : 'App Secret'}
-                                 </label>
+                                 <label className="text-[10px] text-gray-500 font-bold mb-1 block">{isLingxing ? 'Access Token' : 'App Secret'}</label>
                                  <div className="relative">
                                      <Key className="absolute left-3 top-2.5 text-gray-400" size={14} />
-                                     <input 
-                                        type={showSecret ? "text" : "password"} 
-                                        className="w-full pl-9 pr-9 py-2 rounded-lg border border-gray-300 text-sm focus:ring-2 focus:ring-opacity-50 outline-none"
-                                        style={{ '--tw-ring-color': isLingxing ? '#93c5fd' : '#fdba74' } as React.CSSProperties}
-                                        placeholder={isLingxing ? "Enter Access Token" : "Enter App Secret"}
-                                        value={field2}
-                                        onChange={e => setField2(e.target.value)}
-                                     />
-                                     <button 
-                                        type="button" 
-                                        onClick={() => setShowSecret(!showSecret)}
-                                        className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600"
-                                     >
+                                     <input type={showSecret ? "text" : "password"} className="w-full pl-9 pr-9 py-2 rounded-lg border border-gray-300 text-sm focus:ring-2 outline-none" placeholder={isLingxing ? "Enter Access Token" : "Enter App Secret"} value={field2} onChange={e => setField2(e.target.value)} />
+                                     <button type="button" onClick={() => setShowSecret(!showSecret)} className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600">
                                          {showSecret ? <EyeOff size={14}/> : <Eye size={14}/>}
                                      </button>
                                  </div>
                              </div>
                              <div>
-                                 <label className="text-[10px] text-gray-500 font-bold mb-1 block">代理服务器 URL (CORS Proxy)</label>
+                                 <label className="text-[10px] text-gray-500 font-bold mb-1 block">代理服务器 (Proxy) <span className="text-red-500">*真实连接必填</span></label>
                                  <div className="relative">
                                      <Globe className="absolute left-3 top-2.5 text-gray-400" size={14} />
-                                     <input 
-                                        type="text" 
-                                        className="w-full pl-9 pr-3 py-2 rounded-lg border border-gray-300 text-sm focus:ring-2 focus:ring-opacity-50 outline-none"
-                                        style={{ '--tw-ring-color': isLingxing ? '#93c5fd' : '#fdba74' } as React.CSSProperties}
-                                        placeholder="https://your-proxy.com (可选)"
-                                        value={proxyUrl}
-                                        onChange={e => setProxyUrl(e.target.value)}
-                                     />
+                                     <input type="text" className="w-full pl-9 pr-3 py-2 rounded-lg border border-gray-300 text-sm focus:ring-2 outline-none" placeholder="https://your-proxy.com" value={proxyUrl} onChange={e => setProxyUrl(e.target.value)} />
                                  </div>
-                                 <p className="text-[10px] text-gray-400 mt-1 leading-tight">
-                                    * 浏览器安全策略限制直接调用第三方 API。<br/>
-                                    * 若未配置代理，系统将使用<strong>模拟数据</strong>演示。
-                                 </p>
                              </div>
 
-                             {/* Auto Sync Settings */}
-                             <div className="bg-gray-100 p-3 rounded-xl mt-4 border border-gray-200">
-                                 <div className="flex items-center justify-between mb-2">
-                                     <span className="text-xs font-bold text-gray-600 flex items-center gap-1">
-                                         <Power size={12} className={autoSync ? 'text-green-500' : 'text-gray-400'}/> 
-                                         自动化托管
-                                     </span>
-                                     <button 
-                                        onClick={() => setAutoSync(!autoSync)}
-                                        className={`w-8 h-4 rounded-full p-0.5 transition-colors duration-300 ${autoSync ? 'bg-green-500' : 'bg-gray-300'}`}
-                                     >
-                                         <div className={`w-3 h-3 bg-white rounded-full shadow-sm transform transition-transform duration-300 ${autoSync ? 'translate-x-4' : 'translate-x-0'}`}></div>
-                                     </button>
-                                 </div>
-                                 {autoSync && (
-                                     <div className="flex items-center gap-2 animate-fade-in">
-                                         <Clock size={12} className="text-gray-400" />
-                                         <select 
-                                            value={syncInterval}
-                                            onChange={(e) => setSyncInterval(parseInt(e.target.value))}
-                                            className="text-xs bg-white border border-gray-300 rounded px-2 py-1 outline-none focus:border-blue-500 flex-1"
-                                         >
-                                             <option value={15}>每 15 分钟 (高频)</option>
-                                             <option value={30}>每 30 分钟</option>
-                                             <option value={60}>每 1 小时 (推荐)</option>
-                                             <option value={240}>每 4 小时</option>
-                                         </select>
-                                     </div>
-                                 )}
+                             {/* Split Action Buttons */}
+                             <div className="pt-2 grid grid-cols-1 gap-3">
+                                 {/* 1. Real Connect */}
+                                 <button 
+                                    onClick={() => handleApiSync(false)}
+                                    disabled={isApiLoading || !isRealApiReady}
+                                    className={`w-full py-3 rounded-xl font-bold text-sm shadow-md flex items-center justify-center gap-2 transition-all ${
+                                        !isRealApiReady 
+                                        ? 'bg-gray-100 text-gray-400 cursor-not-allowed border border-gray-200' 
+                                        : `${brandColor} ${brandColorHover} text-white`
+                                    }`}
+                                 >
+                                     {isApiLoading && connectionMode === 'real' ? <RefreshCw className="animate-spin" size={16} /> : <LinkIcon size={16} />}
+                                     {isApiLoading && connectionMode === 'real' ? '正在连接...' : `连接真实 ${isLingxing ? 'Lingxing' : 'Miaoshou'}`}
+                                 </button>
+                                 
+                                 {/* 2. Simulation */}
+                                 <button 
+                                    onClick={() => handleApiSync(true)}
+                                    disabled={isApiLoading && connectionMode === 'real'}
+                                    className="w-full py-3 rounded-xl font-bold text-sm border-2 border-purple-100 bg-purple-50 text-purple-700 hover:bg-purple-100 hover:border-purple-200 transition-all flex items-center justify-center gap-2"
+                                 >
+                                     {isApiLoading && connectionMode === 'simulated' ? <RefreshCw className="animate-spin" size={16} /> : <PlayCircle size={16} />}
+                                     使用模拟数据演示 (无需代理)
+                                 </button>
                              </div>
-
-                             <button 
-                                onClick={handleApiSync}
-                                disabled={isApiLoading}
-                                className={`w-full py-3 rounded-xl font-bold text-sm shadow-md flex items-center justify-center gap-2 transition-all ${
-                                    isApiLoading 
-                                    ? 'bg-gray-100 text-gray-400 cursor-not-allowed' 
-                                    : `${brandColor} ${brandColorHover} text-white`
-                                }`}
-                             >
-                                 {isApiLoading ? <RefreshCw className="animate-spin" size={16} /> : <LinkIcon size={16} />}
-                                 {isApiLoading ? '正在连接...' : `连接 ${isLingxing ? 'Lingxing' : 'Miaoshou'} 并获取`}
-                             </button>
+                             
+                             {!isRealApiReady && (
+                                 <div className="text-[10px] text-red-500 bg-red-50 p-2 rounded border border-red-100 flex items-center gap-2">
+                                     <ServerOff size={14} />
+                                     未配置代理 URL，无法进行真实连接。请使用模拟演示。
+                                 </div>
+                             )}
                         </div>
                     )}
                 </div>
@@ -559,11 +506,22 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
             {/* Right Panel: Preview & Action */}
             <div className="flex-1 flex flex-col p-0 overflow-hidden relative">
                 <div className="p-4 bg-white border-b border-gray-100 flex justify-between items-center shadow-sm z-10">
-                    <h3 className={`font-bold text-gray-800 flex items-center gap-2 ${typeColor}`}>
-                        <FileText size={18}/> 
-                        {activeTab === 'api' ? 'API 返回结果' : '识别预览'} 
-                        <span className="text-gray-400 font-normal text-xs ml-1">({isSales ? '销量' : '库存'})</span>
-                    </h3>
+                    <div className="flex items-center gap-3">
+                        <h3 className={`font-bold text-gray-800 flex items-center gap-2 ${typeColor}`}>
+                            <FileText size={18}/> 
+                            {activeTab === 'api' ? 'API 返回结果' : '识别预览'} 
+                        </h3>
+                        {connectionMode === 'simulated' && (
+                            <span className="text-[10px] bg-purple-100 text-purple-600 px-2 py-0.5 rounded font-bold border border-purple-200 animate-pulse">
+                                模拟数据模式
+                            </span>
+                        )}
+                        {connectionMode === 'real' && (
+                            <span className="text-[10px] bg-green-100 text-green-600 px-2 py-0.5 rounded font-bold border border-green-200 flex items-center gap-1">
+                                <Wifi size={10} /> 真实连接
+                            </span>
+                        )}
+                    </div>
                     <div className="text-xs space-x-3 flex">
                         <span className="text-green-600 font-bold bg-green-50 px-2 py-0.5 rounded border border-green-100">匹配: {matchCount}</span>
                         <span className="text-blue-600 font-bold bg-blue-50 px-2 py-0.5 rounded border border-blue-100">新增: {newCount}</span>
