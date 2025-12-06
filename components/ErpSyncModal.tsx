@@ -225,9 +225,11 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
       let createCount = 0;
 
       // 1. Organize changes for O(1) lookup
+      // Use lowercased, trimmed SKU as key to be robust against minor formatting differences
       displayItems.forEach(item => {
+          const key = item.sku.trim().toLowerCase();
           if (item.status === 'match') {
-              changesMap.set(item.sku, item);
+              changesMap.set(key, item);
           } else if (item.status === 'new') {
               const newRecord: ReplenishmentRecord = {
                   id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
@@ -252,21 +254,25 @@ export const ErpSyncModal: React.FC<ErpSyncModalProps> = ({ isOpen, onClose, rec
 
       // 2. Map existing records to NEW objects if they have changes (Immutable Update)
       const updatedRecords = records.map(record => {
-          const change = changesMap.get(record.sku);
+          const key = record.sku.trim().toLowerCase();
+          const change = changesMap.get(key);
+          
           if (change) {
               updateCount++;
               // Return a BRAND NEW object spread from the old one + overrides
+              // This ensures React sees a new reference and triggers a re-render
               return {
                   ...record,
                   quantity: syncType === 'inventory' ? change.newVal : record.quantity,
                   dailySales: syncType === 'sales' ? change.newVal : record.dailySales,
                   // If updating inventory, auto-recalculate total cartons based on itemsPerBox
                   totalCartons: syncType === 'inventory' 
-                      ? Math.ceil(change.newVal / (record.itemsPerBox || 1)) 
+                      ? Math.ceil(change.newVal / (record.itemsPerBox > 0 ? record.itemsPerBox : 1)) 
                       : record.totalCartons
               };
           }
-          return record; // Return original reference if no change
+          // Return the original record if no change (keeps reference stability for unchanged items)
+          return record; 
       });
 
       const finalRecords = [...newRecords, ...updatedRecords];
