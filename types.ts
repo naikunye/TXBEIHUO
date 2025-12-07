@@ -79,6 +79,22 @@ export interface ExternalOrder {
   shippingAddress?: string;
 }
 
+// --- NEW: Finance & Accounting ---
+export type FinanceCategory = 'Revenue' | 'COGS' | 'Logistics' | 'Marketing' | 'Rent' | 'Salary' | 'Software' | 'Other';
+export type FinanceType = 'Income' | 'Expense';
+
+export interface FinanceTransaction {
+  id: string;
+  date: string;
+  type: FinanceType;
+  category: FinanceCategory;
+  amount: number; // Always positive
+  currency: 'CNY' | 'USD';
+  description: string;
+  isSystemGenerated?: boolean; // If true, comes from PO or Orders
+  referenceId?: string;
+}
+
 // Core data model matching your business logic
 export interface ReplenishmentRecord {
   id: string;

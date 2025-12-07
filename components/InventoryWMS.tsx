@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo } from 'react';
 import { ReplenishmentRecord, InventoryLog, WarehouseType, TransactionType } from '../types';
 import { Package, ArrowRightLeft, History, Warehouse, PlusCircle, MinusCircle, MapPin, Truck, Box } from 'lucide-react';
@@ -150,7 +149,7 @@ export const InventoryWMS: React.FC<InventoryWMSProps> = ({ records, logs, onAdd
                         <tbody className="divide-y divide-gray-50">
                             {records.map(r => {
                                 const stock = warehouseStock[r.sku];
-                                const total = Object.values(stock).reduce((a,b) => a+b, 0);
+                                const total = Object.values(stock).reduce((a: number, b: number) => a+b, 0);
                                 return (
                                     <tr key={r.id} className="hover:bg-gray-50 transition-colors group cursor-pointer" onClick={() => setSelectedSku(r.sku)}>
                                         <td className="p-4">

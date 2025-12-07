@@ -8,7 +8,6 @@ const getAiClient = () => {
 };
 
 const formatErrorHtml = (error: any, serviceName: string) => {
-    // ... existing implementation ...
     const errString = error.toString();
     return `<div class="p-4 bg-red-50 text-red-600 border border-red-200 rounded">AI Service Error (${serviceName}): ${errString}</div>`;
 };
@@ -75,7 +74,6 @@ export const parseAgentAction = async (message: string, records: ReplenishmentRe
     }
 };
 
-// ... keep existing exports (analyzeInventory, etc) ... 
 export const analyzeInventory = async (records: ReplenishmentRecord[]) => {
   try {
     const ai = getAiClient();
@@ -607,23 +605,40 @@ export const generatePurchaseOrderEmail = async (record: ReplenishmentRecord, qu
     }
 };
 
-export const generateFinancialReport = async (records: ReplenishmentRecord[]) => {
+export const generateFinancialReport = async (records: ReplenishmentRecord[], financialContext?: any) => {
     try {
         const ai = getAiClient();
-        const dataSummary = prepareDataContext(records);
+        
+        let promptContext = "";
+        
+        if (financialContext) {
+            promptContext = `
+            **财务报表数据 (Financial Statement):**
+            - 本月营收 (Revenue): ¥${financialContext.revenue}
+            - 采购成本 (COGS): ¥${financialContext.cogs}
+            - 运营支出 (OPEX): ¥${financialContext.opex}
+            - 净利润 (Net Profit): ¥${financialContext.netProfit}
+            - 净利率 (Net Margin): ${financialContext.netMargin.toFixed(2)}%
+            - 支出明细: ${JSON.stringify(financialContext.breakdown)}
+            - 近6个月趋势: ${JSON.stringify(financialContext.trend)}
+            `;
+        } else {
+            const dataSummary = prepareDataContext(records);
+            promptContext = `**库存资产数据:** ${JSON.stringify(dataSummary)}`;
+        }
         
         const prompt = `
             你是一位首席财务官 (CFO)。
             请根据以下业务数据，生成一份《月度供应链财务损益分析报告 (P&L Analysis)》。
             
-            数据: ${JSON.stringify(dataSummary)}
+            ${promptContext}
             
             **要求：**
             1. 直接输出 HTML 代码，使用 Tailwind CSS 美化。
-            2. 包含一个可视化的 **瀑布流 (Waterfall) 概念描述**，展示从总销售额 (Revenue) 到 净利润 (Net Profit) 的各项扣除：
-               Revenue -> COGS (货值) -> Logistics (头程) -> Last Mile -> Platform Fees -> Marketing -> Net Profit.
+            2. 包含一个可视化的 **瀑布流 (Waterfall) 概念描述**，展示从总销售额 (Revenue) 到 净利润 (Net Profit) 的各项扣除。
             3. 计算整体的净利率 (Net Margin %) 并给出评级 (S/A/B/C)。
-            4. 给出具体的**降本增效建议** (Cost Cutting Action Plan)。
+            4. 给出具体的**降本增效建议** (Cost Cutting Action Plan)，重点分析支出占比高的科目。
+            5. 如果提供了趋势数据，请分析增长或衰退的原因。
             
             风格要求：专业、数据驱动、深色模式或金融风格 (Dark/Slate theme)。
         `;
