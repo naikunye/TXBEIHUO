@@ -247,52 +247,71 @@ function App() {
   };
 
   const handleUpdatePO = (updatedPO: PurchaseOrder) => {
-      const newList = purchaseOrders.map(o => o.id === updatedPO.id ? updatedPO : o);
-      setPurchaseOrders(newList);
-      localStorage.setItem('tanxing_purchase_orders', JSON.stringify(newList));
+      // Functional update to avoid stale state closure
+      setPurchaseOrders(prevOrders => {
+          const newList = prevOrders.map(o => o.id === updatedPO.id ? updatedPO : o);
+          localStorage.setItem('tanxing_purchase_orders', JSON.stringify(newList));
+          return newList;
+      });
       addToast("采购单状态已更新", "success");
   };
 
   const handleDeletePO = (id: string) => {
-      const newList = purchaseOrders.filter(o => o.id !== id);
-      setPurchaseOrders(newList);
-      localStorage.setItem('tanxing_purchase_orders', JSON.stringify(newList));
+      // Functional update
+      setPurchaseOrders(prevOrders => {
+          const newList = prevOrders.filter(o => o.id !== id);
+          localStorage.setItem('tanxing_purchase_orders', JSON.stringify(newList));
+          return newList;
+      });
       addToast("采购单已删除", "info");
   };
 
   const handleCreatePO = (newPO: PurchaseOrder) => {
-      const newList = [...purchaseOrders, newPO];
-      setPurchaseOrders(newList);
-      localStorage.setItem('tanxing_purchase_orders', JSON.stringify(newList));
+      setPurchaseOrders(prevOrders => {
+          const newList = [...prevOrders, newPO];
+          localStorage.setItem('tanxing_purchase_orders', JSON.stringify(newList));
+          return newList;
+      });
       addToast("采购单已创建", "success");
       // 自动跳转到采购管理界面，查看刚生成的单据
       setCurrentView('purchasing'); 
   };
 
   const handleReceiveStockFromPO = (po: PurchaseOrder) => {
-      // 1. ALWAYS update the Purchase Order status first to ensure the flow completes
-      // The `po` passed here already has status='Arrived', so we just need to save it.
-      handleUpdatePO(po);
+      // 1. Force the PO status to Arrived regardless of current status
+      const arrivedPO = { ...po, status: 'Arrived' as const };
+      handleUpdatePO(arrivedPO);
 
-      // 2. Try to update Inventory
-      const record = records.find(r => r.sku === po.sku);
-      if (record) {
-          const updatedRecord = { 
-              ...record, 
-              quantity: record.quantity + po.quantity,
-              // Optional: also mark the product status as Arrived if it was in planning
-              status: 'Arrived' as const 
-          };
-          // Save Record
-          const updatedRecords = records.map(r => r.id === updatedRecord.id ? updatedRecord : r);
-          setRecords(updatedRecords);
-          localStorage.setItem('tanxing_records', JSON.stringify(updatedRecords));
+      // 2. Try to update Inventory using functional state update
+      setRecords(prevRecords => {
+          // Robust matching: trim whitespace and ignore case
+          const recordIndex = prevRecords.findIndex(r => r.sku.trim().toLowerCase() === po.sku.trim().toLowerCase());
           
-          addToast(`采购单已归档，库存增加 ${po.quantity} 件。`, "success");
-      } else {
-          // Warning: PO closed, but no stock added
-          addToast(`采购单已归档 (Arrived)，但未找到 SKU ${po.sku} 的库存记录，未增加库存。`, "warning");
-      }
+          if (recordIndex !== -1) {
+              const record = prevRecords[recordIndex];
+              const updatedRecord = { 
+                  ...record, 
+                  quantity: (record.quantity || 0) + (po.quantity || 0),
+                  // Optional: also mark the product status as Arrived if it was in planning
+                  status: 'Arrived' as const 
+              };
+              
+              const updatedRecords = [...prevRecords];
+              updatedRecords[recordIndex] = updatedRecord;
+              
+              localStorage.setItem('tanxing_records', JSON.stringify(updatedRecords));
+              syncItemToCloud(updatedRecord); // Side effect inside handler, ok for simple case
+              
+              // We can't use addToast directly inside setState callback easily if it depends on other state, 
+              // but here addToast is stable. Using setTimeout to push it to event loop end.
+              setTimeout(() => addToast(`采购单归档完成，库存已增加 ${po.quantity} 件。`, "success"), 0);
+              
+              return updatedRecords;
+          } else {
+              setTimeout(() => addToast(`采购单归档 (Arrived)，但未找到 SKU: ${po.sku}，库存未变动。`, "warning"), 0);
+              return prevRecords;
+          }
+      });
   };
 
   const handleAiAction = (type: string, data: any) => {
@@ -309,9 +328,7 @@ function App() {
               totalAmountCNY: (records.find(r => r.sku === data.sku)?.unitPriceCNY || 0) * (data.quantity || 100),
               status: 'Draft'
           };
-          setPurchaseOrders(prev => [...prev, newPO]);
-          localStorage.setItem('tanxing_purchase_orders', JSON.stringify([...purchaseOrders, newPO]));
-          setCurrentView('purchasing');
+          handleCreatePO(newPO);
           addToast("AI 已为您创建采购草稿单", "success");
       }
   };

@@ -77,6 +77,14 @@ export const PurchaseOrderManager: React.FC<PurchaseOrderManagerProps> = ({
       }
   };
 
+  const handleDeleteClick = (e: React.MouseEvent, id: string) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if(window.confirm('确定要删除此采购单吗？(仅删除记录，不影响库存)')) {
+          onDeleteOrder(id);
+      }
+  };
+
   const startEditLogistics = (order: PurchaseOrder) => {
       setEditingLogisticsId(order.id);
       setEditForm({
@@ -168,7 +176,7 @@ export const PurchaseOrderManager: React.FC<PurchaseOrderManagerProps> = ({
                            </div>
 
                            {/* Actions Section */}
-                           <div className="flex items-center gap-2">
+                           <div className="flex items-center gap-2 z-10 relative">
                                {order.status === 'Arrived' ? (
                                    <div className="flex items-center gap-1.5 text-green-600 bg-green-50 px-4 py-2 rounded-lg text-xs font-bold border border-green-100">
                                        <CheckCircle2 size={16} />
@@ -181,7 +189,10 @@ export const PurchaseOrderManager: React.FC<PurchaseOrderManagerProps> = ({
                                    </div>
                                ) : (
                                    <button 
-                                      onClick={() => handleNextStatus(order)}
+                                      onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleNextStatus(order);
+                                      }}
                                       className="flex items-center gap-1.5 px-4 py-2 bg-slate-900 text-white rounded-lg hover:bg-slate-800 transition-colors text-xs font-bold shadow-md shadow-slate-200"
                                    >
                                        {order.status === 'Draft' ? '确认下单' : 
@@ -192,11 +203,8 @@ export const PurchaseOrderManager: React.FC<PurchaseOrderManagerProps> = ({
                                )}
                                
                                <button 
-                                  onClick={(e) => {
-                                      e.stopPropagation(); // Fixed: Added stopPropagation
-                                      if(window.confirm('确定要删除此采购单吗？(仅删除记录，不影响库存)')) onDeleteOrder(order.id);
-                                  }}
-                                  className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                                  onClick={(e) => handleDeleteClick(e, order.id)}
+                                  className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors relative z-20"
                                   title="删除订单"
                                >
                                    <Trash2 size={16} />
