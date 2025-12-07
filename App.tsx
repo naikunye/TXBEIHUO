@@ -250,7 +250,7 @@ function App() {
       // Functional update to avoid stale state closure
       setPurchaseOrders(prevOrders => {
           const newList = prevOrders.map(o => o.id === updatedPO.id ? updatedPO : o);
-          localStorage.setItem('tanxing_purchase_orders', JSON.stringify(newList));
+          try { localStorage.setItem('tanxing_purchase_orders', JSON.stringify(newList)); } catch(e){}
           return newList;
       });
       addToast("采购单状态已更新", "success");
@@ -260,7 +260,7 @@ function App() {
       // Functional update
       setPurchaseOrders(prevOrders => {
           const newList = prevOrders.filter(o => o.id !== id);
-          localStorage.setItem('tanxing_purchase_orders', JSON.stringify(newList));
+          try { localStorage.setItem('tanxing_purchase_orders', JSON.stringify(newList)); } catch(e){}
           return newList;
       });
       addToast("采购单已删除", "info");
@@ -269,7 +269,7 @@ function App() {
   const handleCreatePO = (newPO: PurchaseOrder) => {
       setPurchaseOrders(prevOrders => {
           const newList = [...prevOrders, newPO];
-          localStorage.setItem('tanxing_purchase_orders', JSON.stringify(newList));
+          try { localStorage.setItem('tanxing_purchase_orders', JSON.stringify(newList)); } catch(e){}
           return newList;
       });
       addToast("采购单已创建", "success");
@@ -278,13 +278,20 @@ function App() {
   };
 
   const handleReceiveStockFromPO = (po: PurchaseOrder) => {
-      // 1. Force the PO status to Arrived regardless of current status
-      const arrivedPO = { ...po, status: 'Arrived' as const };
-      handleUpdatePO(arrivedPO);
+      // 1. DIRECTLY update Purchase Order state here (atomic update)
+      setPurchaseOrders(prevOrders => {
+          const updatedList = prevOrders.map(o => 
+              o.id === po.id ? { ...o, status: 'Arrived' as const } : o
+          );
+          try {
+             localStorage.setItem('tanxing_purchase_orders', JSON.stringify(updatedList));
+          } catch(e) { console.error("LS Error", e); }
+          return updatedList;
+      });
 
-      // 2. Try to update Inventory using functional state update
+      // 2. DIRECTLY update Inventory state here (atomic update)
       setRecords(prevRecords => {
-          // Robust matching: trim whitespace and ignore case
+          // Robust matching
           const recordIndex = prevRecords.findIndex(r => r.sku.trim().toLowerCase() === po.sku.trim().toLowerCase());
           
           if (recordIndex !== -1) {
@@ -292,23 +299,22 @@ function App() {
               const updatedRecord = { 
                   ...record, 
                   quantity: (record.quantity || 0) + (po.quantity || 0),
-                  // Optional: also mark the product status as Arrived if it was in planning
-                  status: 'Arrived' as const 
               };
               
               const updatedRecords = [...prevRecords];
               updatedRecords[recordIndex] = updatedRecord;
               
-              localStorage.setItem('tanxing_records', JSON.stringify(updatedRecords));
-              syncItemToCloud(updatedRecord); // Side effect inside handler, ok for simple case
+              try {
+                  localStorage.setItem('tanxing_records', JSON.stringify(updatedRecords));
+              } catch(e) { console.error("LS Error", e); }
               
-              // We can't use addToast directly inside setState callback easily if it depends on other state, 
-              // but here addToast is stable. Using setTimeout to push it to event loop end.
-              setTimeout(() => addToast(`采购单归档完成，库存已增加 ${po.quantity} 件。`, "success"), 0);
+              syncItemToCloud(updatedRecord);
+              
+              setTimeout(() => addToast(`入库成功：${po.productName} 库存 +${po.quantity}`, "success"), 0);
               
               return updatedRecords;
           } else {
-              setTimeout(() => addToast(`采购单归档 (Arrived)，但未找到 SKU: ${po.sku}，库存未变动。`, "warning"), 0);
+              setTimeout(() => addToast(`订单已归档，但未找到 SKU: ${po.sku} 对应库存记录`, "warning"), 0);
               return prevRecords;
           }
       });

@@ -69,7 +69,7 @@ export const PurchaseOrderManager: React.FC<PurchaseOrderManagerProps> = ({
           // If moving to Arrived, trigger stock receive
           if (nextStatus === 'Arrived') {
               if(window.confirm(`确认收货？\n\n这将自动增加 "${order.productName}" 的库存 ${order.quantity} 件。`)) {
-                  onReceiveStock({ ...order, status: nextStatus });
+                  onReceiveStock({ ...order, status: 'Arrived' });
               }
           } else {
               onUpdateOrder({ ...order, status: nextStatus });
@@ -78,8 +78,7 @@ export const PurchaseOrderManager: React.FC<PurchaseOrderManagerProps> = ({
   };
 
   const handleDeleteClick = (e: React.MouseEvent, id: string) => {
-      e.preventDefault();
-      e.stopPropagation();
+      e.stopPropagation(); // Only stop bubbling, default action is fine for button
       if(window.confirm('确定要删除此采购单吗？(仅删除记录，不影响库存)')) {
           onDeleteOrder(id);
       }
@@ -175,15 +174,15 @@ export const PurchaseOrderManager: React.FC<PurchaseOrderManagerProps> = ({
                                </div>
                            </div>
 
-                           {/* Actions Section */}
-                           <div className="flex items-center gap-2 z-10 relative">
+                           {/* Actions Section - Z-INDEX INCREASED */}
+                           <div className="flex items-center gap-2 z-50 relative pointer-events-auto">
                                {order.status === 'Arrived' ? (
-                                   <div className="flex items-center gap-1.5 text-green-600 bg-green-50 px-4 py-2 rounded-lg text-xs font-bold border border-green-100">
+                                   <div className="flex items-center gap-1.5 text-green-600 bg-green-50 px-4 py-2 rounded-lg text-xs font-bold border border-green-100 select-none">
                                        <CheckCircle2 size={16} />
                                        <span>已入库完成</span>
                                    </div>
                                ) : order.status === 'Cancelled' ? (
-                                   <div className="flex items-center gap-1.5 text-red-600 bg-red-50 px-4 py-2 rounded-lg text-xs font-bold border border-red-100">
+                                   <div className="flex items-center gap-1.5 text-red-600 bg-red-50 px-4 py-2 rounded-lg text-xs font-bold border border-red-100 select-none">
                                        <XCircle size={16} />
                                        <span>订单已取消</span>
                                    </div>
@@ -193,21 +192,21 @@ export const PurchaseOrderManager: React.FC<PurchaseOrderManagerProps> = ({
                                           e.stopPropagation();
                                           handleNextStatus(order);
                                       }}
-                                      className="flex items-center gap-1.5 px-4 py-2 bg-slate-900 text-white rounded-lg hover:bg-slate-800 transition-colors text-xs font-bold shadow-md shadow-slate-200"
+                                      className="flex items-center gap-1.5 px-4 py-2 bg-slate-900 text-white rounded-lg hover:bg-slate-800 transition-colors text-xs font-bold shadow-md shadow-slate-200 cursor-pointer"
                                    >
                                        {order.status === 'Draft' ? '确认下单' : 
                                         order.status === 'Ordered' ? '开始生产' :
                                         order.status === 'Production' ? '发货' : '确认收货'} 
-                                       <ArrowRight size={14} />
+                                       <ArrowRight size={14} className="pointer-events-none" />
                                    </button>
                                )}
                                
                                <button 
                                   onClick={(e) => handleDeleteClick(e, order.id)}
-                                  className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors relative z-20"
+                                  className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
                                   title="删除订单"
                                >
-                                   <Trash2 size={16} />
+                                   <Trash2 size={16} className="pointer-events-none" />
                                </button>
                            </div>
                        </div>
