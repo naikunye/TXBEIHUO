@@ -80,7 +80,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
             {/* Exchange Rate */}
             <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
                 <h3 className="font-bold text-gray-800 mb-4 flex items-center gap-2">
-                    <DollarSign size={18} className="text-green-600"/> 实时汇率 (USD -> CNY)
+                    <DollarSign size={18} className="text-green-600"/> 实时汇率 (USD &rarr; CNY)
                 </h3>
                 <div className="flex items-center gap-4">
                     <input 
