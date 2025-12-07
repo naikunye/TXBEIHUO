@@ -102,47 +102,42 @@ type ViewState = 'overview' | 'inventory' | 'analytics' | 'calculator' | 'logist
 // Extended type for sorting
 type EnrichedRecord = ReplenishmentRecord & { metrics: CalculatedMetrics };
 
+// Helper for Safe JSON Parsing
+const safeParse = (key: string, fallback: any) => {
+    try {
+        const item = localStorage.getItem(key);
+        return item ? JSON.parse(item) : fallback;
+    } catch (e) {
+        console.error(`Error parsing ${key}`, e);
+        return fallback;
+    }
+};
+
 function App() {
   // --- Cloud & Workspace State ---
-  const [workspaceId, setWorkspaceId] = useState<string | null>(() => {
-    const savedId = localStorage.getItem('tanxing_current_workspace');
-    return savedId;
-  });
+  const [workspaceId, setWorkspaceId] = useState<string | null>(() => localStorage.getItem('tanxing_current_workspace'));
   
   const [syncStatus, setSyncStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
   const [isCloudConfigOpen, setIsCloudConfigOpen] = useState(false); // Renamed from isSettingsOpen
 
   // --- Store Management State ---
-  const [stores, setStores] = useState<Store[]>(() => {
-    const savedStores = localStorage.getItem('tanxing_stores');
-    return savedStores ? JSON.parse(savedStores) : [];
-  });
+  const [stores, setStores] = useState<Store[]>(() => safeParse('tanxing_stores', []));
   const [activeStoreId, setActiveStoreId] = useState<string>('all');
   const [isStoreManagerOpen, setIsStoreManagerOpen] = useState(false);
 
   // --- Global Settings State (New) ---
-  const [appSettings, setAppSettings] = useState<AppSettings>(() => {
-      const saved = localStorage.getItem('tanxing_app_settings');
-      return saved ? JSON.parse(saved) : { 
-          exchangeRate: 7.3, 
-          airTiers: [{ minWeight: 0, maxWeight: 9999, price: 65 }], 
-          seaTiers: [{ minWeight: 0, maxWeight: 9999, price: 12 }] 
-      };
-  });
+  const [appSettings, setAppSettings] = useState<AppSettings>(() => safeParse('tanxing_app_settings', { 
+      exchangeRate: 7.3, 
+      airTiers: [{ minWeight: 0, maxWeight: 9999, price: 65 }], 
+      seaTiers: [{ minWeight: 0, maxWeight: 9999, price: 12 }] 
+  }));
   const [isGlobalSettingsOpen, setIsGlobalSettingsOpen] = useState(false);
 
   // --- Data State ---
-  const [records, setRecords] = useState<ReplenishmentRecord[]>(() => {
-      // Try local storage first, else mock
-      const saved = localStorage.getItem('tanxing_records');
-      return saved ? JSON.parse(saved) : MOCK_DATA_INITIAL;
-  });
+  const [records, setRecords] = useState<ReplenishmentRecord[]>(() => safeParse('tanxing_records', MOCK_DATA_INITIAL));
   
   // --- Purchase Orders State (New) ---
-  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>(() => {
-      const saved = localStorage.getItem('tanxing_purchase_orders');
-      return saved ? JSON.parse(saved) : [];
-  });
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>(() => safeParse('tanxing_purchase_orders', []));
 
   const [isDataLoaded, setIsDataLoaded] = useState(false);
   const [lastErpSync, setLastErpSync] = useState<Date | null>(null);
@@ -993,7 +988,7 @@ function App() {
         {/* Sidebar Header */}
         <div className="p-6 flex items-center gap-3 border-b border-slate-800">
            <div className="bg-blue-600 p-2 rounded-lg"><LayoutDashboard className="text-white h-5 w-5" /></div>
-           <div><h1 className="font-bold text-lg tracking-tight">探行科技</h1><p className="text-xs text-slate-400">智能备货系统 v4.3 (Pro+)</p></div>
+           <div><h1 className="font-bold text-lg tracking-tight">探行跨境ERP</h1><p className="text-xs text-slate-400">全链路供应链管理 v5.0</p></div>
         </div>
         
         {/* Sidebar Command Palette Trigger & Store */}
@@ -1086,7 +1081,7 @@ function App() {
       
       {/* Main Content */}
       <div className="flex-1 flex flex-col h-screen overflow-hidden relative">
-        <header className="bg-white border-b border-gray-200 p-4 flex justify-between items-center md:hidden"><div className="font-bold text-gray-800">探行科技</div><button className="text-gray-500"><Menu /></button></header>
+        <header className="bg-white border-b border-gray-200 p-4 flex justify-between items-center md:hidden"><div className="font-bold text-gray-800">探行跨境ERP</div><button className="text-gray-500"><Menu /></button></header>
         <main className="flex-1 overflow-y-auto p-4 sm:p-8 bg-gray-100 relative">
           <ToastContainer toasts={toasts} removeToast={removeToast} />
           <div className="max-w-[1920px] w-full mx-auto">
