@@ -1,8 +1,30 @@
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { PurchaseOrder, POStatus } from '../types';
 import { formatCurrency } from '../utils/calculations';
-import { FileText, Truck, CheckCircle2, Clock, Plus, Trash2, ArrowRight, Package, Calendar, XCircle, ExternalLink, Ship, Plane, Edit, Save } from 'lucide-react';
+import { 
+  FileText, 
+  Truck, 
+  CheckCircle2, 
+  Clock, 
+  Trash2, 
+  ArrowRight, 
+  Package, 
+  Calendar, 
+  XCircle, 
+  ExternalLink, 
+  Ship, 
+  Plane, 
+  Edit2, 
+  Save, 
+  Search,
+  Filter,
+  AlertCircle,
+  MoreHorizontal,
+  DollarSign,
+  TrendingUp,
+  X
+} from 'lucide-react';
 
 interface PurchaseOrderManagerProps {
   orders: PurchaseOrder[];
@@ -17,58 +39,57 @@ export const PurchaseOrderManager: React.FC<PurchaseOrderManagerProps> = ({
   onDeleteOrder,
   onReceiveStock 
 }) => {
-  const [filter, setFilter] = useState<'All' | POStatus>('All');
-  const [editingLogisticsId, setEditingLogisticsId] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'All' | 'Active' | 'Completed'>('All');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [editingId, setEditingId] = useState<string | null>(null);
   
-  // Temp state for editing logistics
-  const [editForm, setEditForm] = useState<{
-      trackingNumber: string;
-      carrier: string;
-      shippingMethod: 'Air' | 'Sea';
-  }>({ trackingNumber: '', carrier: '', shippingMethod: 'Air' });
+  // Edit Form State
+  const [editForm, setEditForm] = useState<Partial<PurchaseOrder>>({});
 
-  const statusColors: Record<POStatus, string> = {
-      'Draft': 'bg-gray-100 text-gray-600',
-      'Ordered': 'bg-blue-100 text-blue-700',
-      'Production': 'bg-yellow-100 text-yellow-700',
-      'Shipped': 'bg-purple-100 text-purple-700',
-      'Arrived': 'bg-green-100 text-green-700',
-      'Cancelled': 'bg-red-100 text-red-700'
-  };
+  // --- Derived Data ---
+  const filteredOrders = useMemo(() => {
+    let result = [...orders];
 
-  const statusLabels: Record<POStatus, string> = {
-      'Draft': '草稿 (Draft)',
-      'Ordered': '已下单 (Ordered)',
-      'Production': '生产中 (Production)',
-      'Shipped': '运输中 (Shipped)',
-      'Arrived': '已入库 (Arrived)',
-      'Cancelled': '已取消 (Cancelled)'
-  };
+    // Tab Filter
+    if (activeTab === 'Active') {
+      result = result.filter(o => !['Arrived', 'Cancelled'].includes(o.status));
+    } else if (activeTab === 'Completed') {
+      result = result.filter(o => ['Arrived', 'Cancelled'].includes(o.status));
+    }
 
-  const filterOptions: (POStatus | 'All')[] = ['All', 'Draft', 'Ordered', 'Production', 'Shipped', 'Arrived', 'Cancelled'];
+    // Search Filter
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      result = result.filter(o => 
+        o.poNumber.toLowerCase().includes(q) || 
+        o.productName.toLowerCase().includes(q) || 
+        o.sku.toLowerCase().includes(q) ||
+        (o.supplierName || '').toLowerCase().includes(q)
+      );
+    }
 
-  const filterLabels: Record<POStatus | 'All', string> = {
-      'All': '全部',
-      'Draft': '草稿',
-      'Ordered': '已下单',
-      'Production': '生产中',
-      'Shipped': '运输中',
-      'Arrived': '已入库',
-      'Cancelled': '已取消'
-  };
+    // Sort by Date Desc
+    return result.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }, [orders, activeTab, searchQuery]);
 
-  const filteredOrders = orders.filter(o => filter === 'All' || o.status === filter);
+  // Stats
+  const stats = useMemo(() => {
+    const active = orders.filter(o => !['Arrived', 'Cancelled'].includes(o.status));
+    const totalSpend = active.reduce((sum, o) => sum + o.totalAmountCNY, 0);
+    const incomingUnits = active.reduce((sum, o) => sum + o.quantity, 0);
+    return { count: active.length, totalSpend, incomingUnits };
+  }, [orders]);
 
-  // Status transition logic
+  // --- Handlers ---
+
   const handleNextStatus = (order: PurchaseOrder) => {
       const flow: POStatus[] = ['Draft', 'Ordered', 'Production', 'Shipped', 'Arrived'];
       const currentIndex = flow.indexOf(order.status);
       
       if (currentIndex !== -1 && currentIndex < flow.length - 1) {
           const nextStatus = flow[currentIndex + 1];
-          // If moving to Arrived, trigger stock receive
           if (nextStatus === 'Arrived') {
-              if(window.confirm(`确认收货？\n\n这将自动增加 "${order.productName}" 的库存 ${order.quantity} 件。`)) {
+              if(window.confirm(`确认收货？\n\n这将自动增加 "${order.productName}" 的库存 ${order.quantity} 件。\n此操作不可撤销。`)) {
                   onReceiveStock({ ...order, status: 'Arrived' });
               }
           } else {
@@ -77,230 +98,335 @@ export const PurchaseOrderManager: React.FC<PurchaseOrderManagerProps> = ({
       }
   };
 
-  const handleDeleteClick = (e: React.MouseEvent, id: string) => {
-      e.stopPropagation(); // Only stop bubbling, default action is fine for button
-      if(window.confirm('确定要删除此采购单吗？(仅删除记录，不影响库存)')) {
-          onDeleteOrder(id);
+  const handleStartEdit = (order: PurchaseOrder) => {
+      if (['Arrived', 'Cancelled'].includes(order.status)) return;
+      setEditingId(order.id);
+      setEditForm({ ...order });
+  };
+
+  const handleSaveEdit = () => {
+      if (editingId && editForm.id) {
+          // Recalculate total if price/qty changed
+          const newQty = editForm.quantity || 0;
+          const newPrice = editForm.unitPriceCNY || 0;
+          const newTotal = newQty * newPrice;
+          
+          onUpdateOrder({ 
+              ...orders.find(o => o.id === editingId)!, 
+              ...editForm,
+              totalAmountCNY: newTotal 
+          } as PurchaseOrder);
+          
+          setEditingId(null);
+          setEditForm({});
       }
   };
 
-  const startEditLogistics = (order: PurchaseOrder) => {
-      setEditingLogisticsId(order.id);
-      setEditForm({
-          trackingNumber: order.trackingNumber || '',
-          carrier: order.carrier || '',
-          shippingMethod: order.shippingMethod || 'Air'
-      });
+  const handleCancelEdit = () => {
+      setEditingId(null);
+      setEditForm({});
   };
 
-  const saveLogistics = (order: PurchaseOrder) => {
-      onUpdateOrder({
-          ...order,
-          trackingNumber: editForm.trackingNumber,
-          carrier: editForm.carrier,
-          shippingMethod: editForm.shippingMethod
-      });
-      setEditingLogisticsId(null);
+  const handleStatusChange = (order: PurchaseOrder, newStatus: POStatus) => {
+      if (newStatus === 'Arrived') {
+          handleNextStatus(order); // Re-use logic for arrival check
+      } else {
+          onUpdateOrder({ ...order, status: newStatus });
+      }
   };
 
-  const getTrackingLink = (number: string, carrier: string) => {
+  // --- Constants ---
+  const statusConfig: Record<POStatus, { label: string, color: string, bg: string, icon: any }> = {
+      'Draft': { label: '草稿', color: 'text-gray-600', bg: 'bg-gray-100', icon: FileText },
+      'Ordered': { label: '已下单', color: 'text-blue-600', bg: 'bg-blue-100', icon: CheckCircle2 },
+      'Production': { label: '生产中', color: 'text-yellow-600', bg: 'bg-yellow-100', icon: Clock },
+      'Shipped': { label: '运输中', color: 'text-purple-600', bg: 'bg-purple-100', icon: Truck },
+      'Arrived': { label: '已入库', color: 'text-green-600', bg: 'bg-green-100', icon: CheckCircle2 },
+      'Cancelled': { label: '已取消', color: 'text-red-600', bg: 'bg-red-100', icon: XCircle }
+  };
+
+  const getTrackingLink = (number?: string, carrier?: string) => {
       if (!number) return '#';
-      if (carrier.toLowerCase().includes('ups')) {
-          return `https://www.ups.com/track?tracknum=${number}`;
-      }
+      if ((carrier || '').toLowerCase().includes('ups')) return `https://www.ups.com/track?tracknum=${number}`;
       return `https://t.17track.net/zh-cn#nums=${number}`;
   };
 
   return (
     <div className="space-y-6 animate-fade-in pb-20">
-       <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
-           <div>
-               <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
-                   <FileText className="text-orange-500" /> 采购全流程管理
-               </h2>
-               <p className="text-sm text-gray-500 mt-1">跟踪从下单到入库的全链路状态。</p>
+       
+       {/* 1. Dashboard Stats */}
+       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+           <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex items-center gap-4">
+               <div className="p-3 rounded-full bg-blue-50 text-blue-600"><FileText size={24} /></div>
+               <div>
+                   <p className="text-xs text-gray-500 uppercase font-bold">进行中订单</p>
+                   <p className="text-2xl font-bold text-gray-800">{stats.count}</p>
+               </div>
            </div>
-           
-           <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-lg border border-gray-200 overflow-x-auto max-w-full">
-               {filterOptions.map(s => (
-                   <button
-                        key={s}
-                        onClick={() => setFilter(s)}
-                        className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all whitespace-nowrap ${filter === s ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200/50'}`}
-                   >
-                       {filterLabels[s]}
-                   </button>
-               ))}
+           <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex items-center gap-4">
+               <div className="p-3 rounded-full bg-orange-50 text-orange-600"><DollarSign size={24} /></div>
+               <div>
+                   <p className="text-xs text-gray-500 uppercase font-bold">待付/在途金额</p>
+                   <p className="text-2xl font-bold text-gray-800">{formatCurrency(stats.totalSpend, 'CNY')}</p>
+               </div>
+           </div>
+           <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex items-center gap-4">
+               <div className="p-3 rounded-full bg-green-50 text-green-600"><Package size={24} /></div>
+               <div>
+                   <p className="text-xs text-gray-500 uppercase font-bold">预计入库总数</p>
+                   <p className="text-2xl font-bold text-gray-800">{stats.incomingUnits} <span className="text-sm font-normal text-gray-400">pcs</span></p>
+               </div>
            </div>
        </div>
 
-       <div className="grid grid-cols-1 gap-4">
+       {/* 2. Toolbar */}
+       <div className="flex flex-col md:flex-row justify-between items-center gap-4 bg-white p-4 rounded-xl border border-gray-200 shadow-sm sticky top-0 z-20">
+           
+           {/* Tabs */}
+           <div className="flex bg-gray-100 p-1 rounded-lg">
+               {(['All', 'Active', 'Completed'] as const).map(tab => (
+                   <button
+                       key={tab}
+                       onClick={() => setActiveTab(tab)}
+                       className={`px-4 py-2 rounded-md text-sm font-bold transition-all ${activeTab === tab ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                   >
+                       {tab === 'All' ? '全部' : tab === 'Active' ? '进行中' : '已归档'}
+                   </button>
+               ))}
+           </div>
+
+           {/* Search */}
+           <div className="relative w-full md:w-80">
+               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+               <input 
+                   type="text" 
+                   placeholder="搜索单号、SKU、产品名..." 
+                   value={searchQuery}
+                   onChange={e => setSearchQuery(e.target.value)}
+                   className="w-full pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400"
+               />
+           </div>
+       </div>
+
+       {/* 3. Orders List */}
+       <div className="space-y-4">
            {filteredOrders.length === 0 ? (
-               <div className="bg-white rounded-xl p-12 text-center text-gray-400 border border-gray-200 border-dashed">
-                   <Package size={48} className="mx-auto mb-4 opacity-20" />
-                   <p>暂无符合条件的采购单</p>
+               <div className="text-center py-16 bg-gray-50 rounded-xl border border-dashed border-gray-300">
+                   <Package className="mx-auto text-gray-300 mb-4" size={48} />
+                   <p className="text-gray-500 font-medium">暂无符合条件的采购单</p>
                </div>
            ) : (
-               filteredOrders.map(order => (
-                   <div key={order.id} className="bg-white rounded-xl p-5 border border-gray-200 shadow-sm hover:shadow-md transition-all group relative overflow-hidden">
-                       {/* Status Bar Indicator */}
-                       <div className={`absolute top-0 left-0 w-1.5 h-full ${statusColors[order.status].split(' ')[0]}`}></div>
-                       
-                       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 pl-3">
-                           {/* Info Section */}
-                           <div className="flex-1 min-w-0">
-                               <div className="flex items-center gap-3 mb-1">
-                                   <span className="font-mono font-bold text-gray-800 text-lg">{order.poNumber}</span>
-                                   <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${statusColors[order.status]}`}>
-                                       {statusLabels[order.status]}
-                                   </span>
-                               </div>
-                               <div className="flex items-center gap-4 text-sm text-gray-500 flex-wrap">
-                                   <span className="flex items-center gap-1"><Calendar size={14}/> {order.date}</span>
-                                   <span className="flex items-center gap-1 font-medium text-gray-700 bg-gray-50 px-2 rounded truncate max-w-[200px]" title={order.productName}><Package size={14}/> {order.productName}</span>
-                                   <span className="font-mono text-gray-400 bg-gray-50 px-1.5 rounded">{order.sku}</span>
-                               </div>
-                           </div>
+               filteredOrders.map(order => {
+                   const isEditing = editingId === order.id;
+                   const StatusIcon = statusConfig[order.status].icon;
+                   const isDone = ['Arrived', 'Cancelled'].includes(order.status);
 
-                           {/* Data Section */}
-                           <div className="flex items-center gap-8 md:px-8 border-l border-gray-100 md:border-l-0 md:border-r md:border-gray-100 h-full">
-                               <div className="text-right">
-                                   <div className="text-[10px] text-gray-400 uppercase font-bold">数量</div>
-                                   <div className="font-bold text-lg text-gray-800">{order.quantity}</div>
-                               </div>
-                               <div className="text-right">
-                                   <div className="text-[10px] text-gray-400 uppercase font-bold">总金额</div>
-                                   <div className="font-bold text-lg text-gray-800">{formatCurrency(order.totalAmountCNY, 'CNY')}</div>
-                               </div>
-                           </div>
-
-                           {/* Actions Section - Z-INDEX INCREASED */}
-                           <div className="flex items-center gap-2 z-50 relative pointer-events-auto">
-                               {order.status === 'Arrived' ? (
-                                   <div className="flex items-center gap-1.5 text-green-600 bg-green-50 px-4 py-2 rounded-lg text-xs font-bold border border-green-100 select-none">
-                                       <CheckCircle2 size={16} />
-                                       <span>已入库完成</span>
+                   return (
+                       <div key={order.id} className={`bg-white rounded-xl border transition-all hover:shadow-md ${isDone ? 'border-gray-200 opacity-90' : 'border-gray-200 shadow-sm'}`}>
+                           
+                           {/* Card Header */}
+                           <div className="flex flex-wrap items-center justify-between p-4 border-b border-gray-50 gap-4">
+                               <div className="flex items-center gap-3">
+                                   <div className={`p-2 rounded-lg ${statusConfig[order.status].bg}`}>
+                                       <StatusIcon size={18} className={statusConfig[order.status].color} />
                                    </div>
-                               ) : order.status === 'Cancelled' ? (
-                                   <div className="flex items-center gap-1.5 text-red-600 bg-red-50 px-4 py-2 rounded-lg text-xs font-bold border border-red-100 select-none">
-                                       <XCircle size={16} />
-                                       <span>订单已取消</span>
-                                   </div>
-                               ) : (
-                                   <button 
-                                      onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleNextStatus(order);
-                                      }}
-                                      className="flex items-center gap-1.5 px-4 py-2 bg-slate-900 text-white rounded-lg hover:bg-slate-800 transition-colors text-xs font-bold shadow-md shadow-slate-200 cursor-pointer"
-                                   >
-                                       {order.status === 'Draft' ? '确认下单' : 
-                                        order.status === 'Ordered' ? '开始生产' :
-                                        order.status === 'Production' ? '发货' : '确认收货'} 
-                                       <ArrowRight size={14} className="pointer-events-none" />
-                                   </button>
-                               )}
-                               
-                               <button 
-                                  onClick={(e) => handleDeleteClick(e, order.id)}
-                                  className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
-                                  title="删除订单"
-                               >
-                                   <Trash2 size={16} className="pointer-events-none" />
-                               </button>
-                           </div>
-                       </div>
-                       
-                       {/* Logistics Tracking Section - Only visible for active orders past 'Ordered' */}
-                       {['Shipped', 'Arrived', 'Production'].includes(order.status) && (
-                           <div className="mt-4 pt-4 border-t border-gray-100 pl-3">
-                               {editingLogisticsId === order.id ? (
-                                   <div className="flex items-center gap-3 animate-fade-in bg-gray-50 p-3 rounded-lg">
-                                       <select 
-                                            value={editForm.shippingMethod}
-                                            onChange={(e) => setEditForm(prev => ({...prev, shippingMethod: e.target.value as any}))}
-                                            className="text-xs p-2 rounded border border-gray-300"
-                                       >
-                                           <option value="Air">空运 (Air)</option>
-                                           <option value="Sea">海运 (Sea)</option>
-                                       </select>
-                                       <input 
-                                            type="text" 
-                                            placeholder="承运商 (如: UPS, Matson)" 
-                                            value={editForm.carrier}
-                                            onChange={(e) => setEditForm(prev => ({...prev, carrier: e.target.value}))}
-                                            className="text-xs p-2 rounded border border-gray-300 w-32"
-                                       />
-                                       <input 
-                                            type="text" 
-                                            placeholder="物流单号 (Tracking No.)" 
-                                            value={editForm.trackingNumber}
-                                            onChange={(e) => setEditForm(prev => ({...prev, trackingNumber: e.target.value}))}
-                                            className="text-xs p-2 rounded border border-gray-300 flex-1 font-mono"
-                                       />
-                                       <button onClick={() => saveLogistics(order)} className="p-2 bg-green-500 text-white rounded hover:bg-green-600"><Save size={14}/></button>
-                                       <button onClick={() => setEditingLogisticsId(null)} className="p-2 text-gray-500 hover:text-gray-700"><XCircle size={14}/></button>
-                                   </div>
-                               ) : (
-                                   <div className="flex items-center justify-between">
-                                       <div className="flex items-center gap-4">
-                                           <div className={`flex items-center gap-2 text-xs font-bold px-2 py-1 rounded ${order.shippingMethod === 'Air' ? 'bg-sky-50 text-sky-700' : 'bg-indigo-50 text-indigo-700'}`}>
-                                               {order.shippingMethod === 'Air' ? <Plane size={12}/> : <Ship size={12}/>}
-                                               {order.carrier || (order.shippingMethod === 'Air' ? '空运' : '海运')}
-                                           </div>
-                                           
-                                           {order.trackingNumber ? (
-                                               <div className="flex items-center gap-2">
-                                                   <span className="text-xs font-mono text-gray-600 select-all">{order.trackingNumber}</span>
-                                                   <a 
-                                                       href={getTrackingLink(order.trackingNumber, order.carrier || '')}
-                                                       target="_blank"
-                                                       rel="noreferrer"
-                                                       className="flex items-center gap-1 text-[10px] text-blue-600 hover:underline bg-blue-50 px-2 py-1 rounded-full border border-blue-100"
-                                                   >
-                                                       <Truck size={10}/> 实时追踪
-                                                       <ExternalLink size={8} />
-                                                   </a>
-                                               </div>
-                                           ) : (
-                                               <span className="text-xs text-gray-400 italic">暂无物流单号</span>
-                                           )}
+                                   <div>
+                                       <div className="flex items-center gap-2">
+                                           <span className="font-mono font-bold text-gray-800 text-base">{order.poNumber}</span>
+                                           <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold border ${statusConfig[order.status].color.replace('text', 'border')} bg-white`}>
+                                               {statusConfig[order.status].label}
+                                           </span>
                                        </div>
+                                       <div className="flex items-center gap-3 text-xs text-gray-500 mt-0.5">
+                                           <span className="flex items-center gap-1"><Calendar size={12}/> {order.date}</span>
+                                           <span className="flex items-center gap-1"><Package size={12}/> {order.supplierName || '未知供应商'}</span>
+                                       </div>
+                                   </div>
+                               </div>
+
+                               {/* Actions */}
+                               {!isEditing && (
+                                   <div className="flex items-center gap-2">
+                                       {!isDone && (
+                                           <>
+                                            <button 
+                                                onClick={() => handleStartEdit(order)} 
+                                                className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" 
+                                                title="编辑订单"
+                                            >
+                                                <Edit2 size={16} />
+                                            </button>
+                                            <button 
+                                                onClick={() => handleNextStatus(order)}
+                                                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 text-white rounded-lg text-xs font-bold hover:bg-slate-800 transition-colors shadow-sm"
+                                            >
+                                                {order.status === 'Draft' ? '确认下单' : order.status === 'Ordered' ? '开始生产' : order.status === 'Production' ? '发货' : '入库'}
+                                                <ArrowRight size={12} />
+                                            </button>
+                                           </>
+                                       )}
+                                       {isDone && order.status === 'Arrived' && (
+                                           <span className="text-green-600 flex items-center gap-1 text-xs font-bold bg-green-50 px-3 py-1.5 rounded-lg">
+                                               <CheckCircle2 size={14} /> 已完成
+                                           </span>
+                                       )}
                                        <button 
-                                           onClick={() => startEditLogistics(order)}
-                                           className="text-xs text-gray-400 hover:text-blue-600 flex items-center gap-1 transition-colors"
+                                            onClick={() => { if(window.confirm('确认删除记录?')) onDeleteOrder(order.id); }}
+                                            className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                                        >
-                                           <Edit size={12} /> {order.trackingNumber ? '修改物流' : '添加物流信息'}
+                                           <Trash2 size={16} />
                                        </button>
                                    </div>
                                )}
                            </div>
-                       )}
-                       
-                       {/* Progress Bar Visual */}
-                       {order.status !== 'Cancelled' && (
-                           <div className="mt-4 pl-3 flex items-center gap-1">
-                               {['Draft', 'Ordered', 'Production', 'Shipped', 'Arrived'].map((step, idx) => {
-                                   const statusList = ['Draft', 'Ordered', 'Production', 'Shipped', 'Arrived'];
-                                   const currentIdx = statusList.indexOf(order.status);
-                                   const isCompleted = idx <= currentIdx;
-                                   const isLast = idx === statusList.length - 1;
-                                   
-                                   return (
-                                       <div key={step} className="flex-1 flex flex-col gap-1 group">
-                                           <div className={`h-1.5 rounded-full overflow-hidden bg-gray-100`}>
-                                               <div className={`h-full transition-all duration-500 ease-out ${isCompleted ? (isLast ? 'bg-green-500' : 'bg-blue-500') : 'bg-transparent w-0'}`}></div>
+
+                           {/* Card Body */}
+                           <div className="p-4 grid grid-cols-1 md:grid-cols-12 gap-6">
+                               
+                               {/* Product Details */}
+                               <div className="md:col-span-5 flex gap-4">
+                                   <div className="w-16 h-16 bg-gray-100 rounded-lg overflow-hidden shrink-0 border border-gray-200">
+                                       <div className="w-full h-full flex items-center justify-center text-gray-300">
+                                           <Package size={24} />
+                                       </div>
+                                   </div>
+                                   <div className="flex-1 min-w-0">
+                                       <h4 className="font-bold text-gray-800 text-sm truncate" title={order.productName}>{order.productName}</h4>
+                                       <p className="text-xs text-gray-500 font-mono bg-gray-50 inline-block px-1 rounded mt-1">{order.sku}</p>
+                                       
+                                       {isEditing ? (
+                                           <div className="mt-2 grid grid-cols-2 gap-2">
+                                               <div>
+                                                   <label className="text-[10px] text-gray-400 block">单价 (¥)</label>
+                                                   <input 
+                                                      type="number" 
+                                                      className="w-full text-xs p-1 border rounded"
+                                                      value={editForm.unitPriceCNY}
+                                                      onChange={e => setEditForm(p => ({...p, unitPriceCNY: parseFloat(e.target.value)}))}
+                                                   />
+                                               </div>
+                                               <div>
+                                                   <label className="text-[10px] text-gray-400 block">数量</label>
+                                                   <input 
+                                                      type="number" 
+                                                      className="w-full text-xs p-1 border rounded"
+                                                      value={editForm.quantity}
+                                                      onChange={e => setEditForm(p => ({...p, quantity: parseFloat(e.target.value)}))}
+                                                   />
+                                               </div>
                                            </div>
-                                           <div className={`text-[10px] text-center transition-colors ${isCompleted ? 'text-gray-600 font-medium' : 'text-gray-300'}`}>
-                                               {filterLabels[step as POStatus]}
+                                       ) : (
+                                           <div className="flex items-center gap-4 mt-2 text-sm">
+                                               <span className="font-medium text-gray-700">{order.quantity} units</span>
+                                               <span className="text-gray-400">x</span>
+                                               <span className="font-medium text-gray-700">¥{order.unitPriceCNY}</span>
+                                           </div>
+                                       )}
+                                   </div>
+                               </div>
+
+                               {/* Financials */}
+                               <div className="md:col-span-3 flex flex-col justify-center border-l md:border-l border-gray-100 pl-6">
+                                   <p className="text-xs text-gray-400 uppercase font-bold mb-1">采购总额</p>
+                                   <p className="text-xl font-bold text-gray-800">
+                                       {isEditing 
+                                          ? formatCurrency((editForm.quantity || 0) * (editForm.unitPriceCNY || 0), 'CNY')
+                                          : formatCurrency(order.totalAmountCNY, 'CNY')
+                                       }
+                                   </p>
+                                   {!isDone && !isEditing && (
+                                       <span className="text-[10px] text-orange-500 bg-orange-50 px-1.5 py-0.5 rounded w-fit mt-1">待支付/结算</span>
+                                   )}
+                               </div>
+
+                               {/* Logistics */}
+                               <div className="md:col-span-4 flex flex-col justify-center bg-gray-50 rounded-lg p-3">
+                                   {isEditing ? (
+                                       <div className="space-y-2">
+                                           <div className="flex gap-2">
+                                               <select 
+                                                  className="text-xs p-1 border rounded flex-1"
+                                                  value={editForm.shippingMethod || 'Air'}
+                                                  onChange={e => setEditForm(p => ({...p, shippingMethod: e.target.value as any}))}
+                                               >
+                                                   <option value="Air">空运</option>
+                                                   <option value="Sea">海运</option>
+                                               </select>
+                                               <input 
+                                                  className="text-xs p-1 border rounded flex-1"
+                                                  placeholder="承运商"
+                                                  value={editForm.carrier || ''}
+                                                  onChange={e => setEditForm(p => ({...p, carrier: e.target.value}))}
+                                               />
+                                           </div>
+                                           <input 
+                                              className="text-xs p-1 border rounded w-full"
+                                              placeholder="物流单号"
+                                              value={editForm.trackingNumber || ''}
+                                              onChange={e => setEditForm(p => ({...p, trackingNumber: e.target.value}))}
+                                           />
+                                           <div className="flex gap-2 mt-2">
+                                               <button onClick={handleSaveEdit} className="flex-1 bg-blue-600 text-white text-xs py-1 rounded hover:bg-blue-700">保存</button>
+                                               <button onClick={handleCancelEdit} className="flex-1 bg-white border border-gray-300 text-gray-600 text-xs py-1 rounded hover:bg-gray-50">取消</button>
                                            </div>
                                        </div>
-                                   )
-                               })}
+                                   ) : (
+                                       <>
+                                           <div className="flex justify-between items-center mb-2">
+                                               <span className="text-xs font-bold text-gray-500">物流信息</span>
+                                               {['Shipped', 'Arrived'].includes(order.status) && order.trackingNumber && (
+                                                   <a 
+                                                       href={getTrackingLink(order.trackingNumber, order.carrier)}
+                                                       target="_blank"
+                                                       rel="noreferrer"
+                                                       className="text-[10px] text-blue-600 flex items-center gap-1 hover:underline"
+                                                   >
+                                                       查询 <ExternalLink size={10} />
+                                                   </a>
+                                               )}
+                                           </div>
+                                           {['Shipped', 'Arrived'].includes(order.status) ? (
+                                               <div className="space-y-1">
+                                                   <div className="flex items-center gap-2 text-xs text-gray-700">
+                                                       {order.shippingMethod === 'Air' ? <Plane size={12}/> : <Ship size={12}/>}
+                                                       <span className="font-medium">{order.carrier || (order.shippingMethod === 'Air' ? '空运' : '海运')}</span>
+                                                   </div>
+                                                   <div className="text-xs font-mono text-gray-500 break-all bg-white px-1.5 py-0.5 rounded border border-gray-200">
+                                                       {order.trackingNumber || '暂无单号'}
+                                                   </div>
+                                               </div>
+                                           ) : (
+                                               <div className="text-xs text-gray-400 italic py-2 text-center">
+                                                   待发货后更新
+                                               </div>
+                                           )}
+                                       </>
+                                   )}
+                               </div>
                            </div>
-                       )}
-                   </div>
-               ))
+
+                           {/* Timeline Footer (Visual Delight) */}
+                           {!isDone && !isEditing && (
+                               <div className="px-4 pb-4">
+                                   <div className="flex items-center gap-1 h-1.5 w-full bg-gray-100 rounded-full overflow-hidden">
+                                       {['Draft', 'Ordered', 'Production', 'Shipped', 'Arrived'].map((step, i) => {
+                                           const flow = ['Draft', 'Ordered', 'Production', 'Shipped', 'Arrived'];
+                                           const currentIdx = flow.indexOf(order.status);
+                                           const active = i <= currentIdx;
+                                           return (
+                                               <div 
+                                                  key={step} 
+                                                  className={`h-full flex-1 transition-all duration-500 ${active ? 'bg-blue-500' : 'bg-transparent'}`} 
+                                                  title={step}
+                                               ></div>
+                                           );
+                                       })}
+                                   </div>
+                               </div>
+                           )}
+                       </div>
+                   );
+               })
            )}
        </div>
     </div>
