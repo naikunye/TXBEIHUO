@@ -64,9 +64,11 @@ import {
   FileText,
   Factory,
   ShoppingCart,
-  ArrowRight
+  ArrowRight,
+  Warehouse,
+  ShoppingBag
 } from 'lucide-react';
-import { ReplenishmentRecord, Store, CalculatedMetrics, PurchaseOrder, AppSettings } from './types';
+import { ReplenishmentRecord, Store, CalculatedMetrics, PurchaseOrder, AppSettings, InventoryLog } from './types';
 import { MOCK_DATA_INITIAL } from './constants';
 import { calculateMetrics, formatCurrency } from './utils/calculations';
 import { StatsCard } from './components/StatsCard';
@@ -90,6 +92,8 @@ import { ErpSyncModal } from './components/ErpSyncModal';
 import { PurchaseOrderModal } from './components/PurchaseOrderModal';
 import { PurchaseOrderManager } from './components/PurchaseOrderManager';
 import { SettingsModal } from './components/SettingsModal';
+import { InventoryWMS } from './components/InventoryWMS';
+import { OrderSyncCenter } from './components/OrderSyncCenter';
 import { ToastContainer, ToastMessage, ToastType } from './components/Toast'; 
 import { analyzeInventory, generateAdStrategy, generateSelectionStrategy, generateMarketingContent, analyzeLogisticsChannels, generateFinancialReport } from './services/geminiService';
 import { supabase, isSupabaseConfigured } from './lib/supabaseClient';
@@ -97,7 +101,7 @@ import { fetchLingxingInventory, fetchLingxingSales } from './services/lingxingS
 import { fetchMiaoshouInventory, fetchMiaoshouSales } from './services/miaoshouService';
 import { DataBackupModal } from './components/DataBackupModal'; 
 
-type ViewState = 'overview' | 'inventory' | 'analytics' | 'calculator' | 'logistics' | 'marketing' | 'purchasing';
+type ViewState = 'overview' | 'inventory' | 'analytics' | 'calculator' | 'logistics' | 'marketing' | 'purchasing' | 'wms' | 'oms';
 
 // Extended type for sorting
 type EnrichedRecord = ReplenishmentRecord & { metrics: CalculatedMetrics };
@@ -118,14 +122,14 @@ function App() {
   const [workspaceId, setWorkspaceId] = useState<string | null>(() => localStorage.getItem('tanxing_current_workspace'));
   
   const [syncStatus, setSyncStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
-  const [isCloudConfigOpen, setIsCloudConfigOpen] = useState(false); // Renamed from isSettingsOpen
+  const [isCloudConfigOpen, setIsCloudConfigOpen] = useState(false); 
 
   // --- Store Management State ---
   const [stores, setStores] = useState<Store[]>(() => safeParse('tanxing_stores', []));
   const [activeStoreId, setActiveStoreId] = useState<string>('all');
   const [isStoreManagerOpen, setIsStoreManagerOpen] = useState(false);
 
-  // --- Global Settings State (New) ---
+  // --- Global Settings State ---
   const [appSettings, setAppSettings] = useState<AppSettings>(() => safeParse('tanxing_app_settings', { 
       exchangeRate: 7.3, 
       airTiers: [{ minWeight: 0, maxWeight: 9999, price: 65 }], 
@@ -136,8 +140,11 @@ function App() {
   // --- Data State ---
   const [records, setRecords] = useState<ReplenishmentRecord[]>(() => safeParse('tanxing_records', MOCK_DATA_INITIAL));
   
-  // --- Purchase Orders State (New) ---
+  // --- Purchase Orders State ---
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>(() => safeParse('tanxing_purchase_orders', []));
+
+  // --- NEW: Inventory Logs State (WMS) ---
+  const [inventoryLogs, setInventoryLogs] = useState<InventoryLog[]>(() => safeParse('tanxing_inventory_logs', []));
 
   const [isDataLoaded, setIsDataLoaded] = useState(false);
   const [lastErpSync, setLastErpSync] = useState<Date | null>(null);
@@ -242,7 +249,6 @@ function App() {
   };
 
   const handleUpdatePO = (updatedPO: PurchaseOrder) => {
-      // Functional update to avoid stale state closure
       setPurchaseOrders(prevOrders => {
           const newList = prevOrders.map(o => o.id === updatedPO.id ? updatedPO : o);
           try { localStorage.setItem('tanxing_purchase_orders', JSON.stringify(newList)); } catch(e){}
@@ -252,7 +258,6 @@ function App() {
   };
 
   const handleDeletePO = (id: string) => {
-      // Functional update
       setPurchaseOrders(prevOrders => {
           const newList = prevOrders.filter(o => o.id !== id);
           try { localStorage.setItem('tanxing_purchase_orders', JSON.stringify(newList)); } catch(e){}
@@ -268,56 +273,96 @@ function App() {
           return newList;
       });
       addToast("采购单已创建", "success");
-      // 自动跳转到采购管理界面，查看刚生成的单据
       setCurrentView('purchasing'); 
   };
 
   const handleReceiveStockFromPO = (po: PurchaseOrder) => {
-      // 1. DIRECTLY update Purchase Order state here (atomic update)
+      // 1. Update PO
       setPurchaseOrders(prevOrders => {
           const updatedList = prevOrders.map(o => 
               o.id === po.id ? { ...o, status: 'Arrived' as const } : o
           );
-          try {
-             localStorage.setItem('tanxing_purchase_orders', JSON.stringify(updatedList));
-          } catch(e) { console.error("LS Error", e); }
+          localStorage.setItem('tanxing_purchase_orders', JSON.stringify(updatedList));
           return updatedList;
       });
 
-      // 2. DIRECTLY update Inventory state here (atomic update)
-      setRecords(prevRecords => {
-          // Robust matching
-          const recordIndex = prevRecords.findIndex(r => r.sku.trim().toLowerCase() === po.sku.trim().toLowerCase());
-          
-          if (recordIndex !== -1) {
-              const record = prevRecords[recordIndex];
-              const updatedRecord = { 
-                  ...record, 
-                  quantity: (record.quantity || 0) + (po.quantity || 0),
-              };
-              
-              const updatedRecords = [...prevRecords];
-              updatedRecords[recordIndex] = updatedRecord;
-              
-              try {
-                  localStorage.setItem('tanxing_records', JSON.stringify(updatedRecords));
-              } catch(e) { console.error("LS Error", e); }
-              
-              syncItemToCloud(updatedRecord);
-              
-              setTimeout(() => addToast(`入库成功：${po.productName} 库存 +${po.quantity}`, "success"), 0);
-              
-              return updatedRecords;
-          } else {
-              setTimeout(() => addToast(`订单已归档，但未找到 SKU: ${po.sku} 对应库存记录`, "warning"), 0);
-              return prevRecords;
-          }
+      // 2. Add to Inventory Log (New WMS Logic)
+      const newLog: InventoryLog = {
+          id: `LOG-${Date.now()}`,
+          date: new Date().toISOString(),
+          sku: po.sku,
+          warehouse: 'CN_Local', // Default receiving warehouse
+          type: 'Inbound',
+          quantityChange: po.quantity,
+          referenceId: po.poNumber,
+          note: 'PO Auto Receive'
+      };
+      
+      handleAddInventoryLog(newLog); // Reuse common handler
+
+      setTimeout(() => addToast(`入库成功：${po.productName} 库存 +${po.quantity}`, "success"), 0);
+  };
+
+  // --- NEW: Add Inventory Log (Centralized Stock Update Logic) ---
+  const handleAddInventoryLog = (log: InventoryLog) => {
+      // 1. Add Log
+      setInventoryLogs(prev => {
+          const newList = [log, ...prev];
+          localStorage.setItem('tanxing_inventory_logs', JSON.stringify(newList));
+          return newList;
       });
+
+      // 2. Update Master Record Total Quantity
+      setRecords(prev => {
+          const targetIndex = prev.findIndex(r => r.sku === log.sku);
+          if (targetIndex !== -1) {
+              const record = prev[targetIndex];
+              const newQty = (record.quantity || 0) + log.quantityChange;
+              const updatedRecord = { ...record, quantity: newQty };
+              const newList = [...prev];
+              newList[targetIndex] = updatedRecord;
+              
+              localStorage.setItem('tanxing_records', JSON.stringify(newList));
+              syncItemToCloud(updatedRecord);
+              return newList;
+          }
+          return prev;
+      });
+  };
+  
+  const handleAddBatchLogs = (logs: InventoryLog[]) => {
+      // Batch update logic for performance
+      setInventoryLogs(prev => {
+          const newList = [...logs, ...prev];
+          localStorage.setItem('tanxing_inventory_logs', JSON.stringify(newList));
+          return newList;
+      });
+
+      // Recalculate totals for affected SKUs
+      setRecords(prev => {
+          const newList = [...prev];
+          let changed = false;
+          
+          logs.forEach(log => {
+              const idx = newList.findIndex(r => r.sku === log.sku);
+              if (idx !== -1) {
+                  newList[idx] = { 
+                      ...newList[idx], 
+                      quantity: (newList[idx].quantity || 0) + log.quantityChange 
+                  };
+                  syncItemToCloud(newList[idx]);
+                  changed = true;
+              }
+          });
+          
+          if(changed) localStorage.setItem('tanxing_records', JSON.stringify(newList));
+          return changed ? newList : prev;
+      });
+      addToast(`已批量处理 ${logs.length} 条库存流水`, "success");
   };
 
   const handleAiAction = (type: string, data: any) => {
       if (type === 'create_po') {
-          // Create a new PO
           const newPO: PurchaseOrder = {
               id: Date.now().toString(),
               poNumber: `PO-AI-${Date.now().toString().slice(-4)}`,
@@ -337,13 +382,9 @@ function App() {
   // --- Derived State: Active & Deleted Records ---
   const activeRecords = useMemo(() => {
     let filtered = records.filter(r => !r.isDeleted);
-    
-    // Store Filter
     if (activeStoreId !== 'all') {
       filtered = filtered.filter(r => r.storeId === activeStoreId);
     }
-    
-    // Search
     if (searchQuery) {
         const q = searchQuery.toLowerCase();
         filtered = filtered.filter(r => 
@@ -351,8 +392,6 @@ function App() {
             r.sku.toLowerCase().includes(q)
         );
     }
-    
-    // Status Filter
     if (statusFilter !== 'All') {
         filtered = filtered.filter(r => r.status === statusFilter);
     }
@@ -369,7 +408,6 @@ function App() {
         let valA: any = a[sortConfig.key as keyof ReplenishmentRecord];
         let valB: any = b[sortConfig.key as keyof ReplenishmentRecord];
         
-        // Handle calculated fields for sorting using AppSettings
         const metricsA = calculateMetrics(a, appSettings);
         const metricsB = calculateMetrics(b, appSettings);
 
@@ -398,7 +436,6 @@ function App() {
   }, [activeRecords, sortConfig, appSettings]);
 
   // --- Handlers ---
-  
   const handleAddStore = (newStore: Omit<Store, 'id'>) => {
     const store: Store = { ...newStore, id: Date.now().toString() };
     const updated = [...stores, store];
@@ -450,17 +487,13 @@ function App() {
         );
         setRecords(updatedRecords);
         localStorage.setItem('tanxing_records', JSON.stringify(updatedRecords));
-        
-        // Remove from selection if exists
         if (selectedIds.has(deleteConfirm.id)) {
             const newSet = new Set(selectedIds);
             newSet.delete(deleteConfirm.id);
             setSelectedIds(newSet);
         }
-
         const record = updatedRecords.find(r => r.id === deleteConfirm.id);
         if (record) await syncItemToCloud(record);
-        
         addToast("已移入回收站", "info");
         setDeleteConfirm({ isOpen: false, id: null });
     }
@@ -492,7 +525,6 @@ function App() {
       addToast("ERP 数据同步成功", "success");
   };
 
-  // --- Selection Handlers ---
   const toggleSelection = (id: string) => {
       const newSet = new Set(selectedIds);
       if (newSet.has(id)) newSet.delete(id);
@@ -508,7 +540,6 @@ function App() {
       }
   };
 
-  // --- AI Actions Wrappers ---
   const runAiTask = async (taskName: string, taskFunction: () => Promise<string>) => {
       if (activeRecords.length === 0) {
           addToast("没有可分析的数据", "warning");
@@ -534,7 +565,7 @@ function App() {
   const handleFinancialReport = () => runAiTask("供应链财务损益分析", () => generateFinancialReport(activeRecords));
   
   const handleMarketingGenerate = async (record: ReplenishmentRecord) => {
-      setMarketingRecord(record); // Pass the full record
+      setMarketingRecord(record); 
       setMarketingContent(null);
       setMarketingModalOpen(true);
       const content = await generateMarketingContent(record);
@@ -604,10 +635,13 @@ function App() {
               return <CalculatorTool />;
           case 'logistics':
               return <LogisticsTools />;
+          case 'wms':
+              return <InventoryWMS records={records} logs={inventoryLogs} onAddLog={handleAddInventoryLog} />;
+          case 'oms':
+              return <OrderSyncCenter records={records} onAddLogs={handleAddBatchLogs} />;
           case 'purchasing':
               return (
                 <div className="flex flex-col gap-4">
-                    {/* Guidance Button for Empty State */}
                     {purchaseOrders.length === 0 && (
                         <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 flex items-center justify-between mb-2">
                             <div className="flex items-center gap-3">
@@ -637,16 +671,13 @@ function App() {
               );
           case 'inventory':
           default:
-              // Pagination Logic
               const startIndex = (currentPage - 1) * itemsPerPage;
               const paginatedRecords = sortedRecords.slice(startIndex, startIndex + itemsPerPage);
 
               return (
                 <div className="space-y-4 animate-fade-in pb-20">
-                    
-                    {/* Top Toolbar (Search, Header Buttons) - Restoring Screenshot Look */}
+                    {/* Top Toolbar */}
                     <div className="flex flex-col xl:flex-row gap-4 justify-between items-start xl:items-center bg-white p-4 rounded-xl shadow-sm border border-gray-100">
-                        {/* Search */}
                         <div className="relative group w-full xl:w-96">
                              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 group-focus-within:text-blue-500 transition-colors" size={18} />
                              <input 
@@ -657,8 +688,6 @@ function App() {
                                 className="pl-10 pr-4 py-2.5 bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 w-full transition-all text-sm"
                              />
                         </div>
-
-                        {/* Filter */}
                         <div className="flex items-center gap-3 w-full xl:w-auto justify-end">
                              <div className="flex items-center gap-2 bg-gray-50 px-3 py-2 rounded-lg border border-gray-200">
                                  <Filter size={14} className="text-gray-500"/>
@@ -677,7 +706,7 @@ function App() {
                         </div>
                     </div>
 
-                    {/* AI Analysis Result Area */}
+                    {/* AI Analysis Result */}
                     {aiAnalysis && (
                         <div className="bg-white p-6 rounded-2xl shadow-lg border border-indigo-100 relative overflow-hidden animate-slide-up">
                             <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500"></div>
@@ -688,17 +717,12 @@ function App() {
                                 </h3>
                                 <button onClick={() => setAiAnalysis(null)} className="text-gray-400 hover:text-gray-600"><X size={20}/></button>
                             </div>
-                            <div 
-                                className="prose max-w-none text-sm"
-                                dangerouslySetInnerHTML={{ __html: aiAnalysis }} 
-                            />
+                            <div className="prose max-w-none text-sm" dangerouslySetInnerHTML={{ __html: aiAnalysis }} />
                         </div>
                     )}
 
-                    {/* Main Table Container */}
+                    {/* Table Container */}
                     <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-                        
-                        {/* Table Toolbar (Matches Screenshot) */}
                         <div className="px-6 py-4 border-b border-gray-100 flex flex-col md:flex-row justify-between items-center gap-4 bg-gray-50/50">
                             <div className="flex items-center gap-3">
                                 <div className="flex items-center gap-2 text-sm font-bold text-gray-700">
@@ -711,7 +735,6 @@ function App() {
                                     Auto: ON
                                 </div>
                             </div>
-                            
                             <div className="flex items-center gap-2">
                                 <button onClick={() => setIsErpSyncOpen(true)} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-blue-200 text-blue-600 rounded-lg text-xs font-bold hover:bg-blue-50 transition-colors shadow-sm">
                                     <RefreshCw size={12} /> ERP 同步
@@ -725,7 +748,6 @@ function App() {
                             </div>
                         </div>
 
-                        {/* Table */}
                         <div className="overflow-x-auto">
                             <table className="w-full text-left">
                                 <thead className="bg-gray-50 border-b border-gray-200">
@@ -768,7 +790,6 @@ function App() {
                                             const metrics = calculateMetrics(record, appSettings);
                                             const totalInvestment = (record.quantity * record.unitPriceCNY) + metrics.firstLegCostCNY;
                                             
-                                            // Lifecycle Badge Logic
                                             let lifecycleClass = 'bg-gray-100 text-gray-500';
                                             let lifecycleIcon = null;
                                             if (record.lifecycle === 'New') { lifecycleClass = 'bg-blue-50 text-blue-600 border-blue-100'; lifecycleIcon = '🌱 新品'; }
@@ -776,7 +797,6 @@ function App() {
                                             else if (record.lifecycle === 'Stable') { lifecycleClass = 'bg-indigo-50 text-indigo-600 border-indigo-100'; lifecycleIcon = '⚖️ 稳定'; }
                                             else if (record.lifecycle === 'Clearance') { lifecycleClass = 'bg-red-50 text-red-600 border-red-100'; lifecycleIcon = '📉 清仓'; }
 
-                                            // Stock Status Logic
                                             const isUrgent = metrics.daysOfSupply < 15;
                                             const isRecommended = metrics.daysOfSupply >= 15 && metrics.daysOfSupply < 30;
                                             const isSelected = selectedIds.has(record.id);
@@ -788,7 +808,6 @@ function App() {
                                                             {isSelected ? <CheckSquare size={18} className="text-blue-600" /> : <Square size={18} />}
                                                         </button>
                                                     </td>
-                                                    {/* SKU & Status */}
                                                     <td className="p-4 pl-0 align-top">
                                                         <div className="flex flex-col gap-2">
                                                             <div className="flex items-center gap-2 font-bold text-gray-800 text-sm">
@@ -809,8 +828,6 @@ function App() {
                                                             </div>
                                                         </div>
                                                     </td>
-
-                                                    {/* Product Info & Supplier (Updated) */}
                                                     <td className="p-4 align-top">
                                                         <div className="flex items-start gap-3">
                                                             <div 
@@ -822,7 +839,6 @@ function App() {
                                                             <div>
                                                                 <div className="text-sm font-medium text-gray-800 line-clamp-1 max-w-[150px]" title={record.productName}>{record.productName}</div>
                                                                 <div className="text-[10px] text-gray-400 font-mono mt-0.5">{record.date}</div>
-                                                                {/* Feature 3: Supplier Visible */}
                                                                 {record.supplierName && (
                                                                     <div className="flex items-center gap-1 text-[10px] text-gray-500 mt-1 bg-gray-100 px-1.5 py-0.5 rounded w-fit">
                                                                         <Factory size={10} />
@@ -832,8 +848,6 @@ function App() {
                                                             </div>
                                                         </div>
                                                     </td>
-
-                                                    {/* Logistics & Tracking (Updated) */}
                                                     <td className="p-4 align-top">
                                                         <div className="flex items-center gap-1 text-xs font-bold text-gray-600 mb-1">
                                                             {record.shippingMethod === 'Air' ? <Plane size={12} className="text-blue-500"/> : <Ship size={12} className="text-indigo-500"/>}
@@ -844,7 +858,6 @@ function App() {
                                                         <div className="text-[10px] text-gray-500">
                                                             {record.totalCartons}箱 | {metrics.totalWeightKg.toFixed(1)}kg
                                                         </div>
-                                                        {/* Feature 4: Tracking Link Visible */}
                                                         {record.status === 'Shipped' && record.trackingNumber && (
                                                             <div className="mt-1">
                                                                 <a 
@@ -859,8 +872,6 @@ function App() {
                                                             </div>
                                                         )}
                                                     </td>
-
-                                                    {/* Financials */}
                                                     <td className="p-4 align-top">
                                                         <div className="font-bold text-sm text-slate-800">
                                                             {formatCurrency(totalInvestment, 'CNY')}
@@ -876,8 +887,6 @@ function App() {
                                                             </div>
                                                         </div>
                                                     </td>
-
-                                                    {/* Stock */}
                                                     <td className="p-4 align-top">
                                                         <div className="flex items-center gap-3">
                                                             <div className="text-lg font-bold text-gray-800">{record.quantity} <span className="text-xs font-normal text-gray-400">pcs</span></div>
@@ -892,7 +901,6 @@ function App() {
                                                             {isUrgent && <span className="text-[10px] font-bold text-red-500 bg-red-50 px-1 rounded">急需补货</span>}
                                                             {isRecommended && <span className="text-[10px] font-bold text-orange-500 bg-orange-50 px-1 rounded">建议备货</span>}
                                                         </div>
-                                                        {/* Simple Progress bar for stock */}
                                                         {record.dailySales > 0 && (
                                                             <div className="w-full bg-gray-100 h-1 rounded-full mt-1.5 max-w-[100px]">
                                                                 <div 
@@ -902,8 +910,6 @@ function App() {
                                                             </div>
                                                         )}
                                                     </td>
-
-                                                    {/* Sales */}
                                                     <td className="p-4 align-top">
                                                         <div className="font-bold text-sm text-gray-800">${record.salesPriceUSD}</div>
                                                         <div className="text-[10px] font-bold text-green-600 mt-1 flex items-center gap-1">
@@ -914,11 +920,8 @@ function App() {
                                                             毛利: ${metrics.estimatedProfitUSD.toFixed(2)}
                                                         </div>
                                                     </td>
-
-                                                    {/* Actions (Updated) */}
                                                     <td className="p-4 pr-6 align-top text-right">
                                                         <div className="flex items-center justify-end gap-2">
-                                                            {/* Explicit Purchase Button */}
                                                             <button 
                                                                 onClick={() => { setPORecord(record); setIsPOModalOpen(true); }}
                                                                 className="px-3 py-1.5 bg-orange-100 text-orange-700 border border-orange-200 rounded-lg hover:bg-orange-200 hover:border-orange-300 transition-all flex items-center gap-1.5 text-xs font-bold shadow-sm"
@@ -927,21 +930,12 @@ function App() {
                                                                 <FileText size={14} />
                                                                 采购
                                                             </button>
-
                                                             <button 
                                                                 onClick={() => { setEditingRecord(record); setIsModalOpen(true); }}
                                                                 className="p-1.5 bg-purple-50 text-purple-600 rounded-lg hover:bg-purple-100 transition-colors"
-                                                                title="编辑详情 / 竞品分析"
+                                                                title="编辑详情"
                                                             >
                                                                 <Edit size={14} />
-                                                            </button>
-                                                            
-                                                            <button 
-                                                                onClick={() => { setLabelRecord(record); setIsLabelModalOpen(true); }}
-                                                                className="p-1.5 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors"
-                                                                title="打印箱唛"
-                                                            >
-                                                                <Printer size={14} />
                                                             </button>
                                                             <button 
                                                                 onClick={() => { setDistributeSourceRecord(record); setIsDistributeModalOpen(true); }}
@@ -966,7 +960,6 @@ function App() {
                                 </tbody>
                             </table>
                         </div>
-                        {/* Pagination */}
                         <div className="p-4 border-t border-gray-200 bg-white flex justify-between items-center">
                              <span className="text-xs text-gray-400">显示 1 到 {Math.min(activeRecords.length, itemsPerPage)} 条，共 {activeRecords.length} 条</span>
                              <div className="flex gap-2">
@@ -981,7 +974,6 @@ function App() {
       }
   };
 
-  // Only rendering the specific changed parts for Sidebar button
   return (
     <div className="flex h-screen bg-gray-50 font-sans overflow-hidden">
       <aside className="w-64 bg-slate-900 text-white flex-shrink-0 hidden md:flex flex-col">
@@ -1029,19 +1021,21 @@ function App() {
 
         <div className="px-4 py-2 border-t border-slate-800 mt-2"></div>
         <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
-          <div className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">主菜单</div>
+          <div className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">核心业务</div>
           <button onClick={() => setCurrentView('overview')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${currentView === 'overview' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><Home size={20} /><span className="font-medium">系统总览</span></button>
           <button onClick={() => setCurrentView('inventory')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${currentView === 'inventory' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><List size={20} /><span className="font-medium">备货清单</span></button>
-          <button onClick={() => setCurrentView('purchasing')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${currentView === 'purchasing' ? 'bg-orange-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><ShoppingCart size={20} /><span className="font-medium">采购管理</span></button>
-          <button onClick={() => setCurrentView('analytics')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${currentView === 'analytics' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><PieChart size={20} /><span className="font-medium">数据分析</span></button>
           
-          <div className="px-4 py-2 mt-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">AI 赋能中心</div>
+          <div className="px-4 py-2 mt-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">供应链管理</div>
+          <button onClick={() => setCurrentView('purchasing')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${currentView === 'purchasing' ? 'bg-orange-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><ShoppingCart size={20} /><span className="font-medium">采购管理 (PO)</span></button>
+          <button onClick={() => setCurrentView('wms')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${currentView === 'wms' ? 'bg-purple-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><Warehouse size={20} /><span className="font-medium">库存中心 (WMS)</span></button>
+          <button onClick={() => setCurrentView('oms')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${currentView === 'oms' ? 'bg-pink-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><ShoppingBag size={20} /><span className="font-medium">订单同步 (OMS)</span></button>
+
+          <div className="px-4 py-2 mt-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">运营与工具</div>
+          <button onClick={() => setCurrentView('analytics')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${currentView === 'analytics' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><PieChart size={20} /><span className="font-medium">数据分析</span></button>
           <button onClick={() => setCurrentView('marketing')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all group ${currentView === 'marketing' ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><Sparkles size={20} className={currentView === 'marketing' ? 'text-yellow-300' : 'group-hover:text-purple-400'} /><span className="font-medium">AI 营销中心</span></button>
           
-          <div className="px-4 py-2 mt-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">实用工具</div>
           <button onClick={() => setCurrentView('calculator')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${currentView === 'calculator' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><Calculator size={20} /><span className="font-medium">智能试算</span></button>
           <button onClick={() => setCurrentView('logistics')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${currentView === 'logistics' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><Search size={20} /><span className="font-medium">物流查询</span></button>
-          <button onClick={() => setIsBackupModalOpen(true)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all text-slate-400 hover:bg-slate-800 hover:text-white group`}><Database size={20} className="group-hover:text-blue-400" /><span className="font-medium">数据备份</span></button>
           
           <button 
             onClick={() => setIsRecycleBinOpen(true)} 
@@ -1092,44 +1086,33 @@ function App() {
                   {currentView === 'overview' ? '系统总览' : 
                    currentView === 'inventory' ? '备货清单' :
                    currentView === 'purchasing' ? '采购管理 (ERP)' :
+                   currentView === 'wms' ? '库存中心 (WMS)' :
+                   currentView === 'oms' ? '订单同步 (OMS)' :
                    currentView === 'analytics' ? '数据分析' :
                    currentView === 'marketing' ? 'AI 营销中心' :
                    currentView === 'calculator' ? '智能试算' :
                    currentView === 'logistics' ? '物流查询' : '系统总览'}
                 </h2>
                 <p className="text-sm text-gray-500 mt-1">
-                    {currentView === 'inventory' ? '管理所有 SKU 的补货计划与状态' : '智能化供应链管理'}
+                    {currentView === 'wms' ? '多仓库库存流水与调拨管理' : 
+                     currentView === 'oms' ? '集成 TikTok Shop / Amazon 订单自动拉取' :
+                     '智能化供应链管理'}
                 </p>
               </div>
               
-              {/* Feature Buttons from Screenshot */}
+              {/* Feature Buttons from Screenshot (Only show on inventory list) */}
               {currentView === 'inventory' && (
                   <div className="flex items-center gap-2 overflow-x-auto pb-1 md:pb-0">
                      <div className="px-3 py-1.5 bg-emerald-50 text-emerald-600 rounded-lg text-xs font-bold flex items-center gap-2 border border-emerald-100 whitespace-nowrap">
                          <Wifi size={12} className="animate-pulse"/> 工作区: 001 
                          <span className="w-1.5 h-1.5 rounded-full bg-green-500"></span>
                      </div>
-                     
                      <button onClick={handleFinancialReport} className="flex items-center gap-1.5 bg-slate-100 text-slate-700 px-3 py-2 rounded-lg text-xs font-bold hover:bg-slate-200 transition-colors border border-slate-200 whitespace-nowrap">
                          <DollarSign size={14} /> 财务损益分析
                      </button>
-
-                     <button onClick={handleLogisticsAnalysis} className="flex items-center gap-1.5 bg-cyan-50 text-cyan-700 px-3 py-2 rounded-lg text-xs font-bold hover:bg-cyan-100 transition-colors border border-cyan-100 whitespace-nowrap">
-                         <Box size={14} /> 物流渠道分析
-                     </button>
-                     
-                     <button onClick={handleTikTokStrategy} className="flex items-center gap-1.5 bg-pink-50 text-pink-700 px-3 py-2 rounded-lg text-xs font-bold hover:bg-pink-100 transition-colors border border-pink-100 whitespace-nowrap">
-                         <Megaphone size={14} /> TikTok 投放建议
-                     </button>
-                     
-                     <button onClick={handleSelectionStrategy} className="flex items-center gap-1.5 bg-orange-50 text-orange-700 px-3 py-2 rounded-lg text-xs font-bold hover:bg-orange-100 transition-colors border border-orange-100 whitespace-nowrap">
-                         <Compass size={14} /> 美区选品策略
-                     </button>
-                     
                      <button onClick={handleSmartAnalysis} className="flex items-center gap-1.5 bg-purple-50 text-purple-700 px-3 py-2 rounded-lg text-xs font-bold hover:bg-purple-100 transition-colors border border-purple-100 whitespace-nowrap">
                          {isAnalyzing ? <Loader2 className="animate-spin" size={14}/> : <BrainCircuit size={14} />} 智能诊断
                      </button>
-
                      <button onClick={() => { setEditingRecord(null); setIsModalOpen(true); }} className="flex items-center gap-1.5 bg-blue-600 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-blue-700 transition shadow-lg shadow-blue-200 whitespace-nowrap ml-2">
                          <Plus size={16} /> 添加产品
                      </button>
@@ -1146,29 +1129,16 @@ function App() {
       {/* Modals */}
       <CloudConnect isOpen={isCloudConfigOpen} onClose={() => setIsCloudConfigOpen(false)} currentWorkspaceId={workspaceId} onConnect={setWorkspaceId} onDisconnect={() => setWorkspaceId(null)} isSyncing={syncStatus === 'connecting'} />
       <SettingsModal isOpen={isGlobalSettingsOpen} onClose={() => setIsGlobalSettingsOpen(false)} settings={appSettings} onSave={handleSaveSettings} />
-      
       <StoreManagerModal isOpen={isStoreManagerOpen} onClose={() => setIsStoreManagerOpen(false)} stores={stores} onAddStore={handleAddStore} onDeleteStore={handleDeleteStore} />
       <RecordModal isOpen={isModalOpen} onClose={closeModal} onSave={handleSaveRecord} initialData={editingRecord} stores={stores} defaultStoreId={activeStoreId} />
       <ConfirmDialog isOpen={deleteConfirm.isOpen} onClose={() => setDeleteConfirm({isOpen: false, id: null})} onConfirm={confirmSoftDelete} title="确认删除" message="您确定要将此记录移入回收站吗？您可以在7天内恢复它。" />
       <RecycleBinModal isOpen={isRecycleBinOpen} onClose={() => setIsRecycleBinOpen(false)} deletedRecords={deletedRecords} onRestore={handleRestoreRecord} onDeleteForever={handleHardDeleteRecord} />
       <LabelGeneratorModal isOpen={isLabelModalOpen} onClose={() => setIsLabelModalOpen(false)} record={labelRecord} />
-      <RestockPlanModal 
-        isOpen={isRestockPlanOpen} 
-        onClose={() => setIsRestockPlanOpen(false)} 
-        records={selectedIds.size > 0 ? activeRecords.filter(r => selectedIds.has(r.id)) : activeRecords} 
-      />
+      <RestockPlanModal isOpen={isRestockPlanOpen} onClose={() => setIsRestockPlanOpen(false)} records={selectedIds.size > 0 ? activeRecords.filter(r => selectedIds.has(r.id)) : activeRecords} />
       <ErpSyncModal isOpen={isErpSyncOpen} onClose={() => setIsErpSyncOpen(false)} records={records} onUpdateRecords={handleErpUpdate} currentStoreId={activeStoreId==='all'?undefined:activeStoreId} />
       <DataBackupModal isOpen={isBackupModalOpen} onClose={() => setIsBackupModalOpen(false)} records={records} onImportData={(data) => { setRecords(data); localStorage.setItem('tanxing_records', JSON.stringify(data)); }} />
       <PurchaseOrderModal isOpen={isPOModalOpen} onClose={() => setIsPOModalOpen(false)} record={poRecord} onCreateOrder={handleCreatePO} />
-
-      <DistributeModal 
-        isOpen={isDistributeModalOpen} 
-        onClose={() => setIsDistributeModalOpen(false)} 
-        sourceRecord={distributeSourceRecord} 
-        stores={stores} 
-        onConfirm={handleDistributeConfirm} 
-      />
-      
+      <DistributeModal isOpen={isDistributeModalOpen} onClose={() => setIsDistributeModalOpen(false)} sourceRecord={distributeSourceRecord} stores={stores} onConfirm={handleDistributeConfirm} />
       <CommandPalette isOpen={isCommandPaletteOpen} onClose={() => setIsCommandPaletteOpen(false)} records={activeRecords} onNavigate={(v) => setCurrentView(v)} onOpenRecord={(r) => { setEditingRecord(r); setIsModalOpen(true); }} onAction={()=>{}} />
       <AiChatModal isOpen={isAiChatOpen} onClose={() => setIsAiChatOpen(false)} records={activeRecords} onAction={handleAiAction} />
       <MarketingModal isOpen={marketingModalOpen} onClose={() => setMarketingModalOpen(false)} content={marketingContent} productName={marketingRecord?.productName || ''} record={marketingRecord} />

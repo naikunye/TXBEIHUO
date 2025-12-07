@@ -44,6 +44,41 @@ export interface PurchaseOrder {
   notes?: string;
 }
 
+// --- NEW: WMS Inventory Log (Enterprise) ---
+export type WarehouseType = 'CN_Local' | 'US_West' | 'US_East' | 'FBA_US' | 'Transit';
+export type TransactionType = 'Inbound' | 'Outbound' | 'Transfer' | 'Adjustment' | 'Sales';
+
+export interface InventoryLog {
+  id: string;
+  date: string;
+  sku: string;
+  warehouse: WarehouseType;
+  type: TransactionType;
+  quantityChange: number; // Can be positive or negative
+  balanceAfter?: number; // Snapshot of balance
+  referenceId?: string; // PO Number or Order ID
+  note?: string;
+}
+
+// --- NEW: OMS External Order (Enterprise) ---
+export interface ExternalOrder {
+  id: string;
+  platformOrderId: string;
+  platform: 'TikTok' | 'Amazon' | 'Shopify';
+  orderDate: string;
+  orderStatus: 'Unfulfilled' | 'Fulfilled' | 'Cancelled';
+  customerName: string;
+  items: {
+    sku: string;
+    productName: string;
+    quantity: number;
+    price: number;
+  }[];
+  totalAmount: number;
+  currency: string;
+  shippingAddress?: string;
+}
+
 // Core data model matching your business logic
 export interface ReplenishmentRecord {
   id: string;
@@ -57,7 +92,7 @@ export interface ReplenishmentRecord {
   lifecycle: LifecycleStatus;
   
   // Base Product Data
-  quantity: number;
+  quantity: number; // This acts as Total Stock across all warehouses
   dailySales: number; 
   unitPriceCNY: number; 
   unitWeightKg: number; 
@@ -110,7 +145,7 @@ export interface ReplenishmentRecord {
   returnRate: number; 
 
   // Warehouse Info
-  warehouse: string;
+  warehouse: string; // Legacy string field
   status: 'Planning' | 'Shipped' | 'Arrived';
 
   // Trash Bin Logic
