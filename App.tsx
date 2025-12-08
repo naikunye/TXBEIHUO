@@ -68,7 +68,8 @@ import {
   ArrowUpRight,
   Warehouse,
   ShoppingBag,
-  Wallet // New Icon for Finance
+  Wallet,
+  Sliders // New Icon
 } from 'lucide-react';
 import { ReplenishmentRecord, Store, CalculatedMetrics, PurchaseOrder, AppSettings, InventoryLog, FinanceTransaction } from './types';
 import { MOCK_DATA_INITIAL } from './constants';
@@ -95,7 +96,7 @@ import { PurchaseOrderModal } from './components/PurchaseOrderModal';
 import { PurchaseOrderManager } from './components/PurchaseOrderManager';
 import { SettingsModal } from './components/SettingsModal';
 import { InventoryWMS } from './components/InventoryWMS';
-import { FinanceCenter } from './components/FinanceCenter'; // NEW IMPORT
+import { FinanceCenter } from './components/FinanceCenter'; 
 import { ToastContainer, ToastMessage, ToastType } from './components/Toast'; 
 import { analyzeInventory, generateAdStrategy, generateSelectionStrategy, generateMarketingContent, analyzeLogisticsChannels, generateFinancialReport } from './services/geminiService';
 import { supabase, isSupabaseConfigured } from './lib/supabaseClient';
@@ -774,18 +775,18 @@ function App() {
                     {/* Top Toolbar */}
                     <div className="glass-panel p-2 rounded-2xl shadow-sm flex flex-col xl:flex-row gap-4 justify-between items-start xl:items-center">
                         <div className="relative group w-full xl:w-96">
-                             <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-500 transition-colors" size={20} />
+                             <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-slate-500 group-focus-within:text-indigo-600 transition-colors" size={20} />
                              <input 
                                 type="text" 
                                 placeholder="搜索产品名称或 SKU..." 
                                 value={searchQuery}
                                 onChange={(e) => setSearchQuery(e.target.value)}
-                                className="pl-12 pr-4 py-3 bg-transparent w-full text-sm font-medium text-slate-700 placeholder-slate-400 focus:outline-none"
+                                className="pl-12 pr-4 py-3 bg-transparent w-full text-sm font-bold text-slate-800 placeholder-slate-400 focus:outline-none"
                              />
                         </div>
                         <div className="flex items-center gap-2 w-full xl:w-auto justify-end p-2">
-                             <div className="flex items-center gap-2 bg-white/50 px-4 py-2 rounded-xl border border-white/50 backdrop-blur-sm">
-                                 <Filter size={16} className="text-slate-500"/>
+                             <div className="flex items-center gap-2 bg-white/60 px-4 py-2 rounded-xl border border-white/60 backdrop-blur-sm shadow-sm">
+                                 <Filter size={16} className="text-slate-600"/>
                                  <select 
                                     value={statusFilter}
                                     onChange={(e) => setStatusFilter(e.target.value as any)}
@@ -802,41 +803,41 @@ function App() {
 
                     {/* AI Analysis Result */}
                     {aiAnalysis && (
-                        <div className="bg-white/80 backdrop-blur-md p-6 rounded-2xl shadow-xl border border-white/20 relative overflow-hidden animate-slide-up ring-1 ring-purple-100">
+                        <div className="bg-white/80 backdrop-blur-md p-6 rounded-2xl shadow-glass border border-white/40 relative overflow-hidden animate-slide-up ring-1 ring-purple-200">
                             <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500"></div>
                             <div className="flex justify-between items-center mb-4">
                                 <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-                                    <Sparkles className="text-purple-500 fill-purple-100" size={20} />
+                                    <Sparkles className="text-purple-600 fill-purple-100" size={20} />
                                     {analysisTitle}
                                 </h3>
-                                <button onClick={() => setAiAnalysis(null)} className="p-2 hover:bg-gray-100 rounded-full transition-colors"><X size={20} className="text-gray-400"/></button>
+                                <button onClick={() => setAiAnalysis(null)} className="p-2 hover:bg-gray-100 rounded-full transition-colors"><X size={20} className="text-gray-500"/></button>
                             </div>
-                            <div className="prose prose-sm max-w-none text-gray-600 leading-relaxed" dangerouslySetInnerHTML={{ __html: aiAnalysis }} />
+                            <div className="prose prose-sm max-w-none text-slate-700 leading-relaxed font-medium" dangerouslySetInnerHTML={{ __html: aiAnalysis }} />
                         </div>
                     )}
 
                     {/* Table Container */}
-                    <div className="bg-white/80 backdrop-blur-xl rounded-3xl shadow-sm border border-white/50 overflow-hidden">
-                        <div className="px-6 py-5 border-b border-slate-100 flex flex-col md:flex-row justify-between items-center gap-4 bg-white/40">
+                    <div className="glass-panel rounded-3xl shadow-glass border border-white/60 overflow-hidden">
+                        <div className="px-6 py-5 border-b border-slate-200/60 flex flex-col md:flex-row justify-between items-center gap-4 bg-white/40">
                             <div className="flex items-center gap-4">
                                 <div className="flex items-center gap-2 text-sm font-bold text-slate-800">
-                                    <List size={18} className="text-indigo-500"/>
+                                    <List size={18} className="text-indigo-600"/>
                                     库存清单
-                                    <span className="bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full text-xs border border-indigo-100">{activeRecords.length}</span>
+                                    <span className="bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full text-xs border border-indigo-200">{activeRecords.length}</span>
                                 </div>
-                                <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[10px] font-bold tracking-wide uppercase ${syncStatus === 'connected' ? 'bg-emerald-50/50 text-emerald-600 border-emerald-200' : 'bg-gray-100 text-gray-500 border-gray-200'}`}>
+                                <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[10px] font-bold tracking-wide uppercase ${syncStatus === 'connected' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-100 text-slate-600 border-slate-200'}`}>
                                     {syncStatus === 'connected' ? <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div> : <WifiOff size={10} />}
                                     {syncStatus === 'connected' ? 'Live Sync' : 'Offline'}
                                 </div>
                             </div>
                             <div className="flex items-center gap-2">
-                                <button onClick={() => setIsErpSyncOpen(true)} className="group flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 text-slate-600 rounded-xl text-xs font-bold hover:border-blue-300 hover:text-blue-600 transition-all shadow-sm">
-                                    <RefreshCw size={14} className="group-hover:rotate-180 transition-transform duration-500" /> ERP 同步
+                                <button onClick={() => setIsErpSyncOpen(true)} className="group flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 text-slate-700 rounded-xl text-xs font-bold hover:border-blue-300 hover:text-blue-700 transition-all shadow-sm">
+                                    <RefreshCw size={14} className="group-hover:rotate-180 transition-transform duration-500 text-slate-500 group-hover:text-blue-600" /> ERP 同步
                                 </button>
                                 <button onClick={() => setIsRestockPlanOpen(true)} className="flex items-center gap-2 px-4 py-2 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-slate-800 transition-all shadow-lg hover:shadow-xl active:scale-95">
                                     <CalendarClock size={14} /> {selectedIds.size > 0 ? `补货 (${selectedIds.size})` : '智能补货'}
                                 </button>
-                                <button onClick={() => setIsBackupModalOpen(true)} className="p-2 bg-white border border-slate-200 text-slate-500 rounded-xl hover:bg-slate-50 transition-colors" title="导出数据">
+                                <button onClick={() => setIsBackupModalOpen(true)} className="p-2 bg-white border border-slate-200 text-slate-600 rounded-xl hover:bg-slate-50 transition-colors" title="导出数据">
                                     <Download size={16} />
                                 </button>
                             </div>
@@ -844,10 +845,10 @@ function App() {
 
                         <div className="overflow-x-auto">
                             <table className="w-full text-left">
-                                <thead className="bg-slate-50/50 border-b border-slate-200 text-xs text-slate-500 font-semibold uppercase tracking-wider">
+                                <thead className="bg-slate-50/50 border-b border-slate-200 text-xs text-slate-500 font-bold uppercase tracking-wider">
                                     <tr>
                                         <th className="p-5 pl-6 w-12">
-                                            <button onClick={toggleSelectAll} className="flex items-center text-slate-400 hover:text-indigo-500 transition-colors">
+                                            <button onClick={toggleSelectAll} className="flex items-center text-slate-400 hover:text-indigo-600 transition-colors">
                                                 {selectedIds.size > 0 && selectedIds.size === activeRecords.length ? <CheckSquare size={20} className="text-indigo-600" /> : <Square size={20} />}
                                             </button>
                                         </th>
@@ -873,10 +874,10 @@ function App() {
                                         <tr>
                                             <td colSpan={8} className="p-16 text-center text-slate-400">
                                                 <div className="flex flex-col items-center">
-                                                    <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mb-4">
+                                                    <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mb-4">
                                                         <Package size={32} className="opacity-40" />
                                                     </div>
-                                                    <p className="font-medium text-slate-500">暂无符合条件的记录</p>
+                                                    <p className="font-bold text-slate-600">暂无符合条件的记录</p>
                                                     <button onClick={() => { setEditingRecord(null); setIsModalOpen(true); }} className="mt-4 text-indigo-600 font-bold text-sm hover:underline">
                                                         + 立即添加产品
                                                     </button>
@@ -888,12 +889,12 @@ function App() {
                                             const metrics = calculateMetrics(record, appSettings);
                                             const totalInvestment = (record.quantity * record.unitPriceCNY) + metrics.firstLegCostCNY;
                                             
-                                            let lifecycleClass = 'bg-slate-100 text-slate-500 border-slate-200';
+                                            let lifecycleClass = 'bg-slate-100 text-slate-600 border-slate-200';
                                             let lifecycleIcon = null;
-                                            if (record.lifecycle === 'New') { lifecycleClass = 'bg-blue-50 text-blue-600 border-blue-100'; lifecycleIcon = '🌱 新品'; }
-                                            else if (record.lifecycle === 'Growth') { lifecycleClass = 'bg-emerald-50 text-emerald-600 border-emerald-100'; lifecycleIcon = '🚀 爆品'; }
-                                            else if (record.lifecycle === 'Stable') { lifecycleClass = 'bg-indigo-50 text-indigo-600 border-indigo-100'; lifecycleIcon = '⚖️ 稳定'; }
-                                            else if (record.lifecycle === 'Clearance') { lifecycleClass = 'bg-red-50 text-red-600 border-red-100'; lifecycleIcon = '📉 清仓'; }
+                                            if (record.lifecycle === 'New') { lifecycleClass = 'bg-blue-50 text-blue-700 border-blue-200'; lifecycleIcon = '🌱 新品'; }
+                                            else if (record.lifecycle === 'Growth') { lifecycleClass = 'bg-emerald-50 text-emerald-700 border-emerald-200'; lifecycleIcon = '🚀 爆品'; }
+                                            else if (record.lifecycle === 'Stable') { lifecycleClass = 'bg-indigo-50 text-indigo-700 border-indigo-200'; lifecycleIcon = '⚖️ 稳定'; }
+                                            else if (record.lifecycle === 'Clearance') { lifecycleClass = 'bg-red-50 text-red-700 border-red-200'; lifecycleIcon = '📉 清仓'; }
 
                                             const isUrgent = metrics.daysOfSupply < 15;
                                             const isRecommended = metrics.daysOfSupply >= 15 && metrics.daysOfSupply < 30;
@@ -902,13 +903,13 @@ function App() {
                                             return (
                                                 <tr key={record.id} className={`group hover:bg-slate-50/80 transition-colors ${isSelected ? 'bg-indigo-50/40' : ''}`}>
                                                     <td className="p-5 pl-6 align-top">
-                                                        <button onClick={() => toggleSelection(record.id)} className="text-slate-300 hover:text-indigo-500 pt-1 transition-colors">
+                                                        <button onClick={() => toggleSelection(record.id)} className="text-slate-400 hover:text-indigo-600 pt-1 transition-colors">
                                                             {isSelected ? <CheckSquare size={20} className="text-indigo-600" /> : <Square size={20} />}
                                                         </button>
                                                     </td>
                                                     <td className="p-5 pl-0 align-top">
                                                         <div className="flex flex-col gap-2">
-                                                            <div className="flex items-center gap-2 font-bold text-slate-900 text-sm">
+                                                            <div className="flex items-center gap-2 font-black text-slate-900 text-sm">
                                                                 <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
                                                                 {record.sku}
                                                             </div>
@@ -917,9 +918,9 @@ function App() {
                                                                     {lifecycleIcon}
                                                                 </span>
                                                                 <span className={`text-[10px] px-2 py-0.5 rounded border font-bold shadow-sm ${
-                                                                    record.status === 'Planning' ? 'bg-yellow-50 text-yellow-700 border-yellow-200' :
-                                                                    record.status === 'Shipped' ? 'bg-sky-50 text-sky-700 border-sky-200' :
-                                                                    'bg-green-50 text-green-700 border-green-200'
+                                                                    record.status === 'Planning' ? 'bg-yellow-50 text-yellow-800 border-yellow-200' :
+                                                                    record.status === 'Shipped' ? 'bg-sky-50 text-sky-800 border-sky-200' :
+                                                                    'bg-green-50 text-green-800 border-green-200'
                                                                 }`}>
                                                                     {record.status === 'Planning' ? '计划中' : record.status === 'Shipped' ? '运输中' : '已入库'}
                                                                 </span>
@@ -929,17 +930,17 @@ function App() {
                                                     <td className="p-5 align-top">
                                                         <div className="flex items-start gap-4">
                                                             <div 
-                                                                className="w-12 h-12 rounded-xl bg-slate-100 border border-slate-200 overflow-hidden flex-shrink-0 cursor-pointer hover:shadow-md transition-all"
+                                                                className="w-12 h-12 rounded-xl bg-white border border-slate-200 overflow-hidden flex-shrink-0 cursor-pointer hover:shadow-md transition-all"
                                                                 onClick={() => { setEditingRecord(record); setIsModalOpen(true); }}
                                                             >
                                                                 {record.imageUrl ? <img src={record.imageUrl} className="w-full h-full object-cover" /> : <Package className="w-full h-full p-3 text-slate-300"/>}
                                                             </div>
                                                             <div className="min-w-0">
-                                                                <div className="text-sm font-bold text-slate-800 line-clamp-1 group-hover:text-indigo-600 transition-colors" title={record.productName}>{record.productName}</div>
-                                                                <div className="text-[10px] text-slate-400 font-mono mt-1">{record.date}</div>
+                                                                <div className="text-sm font-bold text-slate-800 line-clamp-1 group-hover:text-indigo-700 transition-colors" title={record.productName}>{record.productName}</div>
+                                                                <div className="text-[10px] text-slate-500 font-mono mt-1 font-medium">{record.date}</div>
                                                                 {record.supplierName && (
-                                                                    <div className="flex items-center gap-1 text-[10px] text-slate-500 mt-1 bg-slate-100 px-1.5 py-0.5 rounded w-fit border border-slate-200">
-                                                                        <Factory size={10} />
+                                                                    <div className="flex items-center gap-1 text-[10px] text-slate-600 font-bold mt-1 bg-slate-100 px-2 py-0.5 rounded w-fit border border-slate-200">
+                                                                        <Factory size={10} className="text-slate-400"/>
                                                                         <span className="truncate max-w-[80px]">{record.supplierName}</span>
                                                                     </div>
                                                                 )}
@@ -948,14 +949,14 @@ function App() {
                                                     </td>
                                                     <td className="p-5 align-top">
                                                         <div className="flex items-center gap-1.5 text-xs font-bold mb-1">
-                                                            <div className={`p-1 rounded ${record.shippingMethod === 'Air' ? 'bg-blue-100 text-blue-600' : 'bg-indigo-100 text-indigo-600'}`}>
+                                                            <div className={`p-1 rounded ${record.shippingMethod === 'Air' ? 'bg-blue-100 text-blue-700' : 'bg-indigo-100 text-indigo-700'}`}>
                                                                 {record.shippingMethod === 'Air' ? <Plane size={12}/> : <Ship size={12}/>}
                                                             </div>
-                                                            <span className={record.shippingMethod === 'Air' ? 'text-blue-700' : 'text-indigo-700'}>
+                                                            <span className={record.shippingMethod === 'Air' ? 'text-blue-800' : 'text-indigo-800'}>
                                                                 {record.shippingMethod === 'Air' ? '空运' : '海运'}
                                                             </span>
                                                         </div>
-                                                        <div className="text-[10px] text-slate-500 font-medium pl-1">
+                                                        <div className="text-[10px] text-slate-600 font-bold pl-1">
                                                             {record.totalCartons}箱 · {metrics.totalWeightKg.toFixed(1)}kg
                                                         </div>
                                                         {record.status === 'Shipped' && record.trackingNumber && (
@@ -964,7 +965,7 @@ function App() {
                                                                     href={`https://www.17track.net/zh-cn/track?nums=${record.trackingNumber}`} 
                                                                     target="_blank" 
                                                                     rel="noopener noreferrer"
-                                                                    className="flex items-center gap-1 text-[10px] text-blue-600 hover:text-blue-800 bg-blue-50/50 px-2 py-1 rounded-lg border border-blue-100 w-fit transition-colors"
+                                                                    className="flex items-center gap-1 text-[10px] text-blue-700 hover:text-blue-900 bg-blue-50 px-2 py-1 rounded-lg border border-blue-200 w-fit transition-colors font-bold"
                                                                 >
                                                                     <Truck size={10} />
                                                                     {record.carrier ? `${record.carrier}: ` : ''}{record.trackingNumber.slice(0, 8)}...
@@ -973,35 +974,35 @@ function App() {
                                                         )}
                                                     </td>
                                                     <td className="p-5 align-top">
-                                                        <div className="font-bold text-sm text-slate-800">
+                                                        <div className="font-black text-sm text-slate-800">
                                                             {formatCurrency(totalInvestment, 'CNY')}
                                                         </div>
                                                         <div className="flex flex-col gap-1 mt-1.5">
-                                                            <div className="flex items-center gap-1.5 text-[10px] text-slate-500">
-                                                                <div className="w-1 h-3 rounded-full bg-blue-400"></div>
+                                                            <div className="flex items-center gap-1.5 text-[10px] text-slate-600 font-medium">
+                                                                <div className="w-1.5 h-3 rounded-full bg-blue-500"></div>
                                                                 货: {formatCurrency(record.quantity * record.unitPriceCNY, 'CNY')}
                                                             </div>
-                                                            <div className="flex items-center gap-1.5 text-[10px] text-slate-500">
-                                                                <div className="w-1 h-3 rounded-full bg-orange-400"></div>
+                                                            <div className="flex items-center gap-1.5 text-[10px] text-slate-600 font-medium">
+                                                                <div className="w-1.5 h-3 rounded-full bg-orange-500"></div>
                                                                 运: {formatCurrency(metrics.firstLegCostCNY, 'CNY')}
                                                             </div>
                                                         </div>
                                                     </td>
                                                     <td className="p-5 align-top">
                                                         <div className="flex items-center gap-2">
-                                                            <div className="text-base font-bold text-slate-900">{record.quantity}</div>
+                                                            <div className="text-base font-black text-slate-900">{record.quantity}</div>
                                                             {record.dailySales > 0 && (
-                                                                <div className="text-[10px] font-mono font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
+                                                                <div className="text-[10px] font-mono font-bold text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
                                                                     {metrics.daysOfSupply.toFixed(0)}d
                                                                 </div>
                                                             )}
                                                         </div>
                                                         <div className="flex justify-between items-center mt-1.5">
-                                                            <span className="text-[10px] text-slate-400">日销: {record.dailySales}</span>
-                                                            {isUrgent && <span className="text-[10px] font-bold text-red-600 bg-red-50 px-1.5 py-0.5 rounded flex items-center gap-1"><AlertTriangle size={8}/> 补货</span>}
+                                                            <span className="text-[10px] text-slate-500 font-bold">日销: {record.dailySales}</span>
+                                                            {isUrgent && <span className="text-[10px] font-bold text-red-700 bg-red-100 px-1.5 py-0.5 rounded flex items-center gap-1 border border-red-200"><AlertTriangle size={8}/> 补货</span>}
                                                         </div>
                                                         {record.dailySales > 0 && (
-                                                            <div className="w-20 bg-slate-100 h-1.5 rounded-full mt-2 overflow-hidden">
+                                                            <div className="w-20 bg-slate-200 h-1.5 rounded-full mt-2 overflow-hidden">
                                                                 <div 
                                                                     className={`h-full rounded-full transition-all duration-500 ${isUrgent ? 'bg-red-500' : isRecommended ? 'bg-orange-400' : 'bg-emerald-500'}`}
                                                                     style={{ width: `${Math.min(metrics.daysOfSupply, 100)}%` }}
@@ -1010,12 +1011,12 @@ function App() {
                                                         )}
                                                     </td>
                                                     <td className="p-5 align-top">
-                                                        <div className="font-bold text-sm text-slate-900">${record.salesPriceUSD}</div>
-                                                        <div className="text-[10px] font-bold text-emerald-600 mt-1 flex items-center gap-1">
+                                                        <div className="font-black text-sm text-slate-900">${record.salesPriceUSD}</div>
+                                                        <div className="text-[10px] font-bold text-emerald-700 mt-1 flex items-center gap-1">
                                                             <TrendingUp size={10} />
                                                             {metrics.marginRate.toFixed(1)}%
                                                         </div>
-                                                        <div className="text-[10px] text-slate-400 mt-0.5 font-mono">
+                                                        <div className="text-[10px] text-slate-500 mt-0.5 font-mono font-bold">
                                                             Profit: ${metrics.estimatedProfitUSD.toFixed(2)}
                                                         </div>
                                                     </td>
@@ -1023,7 +1024,7 @@ function App() {
                                                         <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
                                                             <button 
                                                                 onClick={() => { setPORecord(record); setIsPOModalOpen(true); }}
-                                                                className="p-2 bg-orange-50 text-orange-600 rounded-lg hover:bg-orange-100 transition-colors shadow-sm"
+                                                                className="p-2 bg-orange-50 text-orange-700 rounded-lg hover:bg-orange-100 transition-colors shadow-sm"
                                                                 title="采购"
                                                             >
                                                                 <ShoppingCart size={14} />
@@ -1037,7 +1038,7 @@ function App() {
                                                             </button>
                                                             <button 
                                                                 onClick={() => setDeleteConfirm({ isOpen: true, id: record.id })}
-                                                                className="p-2 bg-white border border-slate-200 text-slate-400 rounded-lg hover:bg-red-50 hover:text-red-500 hover:border-red-200 transition-colors shadow-sm"
+                                                                className="p-2 bg-white border border-slate-200 text-slate-400 rounded-lg hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors shadow-sm"
                                                                 title="删除"
                                                             >
                                                                 <Trash2 size={14} />
@@ -1051,12 +1052,12 @@ function App() {
                                 </tbody>
                             </table>
                         </div>
-                        <div className="p-4 border-t border-slate-200 bg-white/50 backdrop-blur-sm flex justify-between items-center">
-                             <span className="text-xs text-slate-400 font-medium">显示 {startIndex + 1}-{Math.min(startIndex + itemsPerPage, activeRecords.length)} / 共 {activeRecords.length} 条</span>
+                        <div className="p-4 border-t border-slate-200 bg-white/60 backdrop-blur-sm flex justify-between items-center">
+                             <span className="text-xs text-slate-500 font-bold">显示 {startIndex + 1}-{Math.min(startIndex + itemsPerPage, activeRecords.length)} / 共 {activeRecords.length} 条</span>
                              <div className="flex gap-2">
-                                 <button disabled={currentPage === 1} onClick={() => setCurrentPage(c => c - 1)} className="w-8 h-8 flex items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-50 transition-all"><ChevronLeft size={14}/></button>
-                                 <div className="flex items-center justify-center px-3 h-8 rounded-lg bg-slate-900 text-white font-bold text-xs shadow-md">{currentPage}</div>
-                                 <button disabled={currentPage * itemsPerPage >= activeRecords.length} onClick={() => setCurrentPage(c => c + 1)} className="w-8 h-8 flex items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-50 transition-all"><ChevronRight size={14}/></button>
+                                 <button disabled={currentPage === 1} onClick={() => setCurrentPage(c => c - 1)} className="w-8 h-8 flex items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-50 transition-all shadow-sm"><ChevronLeft size={14}/></button>
+                                 <div className="flex items-center justify-center px-3 h-8 rounded-lg bg-slate-800 text-white font-bold text-xs shadow-md">{currentPage}</div>
+                                 <button disabled={currentPage * itemsPerPage >= activeRecords.length} onClick={() => setCurrentPage(c => c + 1)} className="w-8 h-8 flex items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-50 transition-all shadow-sm"><ChevronRight size={14}/></button>
                              </div>
                         </div>
                     </div>
@@ -1066,16 +1067,16 @@ function App() {
   };
 
   return (
-    <div className="flex h-screen bg-aurora font-sans overflow-hidden text-slate-800">
+    <div className="flex h-screen bg-aurora font-sans overflow-hidden text-slate-900">
       <aside className="w-72 glass-sidebar text-white flex-shrink-0 hidden md:flex flex-col z-50 shadow-2xl">
         {/* Sidebar Header */}
         <div className="p-6 flex items-center gap-3 border-b border-white/5 bg-slate-950/50">
-           <div className="bg-gradient-to-br from-blue-600 to-indigo-600 p-2.5 rounded-xl shadow-lg shadow-blue-900/50 ring-1 ring-white/10">
+           <div className="bg-gradient-to-br from-indigo-500 to-blue-600 p-2.5 rounded-xl shadow-lg shadow-indigo-500/30 ring-1 ring-white/10">
                <LayoutDashboard className="text-white h-5 w-5" />
            </div>
            <div>
-               <h1 className="font-bold text-lg tracking-tight leading-none text-white">Tanxing ERP</h1>
-               <p className="text-[10px] text-slate-400 mt-1 font-medium tracking-wide opacity-80 uppercase">Intelligent Supply Chain</p>
+               <h1 className="font-black text-lg tracking-tight leading-none text-white">Tanxing ERP</h1>
+               <p className="text-[10px] text-slate-400 mt-1.5 font-bold tracking-wider opacity-80 uppercase">Intelligent Supply Chain</p>
            </div>
         </div>
         
@@ -1083,40 +1084,40 @@ function App() {
         <div className="px-4 pt-6">
             <button 
                 onClick={() => setIsCommandPaletteOpen(true)}
-                className="w-full bg-white/5 border border-white/5 text-slate-300 hover:bg-white/10 hover:text-white rounded-xl p-3 flex items-center justify-between transition-all group backdrop-blur-sm shadow-inner"
+                className="w-full bg-white/5 border border-white/10 text-slate-300 hover:bg-white/10 hover:text-white rounded-xl p-3 flex items-center justify-between transition-all group backdrop-blur-sm shadow-inner"
             >
                 <div className="flex items-center gap-3">
                     <Search size={16} className="text-slate-400 group-hover:text-white transition-colors" />
-                    <span className="text-xs font-medium">全局搜索 (⌘K)</span>
+                    <span className="text-xs font-bold">全局搜索 (⌘K)</span>
                 </div>
-                <div className="flex items-center gap-1 bg-black/30 rounded px-1.5 py-0.5 border border-white/5">
+                <div className="flex items-center gap-1 bg-black/40 rounded px-1.5 py-0.5 border border-white/10">
                     <Command size={10} />
-                    <span className="text-[10px]">K</span>
+                    <span className="text-[10px] font-bold">K</span>
                 </div>
             </button>
         </div>
 
         <div className="px-4 pt-4 pb-2">
            <div className="relative">
-             <div className="bg-gradient-to-r from-slate-800 to-slate-900 rounded-xl p-3 flex items-center justify-between cursor-pointer hover:from-slate-700 hover:to-slate-800 transition-all border border-white/5 shadow-lg group" onClick={() => setIsStoreManagerOpen(true)}>
+             <div className="bg-gradient-to-r from-slate-800 to-slate-900 rounded-xl p-3 flex items-center justify-between cursor-pointer hover:from-slate-700 hover:to-slate-800 transition-all border border-white/10 shadow-lg group" onClick={() => setIsStoreManagerOpen(true)}>
                 <div className="flex items-center gap-3 overflow-hidden">
-                    <div className="p-1.5 bg-indigo-500/20 rounded-lg text-indigo-300 group-hover:text-indigo-200 transition-colors">
+                    <div className="p-1.5 bg-indigo-500/20 rounded-lg text-indigo-300 group-hover:text-indigo-200 transition-colors border border-indigo-500/30">
                         <StoreIcon size={16} />
                     </div>
                     <span className="text-sm font-bold truncate text-slate-200 group-hover:text-white">店铺矩阵</span>
                 </div>
-                <div className="bg-white/10 text-[10px] px-2 py-0.5 rounded-full font-bold text-slate-300">{stores.length}</div>
+                <div className="bg-white/10 text-[10px] px-2 py-0.5 rounded-full font-bold text-slate-300 border border-white/5">{stores.length}</div>
              </div>
              
              <div className="mt-3 space-y-1">
-                 <button onClick={() => setActiveStoreId('all')} className={`w-full text-left px-3 py-2 rounded-lg text-xs font-medium transition-all flex items-center justify-between group ${activeStoreId === 'all' ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50 border border-blue-500/50' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}>
+                 <button onClick={() => setActiveStoreId('all')} className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-between group ${activeStoreId === 'all' ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50 border border-blue-500/50' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}>
                      <span>全盘数据 (All Stores)</span>
                      {activeStoreId === 'all' && <div className="w-1.5 h-1.5 rounded-full bg-white animate-pulse"></div>}
                  </button>
                  {stores.map(store => (
-                     <button key={store.id} onClick={() => setActiveStoreId(store.id)} className={`w-full text-left px-3 py-2 rounded-lg text-xs font-medium transition-all flex items-center justify-between group ${activeStoreId === store.id ? 'bg-white/10 text-white border border-white/5 shadow-sm' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}>
+                     <button key={store.id} onClick={() => setActiveStoreId(store.id)} className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-between group ${activeStoreId === store.id ? 'bg-white/10 text-white border border-white/10 shadow-sm' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}>
                         <div className="flex items-center gap-2">
-                            <span className={`w-2 h-2 rounded-full ${store.color} shadow-[0_0_8px_rgba(255,255,255,0.3)]`}></span>
+                            <span className={`w-2 h-2 rounded-full ${store.color} shadow-[0_0_8px_rgba(255,255,255,0.4)]`}></span>
                             <span className="truncate max-w-[120px] group-hover:translate-x-1 transition-transform">{store.name}</span>
                         </div>
                      </button>
@@ -1132,13 +1133,13 @@ function App() {
         <nav className="flex-1 px-4 space-y-6 overflow-y-auto custom-scrollbar py-2">
           
           <div>
-              <div className="px-2 mb-2 text-[10px] font-bold text-slate-500 uppercase tracking-widest">Core Business</div>
+              <div className="px-2 mb-2 text-[10px] font-black text-slate-500 uppercase tracking-widest">Core Business</div>
               <div className="space-y-1">
-                  <button onClick={() => setCurrentView('overview')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all group ${currentView === 'overview' ? 'bg-white/10 text-white shadow-lg border border-white/5 font-bold backdrop-blur-md' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}>
+                  <button onClick={() => setCurrentView('overview')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all group ${currentView === 'overview' ? 'bg-white/10 text-white shadow-lg border border-white/10 font-bold backdrop-blur-md' : 'text-slate-400 hover:bg-white/5 hover:text-white font-medium'}`}>
                       <Home size={18} className={currentView === 'overview' ? 'text-blue-400' : 'group-hover:text-slate-200'} />
                       <span>系统总览 Dashboard</span>
                   </button>
-                  <button onClick={() => setCurrentView('inventory')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all group ${currentView === 'inventory' ? 'bg-white/10 text-white shadow-lg border border-white/5 font-bold backdrop-blur-md' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}>
+                  <button onClick={() => setCurrentView('inventory')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all group ${currentView === 'inventory' ? 'bg-white/10 text-white shadow-lg border border-white/10 font-bold backdrop-blur-md' : 'text-slate-400 hover:bg-white/5 hover:text-white font-medium'}`}>
                       <List size={18} className={currentView === 'inventory' ? 'text-blue-400' : 'group-hover:text-slate-200'} />
                       <span>备货清单 Inventory</span>
                   </button>
@@ -1146,17 +1147,17 @@ function App() {
           </div>
           
           <div>
-              <div className="px-2 mb-2 text-[10px] font-bold text-slate-500 uppercase tracking-widest">Supply Chain</div>
+              <div className="px-2 mb-2 text-[10px] font-black text-slate-500 uppercase tracking-widest">Supply Chain</div>
               <div className="space-y-1">
-                  <button onClick={() => setCurrentView('purchasing')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all group ${currentView === 'purchasing' ? 'bg-white/10 text-white shadow-lg border border-white/5 font-bold backdrop-blur-md' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}>
+                  <button onClick={() => setCurrentView('purchasing')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all group ${currentView === 'purchasing' ? 'bg-white/10 text-white shadow-lg border border-white/10 font-bold backdrop-blur-md' : 'text-slate-400 hover:bg-white/5 hover:text-white font-medium'}`}>
                       <ShoppingCart size={18} className={currentView === 'purchasing' ? 'text-orange-400' : 'group-hover:text-slate-200'} />
                       <span>采购管理 PO</span>
                   </button>
-                  <button onClick={() => setCurrentView('wms')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all group ${currentView === 'wms' ? 'bg-white/10 text-white shadow-lg border border-white/5 font-bold backdrop-blur-md' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}>
+                  <button onClick={() => setCurrentView('wms')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all group ${currentView === 'wms' ? 'bg-white/10 text-white shadow-lg border border-white/10 font-bold backdrop-blur-md' : 'text-slate-400 hover:bg-white/5 hover:text-white font-medium'}`}>
                       <Warehouse size={18} className={currentView === 'wms' ? 'text-purple-400' : 'group-hover:text-slate-200'} />
                       <span>库存中心 WMS</span>
                   </button>
-                  <button onClick={() => setCurrentView('logistics')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all group ${currentView === 'logistics' ? 'bg-white/10 text-white shadow-lg border border-white/5 font-bold backdrop-blur-md' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}>
+                  <button onClick={() => setCurrentView('logistics')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all group ${currentView === 'logistics' ? 'bg-white/10 text-white shadow-lg border border-white/10 font-bold backdrop-blur-md' : 'text-slate-400 hover:bg-white/5 hover:text-white font-medium'}`}>
                       <Search size={18} className={currentView === 'logistics' ? 'text-blue-400' : 'group-hover:text-slate-200'} />
                       <span>物流追踪 Tracker</span>
                   </button>
@@ -1164,23 +1165,23 @@ function App() {
           </div>
 
           <div>
-              <div className="px-2 mb-2 text-[10px] font-bold text-slate-500 uppercase tracking-widest">Growth & Finance</div>
+              <div className="px-2 mb-2 text-[10px] font-black text-slate-500 uppercase tracking-widest">Growth & Finance</div>
               <div className="space-y-1">
-                  <button onClick={() => setCurrentView('finance')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all group ${currentView === 'finance' ? 'bg-white/10 text-white shadow-lg border border-white/5 font-bold backdrop-blur-md' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}>
+                  <button onClick={() => setCurrentView('finance')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all group ${currentView === 'finance' ? 'bg-white/10 text-white shadow-lg border border-white/10 font-bold backdrop-blur-md' : 'text-slate-400 hover:bg-white/5 hover:text-white font-medium'}`}>
                       <Wallet size={18} className={currentView === 'finance' ? 'text-emerald-400' : 'group-hover:text-slate-200'} />
                       <span>财务中心 Finance</span>
                   </button>
-                  <button onClick={() => setCurrentView('analytics')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all group ${currentView === 'analytics' ? 'bg-white/10 text-white shadow-lg border border-white/5 font-bold backdrop-blur-md' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}>
+                  <button onClick={() => setCurrentView('analytics')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all group ${currentView === 'analytics' ? 'bg-white/10 text-white shadow-lg border border-white/10 font-bold backdrop-blur-md' : 'text-slate-400 hover:bg-white/5 hover:text-white font-medium'}`}>
                       <PieChart size={18} className={currentView === 'analytics' ? 'text-blue-400' : 'group-hover:text-slate-200'} />
                       <span>数据分析 Analytics</span>
                   </button>
-                  <button onClick={() => setCurrentView('marketing')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all group relative overflow-hidden ${currentView === 'marketing' ? 'text-white font-bold' : 'text-slate-400 hover:text-white'}`}>
-                      {currentView === 'marketing' && <div className="absolute inset-0 bg-gradient-to-r from-indigo-600 to-purple-600 opacity-80 backdrop-blur-md border border-white/10"></div>}
+                  <button onClick={() => setCurrentView('marketing')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all group relative overflow-hidden ${currentView === 'marketing' ? 'text-white font-bold shadow-lg border border-purple-500/50' : 'text-slate-400 hover:text-white font-medium'}`}>
+                      {currentView === 'marketing' && <div className="absolute inset-0 bg-gradient-to-r from-indigo-600 to-purple-600 opacity-90 backdrop-blur-md"></div>}
                       {currentView !== 'marketing' && <div className="absolute inset-0 bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity rounded-xl"></div>}
                       <Sparkles size={18} className={`relative z-10 ${currentView === 'marketing' ? 'text-yellow-300' : 'group-hover:text-purple-400'}`} />
                       <span className="relative z-10">AI 营销中心</span>
                   </button>
-                  <button onClick={() => setCurrentView('calculator')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all group ${currentView === 'calculator' ? 'bg-white/10 text-white shadow-lg border border-white/5 font-bold backdrop-blur-md' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}>
+                  <button onClick={() => setCurrentView('calculator')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all group ${currentView === 'calculator' ? 'bg-white/10 text-white shadow-lg border border-white/10 font-bold backdrop-blur-md' : 'text-slate-400 hover:bg-white/5 hover:text-white font-medium'}`}>
                       <Calculator size={18} className={currentView === 'calculator' ? 'text-blue-400' : 'group-hover:text-slate-200'} />
                       <span>智能试算 Tools</span>
                   </button>
@@ -1193,16 +1194,16 @@ function App() {
             <div className="flex gap-2 mb-4">
                 <button onClick={() => setIsGlobalSettingsOpen(true)} className="flex-1 flex flex-col items-center justify-center p-2 rounded-lg bg-white/5 hover:bg-white/10 transition-colors gap-1 group border border-white/5">
                     <Settings size={16} className="text-slate-400 group-hover:text-white"/>
-                    <span className="text-[9px] text-slate-500 group-hover:text-slate-300">Setting</span>
+                    <span className="text-[9px] text-slate-500 group-hover:text-slate-300 font-bold">Setting</span>
                 </button>
-                <button onClick={() => setIsCloudConfigOpen(true)} className={`flex-1 flex flex-col items-center justify-center p-2 rounded-lg transition-colors gap-1 group border border-white/5 ${isCloudConfigOpen ? 'bg-blue-600 text-white' : 'bg-white/5 hover:bg-white/10'}`}>
+                <button onClick={() => setIsCloudConfigOpen(true)} className={`flex-1 flex flex-col items-center justify-center p-2 rounded-lg transition-colors gap-1 group border border-white/5 ${isCloudConfigOpen ? 'bg-blue-600 text-white shadow-lg' : 'bg-white/5 hover:bg-white/10'}`}>
                     <CloudUpload size={16} className={isCloudConfigOpen ? 'text-white' : 'text-slate-400 group-hover:text-white'}/>
-                    <span className={`text-[9px] ${isCloudConfigOpen ? 'text-blue-100' : 'text-slate-500 group-hover:text-slate-300'}`}>Cloud</span>
+                    <span className={`text-[9px] font-bold ${isCloudConfigOpen ? 'text-blue-100' : 'text-slate-500 group-hover:text-slate-300'}`}>Cloud</span>
                 </button>
                 <button onClick={() => setIsRecycleBinOpen(true)} className="flex-1 flex flex-col items-center justify-center p-2 rounded-lg bg-white/5 hover:bg-red-500/20 transition-colors gap-1 group relative border border-white/5">
                     <Trash2 size={16} className="text-slate-400 group-hover:text-red-400"/>
-                    <span className="text-[9px] text-slate-500 group-hover:text-red-300">Bin</span>
-                    {deletedRecords.length > 0 && <span className="absolute top-1 right-1 w-1.5 h-1.5 bg-red-500 rounded-full"></span>}
+                    <span className="text-[9px] text-slate-500 group-hover:text-red-300 font-bold">Bin</span>
+                    {deletedRecords.length > 0 && <span className="absolute top-1 right-1 w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse"></span>}
                 </button>
             </div>
 
@@ -1211,7 +1212,7 @@ function App() {
                 <div className="bg-white/20 p-1.5 rounded-lg backdrop-blur-md"><Bot className="text-white h-4 w-4" /></div>
                 <div>
                     <span className="text-xs font-bold text-white block">AI Copilot</span>
-                    <span className="text-[10px] text-purple-200 block opacity-80">点击唤起助手</span>
+                    <span className="text-[10px] text-purple-200 block opacity-90 font-medium">点击唤起助手</span>
                 </div>
                 <ArrowUpRight size={14} className="ml-auto text-white/50" />
             </div>
@@ -1220,15 +1221,15 @@ function App() {
       
       {/* Main Content */}
       <div className="flex-1 flex flex-col h-screen overflow-hidden relative">
-        <header className="bg-white/80 backdrop-blur-md border-b border-gray-200 p-4 flex justify-between items-center md:hidden z-40 sticky top-0 shadow-sm"><div className="font-bold text-gray-800">探行跨境ERP</div><button className="text-gray-500"><Menu /></button></header>
+        <header className="bg-white/80 backdrop-blur-md border-b border-gray-200 p-4 flex justify-between items-center md:hidden z-40 sticky top-0 shadow-sm"><div className="font-bold text-gray-900">探行跨境ERP</div><button className="text-gray-600"><Menu /></button></header>
         <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 relative custom-scrollbar">
           <ToastContainer toasts={toasts} removeToast={removeToast} />
           
           <div className="max-w-[1920px] w-full mx-auto pb-20">
-             {/* Dynamic Page Header with Subtle Blur Background */}
+             {/* Dynamic Page Header */}
              <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-8 animate-fade-in sticky top-0 z-30 py-4 -my-4 px-2 -mx-2 bg-white/0 backdrop-blur-0 transition-all duration-300">
               <div>
-                <h2 className="text-3xl font-extrabold text-slate-900 flex items-center gap-3 tracking-tight">
+                <h2 className="text-3xl font-black text-slate-900 flex items-center gap-3 tracking-tight">
                   {currentView === 'overview' ? '系统总览' : 
                    currentView === 'inventory' ? '备货清单' :
                    currentView === 'purchasing' ? '采购管理' :
@@ -1239,11 +1240,11 @@ function App() {
                    currentView === 'calculator' ? '智能试算' :
                    currentView === 'logistics' ? '物流查询' : '系统总览'}
                    
-                   <span className="text-xs font-bold text-indigo-600 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-full hidden lg:block tracking-wide">
+                   <span className="text-xs font-extrabold text-indigo-600 bg-indigo-50 border border-indigo-100 px-2.5 py-0.5 rounded-full hidden lg:block tracking-wide shadow-sm">
                        v5.0 Pro
                    </span>
                 </h2>
-                <p className="text-sm text-slate-500 mt-1 font-medium">
+                <p className="text-sm text-slate-500 mt-1 font-bold">
                     {currentView === 'finance' ? '企业经营收支与利润全景分析' : 
                      currentView === 'wms' ? '多仓库库存流水与智能调拨管理' : 
                      currentView === 'inventory' ? '全渠道 SKU 备货与生命周期管理' :
@@ -1254,12 +1255,12 @@ function App() {
               {/* Context Actions */}
               {currentView === 'inventory' && (
                   <div className="flex items-center gap-3 overflow-x-auto pb-1 md:pb-0">
-                     <div className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 border whitespace-nowrap transition-all backdrop-blur-sm ${syncStatus === 'connected' ? 'bg-emerald-50/80 text-emerald-700 border-emerald-200' : 'bg-white/80 text-slate-500 border-slate-200'}`}>
+                     <div className={`px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 border whitespace-nowrap transition-all shadow-sm backdrop-blur-md ${syncStatus === 'connected' ? 'bg-emerald-50/90 text-emerald-700 border-emerald-200' : 'bg-white/90 text-slate-600 border-slate-200'}`}>
                          <div className={`w-2 h-2 rounded-full ${syncStatus === 'connected' ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`}></div>
                          {syncStatus === 'connected' ? '实时同步中' : '离线模式'}
                      </div>
                      <button onClick={handleFinancialReport} className="flex items-center gap-2 bg-white text-slate-700 px-4 py-2.5 rounded-xl text-xs font-bold hover:bg-slate-50 transition-all border border-slate-200 shadow-sm hover:shadow active:scale-95 whitespace-nowrap">
-                         <DollarSign size={14} className="text-slate-400"/> 财务分析
+                         <DollarSign size={14} className="text-slate-500"/> 财务分析
                      </button>
                      <button onClick={handleSmartAnalysis} className="flex items-center gap-2 bg-white text-purple-700 px-4 py-2.5 rounded-xl text-xs font-bold hover:bg-purple-50 transition-all border border-purple-100 shadow-sm hover:shadow-purple-100 active:scale-95 whitespace-nowrap group">
                          {isAnalyzing ? <Loader2 className="animate-spin text-purple-600" size={14}/> : <BrainCircuit size={14} className="text-purple-500 group-hover:text-purple-700"/>} 智能诊断
