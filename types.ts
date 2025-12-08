@@ -80,7 +80,22 @@ export interface ExternalOrder {
 }
 
 // --- NEW: Finance & Accounting ---
-export type FinanceCategory = 'Revenue' | 'COGS' | 'Logistics' | 'Marketing' | 'Rent' | 'Salary' | 'Software' | 'Other';
+// Updated to support specific requested categories + arbitrary strings
+export type FinanceCategory = 
+  | 'Revenue' 
+  | 'Deposit' 
+  | 'COGS' 
+  | 'ProductPurchase'
+  | 'Logistics' 
+  | 'TikTokAds'
+  | 'Marketing' 
+  | 'Rent' 
+  | 'Salary' 
+  | 'Software' 
+  | 'Withdrawal'
+  | 'Other' 
+  | string;
+
 export type FinanceType = 'Income' | 'Expense';
 
 export interface FinanceTransaction {
@@ -98,7 +113,8 @@ export interface FinanceTransaction {
 // Core data model matching your business logic
 export interface ReplenishmentRecord {
   id: string;
-  storeId?: string; 
+  storeId?: string; // Deprecated: keeping for backward compatibility
+  storeIds?: string[]; // New: Multiple stores per SKU
   date: string;
   productName: string;
   sku: string;

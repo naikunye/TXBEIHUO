@@ -26,7 +26,12 @@ import {
   Activity,
   Loader2,
   Target,
-  Bot
+  Bot,
+  Megaphone,
+  ShoppingBag,
+  ArrowRightLeft,
+  Banknote,
+  Download
 } from 'lucide-react';
 
 interface FinanceCenterProps {
@@ -39,16 +44,26 @@ interface FinanceCenterProps {
 
 const CATEGORY_LABELS: Record<string, string> = {
     'Revenue': '营业收入',
-    'COGS': '采购成本',
+    'Deposit': '到账金额',
+    'COGS': '销售成本(COGS)',
+    'ProductPurchase': '产品采购费',
     'Logistics': '物流运费',
+    'TikTokAds': 'TikTok广告费',
     'Marketing': '营销推广',
     'Rent': '房租水电',
     'Salary': '人力成本',
     'Software': '软件服务',
-    'Other': '其他杂项'
+    'Withdrawal': '提现金额',
+    'Other': '其他杂项',
+    'Custom': '手动录入'
 };
 
-const MANUAL_CATEGORIES: FinanceCategory[] = ['Revenue', 'Marketing', 'Logistics', 'Rent', 'Salary', 'Software', 'Other'];
+const MANUAL_CATEGORIES: string[] = [
+    'Revenue', 'Deposit', 
+    'ProductPurchase', 'TikTokAds', 'Logistics', 
+    'Marketing', 'Rent', 'Salary', 
+    'Software', 'Withdrawal', 'Other'
+];
 
 export const FinanceCenter: React.FC<FinanceCenterProps> = ({ 
   transactions, 
@@ -71,6 +86,7 @@ export const FinanceCenter: React.FC<FinanceCenterProps> = ({
       currency: 'CNY',
       date: new Date().toISOString().split('T')[0]
   });
+  const [customCategory, setCustomCategory] = useState('');
 
   // --- 1. Data Processing Engine ---
   const combinedTransactions = useMemo(() => {
@@ -81,7 +97,7 @@ export const FinanceCenter: React.FC<FinanceCenterProps> = ({
               id: `PO-${po.id}`,
               date: po.date,
               type: 'Expense',
-              category: 'COGS',
+              category: 'COGS', // Use standard COGS for P&L, but user can manually add "ProductPurchase" for cash flow
               amount: po.totalAmountCNY,
               currency: 'CNY',
               description: `采购单: ${po.poNumber} (${po.productName})`,
@@ -119,9 +135,11 @@ export const FinanceCenter: React.FC<FinanceCenterProps> = ({
               revenue += amountCNY;
           } else {
               breakdown[t.category] = (breakdown[t.category] || 0) + amountCNY;
-              if (t.category === 'COGS' || t.category === 'Logistics') {
-                  cogs += amountCNY; // Group Logistics into COGS for Gross Margin usually, or separate. Let's keep Logistics in COGS for E-commerce Gross Profit view.
-              } else {
+              // Group logic for P&L
+              if (['COGS', 'ProductPurchase', 'Logistics'].includes(t.category)) {
+                  cogs += amountCNY;
+              } else if (t.category !== 'Withdrawal') { 
+                  // Exclude Withdrawal from P&L Expenses usually (it's cash movement), but include everything else as OPEX
                   opex += amountCNY;
               }
           }
@@ -178,14 +196,69 @@ export const FinanceCenter: React.FC<FinanceCenterProps> = ({
       setIsAiAnalyzing(false);
   };
 
+  const handleExportCSV = () => {
+      const headers = ['日期', '类型', '科目', '金额', '货币', '摘要', '关联单据ID'];
+      const rows = currentMonthData.map(t => [
+          t.date,
+          t.type === 'Income' ? '收入' : '支出',
+          CATEGORY_LABELS[t.category] || t.category,
+          t.amount,
+          t.currency,
+          `"${t.description.replace(/"/g, '""')}"`, // CSV escaping
+          t.referenceId || ''
+      ]);
+      
+      const csvContent = "\uFEFF" + [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `探行财务流水_${filterMonth}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+  };
+
+  // --- New: Auto Type Selection Logic ---
+  const handleCategorySelect = (cat: string) => {
+      let newType: 'Income' | 'Expense' = form.type || 'Expense';
+      
+      // Auto-switch rules
+      if (cat === 'Revenue' || cat === 'Deposit') {
+          newType = 'Income';
+      } else if (cat !== 'Custom') {
+          // All other presets (Ads, Logistics, Purchase, etc.) are Expenses
+          newType = 'Expense';
+      }
+      // If 'Custom', keep current selection (allow manual override)
+
+      setForm(prev => ({
+          ...prev,
+          category: cat as FinanceCategory,
+          type: newType
+      }));
+      
+      if (cat !== 'Custom') {
+          setCustomCategory('');
+      }
+  };
+
   const handleAdd = (e: React.FormEvent) => {
       e.preventDefault();
-      if (!form.amount || !form.category) return;
+      
+      // Determine final category (Preset or Custom)
+      const finalCategory = form.category === 'Custom' ? customCategory.trim() : form.category;
+
+      if (!form.amount || !finalCategory) {
+          alert("请填写金额和科目");
+          return;
+      }
+      
       onAddTransaction({
           id: Date.now().toString(),
           date: form.date || new Date().toISOString().split('T')[0],
           type: form.type as 'Income' | 'Expense',
-          category: form.category as FinanceCategory,
+          category: finalCategory as FinanceCategory,
           amount: Number(form.amount),
           currency: form.currency as 'CNY' | 'USD',
           description: form.description || '',
@@ -193,15 +266,21 @@ export const FinanceCenter: React.FC<FinanceCenterProps> = ({
       });
       setIsModalOpen(false);
       setForm({ type: 'Expense', currency: 'CNY', date: new Date().toISOString().split('T')[0], amount: '' as any, description: '' });
+      setCustomCategory('');
   };
 
   const getCategoryIcon = (cat: string) => {
       switch(cat) {
           case 'Revenue': return <TrendingUp size={16} />;
+          case 'Deposit': return <Banknote size={16} />;
+          case 'ProductPurchase': return <ShoppingBag size={16} />;
           case 'COGS': return <Package size={16} />;
           case 'Logistics': return <Truck size={16} />;
+          case 'TikTokAds': return <Megaphone size={16} />;
+          case 'Marketing': return <Megaphone size={16} />;
           case 'Salary': return <Briefcase size={16} />;
           case 'Rent': return <Landmark size={16} />;
+          case 'Withdrawal': return <ArrowRightLeft size={16} />;
           default: return <CreditCard size={16} />;
       }
   };
@@ -299,6 +378,14 @@ export const FinanceCenter: React.FC<FinanceCenterProps> = ({
                     <button onClick={() => setActiveTab('Ledger')} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === 'Ledger' ? 'bg-white shadow text-slate-900' : 'text-gray-500 hover:text-gray-700'}`}>流水明细</button>
                 </div>
                 
+                <button 
+                    onClick={handleExportCSV}
+                    className="bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 p-2.5 rounded-xl shadow-sm transition-all"
+                    title="导出本月报表 (CSV)"
+                >
+                    <Download size={20} />
+                </button>
+
                 <button onClick={() => setIsModalOpen(true)} className="bg-slate-900 hover:bg-slate-800 text-white p-2.5 rounded-xl shadow-lg transition-all active:scale-95">
                     <Plus size={20} />
                 </button>
@@ -533,11 +620,24 @@ export const FinanceCenter: React.FC<FinanceCenterProps> = ({
                             <label className="block text-xs font-bold text-gray-500 mb-1">科目</label>
                             <div className="grid grid-cols-3 gap-2">
                                 {MANUAL_CATEGORIES.map(cat => (
-                                    <button key={cat} type="button" onClick={() => setForm({...form, category: cat})} className={`px-2 py-2 rounded-lg text-xs font-medium border transition-colors ${form.category === cat ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>
+                                    <button key={cat} type="button" onClick={() => handleCategorySelect(cat)} className={`px-2 py-2 rounded-lg text-[10px] font-medium border transition-colors ${form.category === cat ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>
                                         {CATEGORY_LABELS[cat] || cat}
                                     </button>
                                 ))}
+                                <button type="button" onClick={() => handleCategorySelect('Custom')} className={`px-2 py-2 rounded-lg text-[10px] font-medium border transition-colors ${form.category === 'Custom' ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>
+                                    ✍️ 手动录入
+                                </button>
                             </div>
+                            {form.category === 'Custom' && (
+                                <input 
+                                    type="text" 
+                                    placeholder="请输入科目名称 (如: 办公室零食)"
+                                    className="w-full mt-2 p-2.5 rounded-lg border bg-blue-50 text-blue-900 text-sm font-bold placeholder-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                                    value={customCategory}
+                                    onChange={e => setCustomCategory(e.target.value)}
+                                    autoFocus
+                                />
+                            )}
                         </div>
                         <div>
                             <label className="block text-xs font-bold text-gray-500 mb-1">备注</label>

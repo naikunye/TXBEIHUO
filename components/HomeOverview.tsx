@@ -73,9 +73,13 @@ export const HomeOverview: React.FC<HomeOverviewProps> = ({ records, stores, onN
         roi: m.roi
       });
 
-      // Aggregate for Store Profit Chart (if storeId exists)
-      const sId = r.storeId || 'unknown';
-      storeProfitMap[sId] = (storeProfitMap[sId] || 0) + itemTotalProfit;
+      // Aggregate for Store Profit Chart
+      // Support multiple storeIds
+      const ids = r.storeIds && r.storeIds.length > 0 ? r.storeIds : (r.storeId ? [r.storeId] : ['unknown']);
+      
+      ids.forEach(sId => {
+          storeProfitMap[sId] = (storeProfitMap[sId] || 0) + itemTotalProfit;
+      });
     });
 
     // Sort Top Products

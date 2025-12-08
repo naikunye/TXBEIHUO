@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { ReplenishmentRecord, Store } from '../types';
-import { X, Upload, Image as ImageIcon, Plane, Ship, RefreshCcw, Package, Box, Percent, Zap, BarChart, Tag, Calculator, DollarSign, RotateCcw, Scale, Store as StoreIcon, Clock, ShieldCheck, Factory, Swords, Truck } from 'lucide-react';
+import { X, Upload, Image as ImageIcon, Plane, Ship, RefreshCcw, Package, Box, Percent, Zap, BarChart, Tag, Calculator, DollarSign, RotateCcw, Scale, Store as StoreIcon, Clock, ShieldCheck, Factory, Swords, Truck, ChevronDown, Check } from 'lucide-react';
 import { EXCHANGE_RATE } from '../constants';
 import { analyzeCompetitor } from '../services/geminiService';
 
@@ -17,7 +17,7 @@ interface RecordModalProps {
 export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSave, initialData, stores, defaultStoreId }) => {
   const defaultForm = {
     date: new Date().toISOString().split('T')[0],
-    storeId: defaultStoreId && defaultStoreId !== 'all' ? defaultStoreId : '', // Default to current view or empty
+    storeIds: [] as string[],
     productName: '',
     sku: '',
     lifecycle: 'New' as const, // Default
@@ -73,41 +73,82 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [competitorAnalysis, setCompetitorAnalysis] = useState<string | null>(null);
   const [isAnalyzingCompetitor, setIsAnalyzingCompetitor] = useState(false);
+  
+  // Store Selector State
+  const [isStoreDropdownOpen, setIsStoreDropdownOpen] = useState(false);
+  const storeDropdownRef = useRef<HTMLDivElement>(null);
 
   // Effect to populate form when modal opens or initialData changes
   useEffect(() => {
     if (isOpen) {
       if (initialData) {
         // Destructure to remove id and status, keep the rest for the form
-        const { id, status, ...rest } = initialData;
+        const { id, status, storeId, storeIds, ...rest } = initialData;
+        
+        // Migrate legacy storeId to storeIds if needed
+        let initStoreIds = storeIds || [];
+        if (initStoreIds.length === 0 && storeId) {
+            initStoreIds = [storeId];
+        }
+
         setFormData({
             ...defaultForm, // Ensure new fields have defaults if old data is loaded
-            ...rest
+            ...rest,
+            storeIds: initStoreIds
         });
       } else {
+        // New Record
+        const initialStoreIds = defaultStoreId && defaultStoreId !== 'all' ? [defaultStoreId] : (stores.length > 0 ? [stores[0].id] : []);
         setFormData({
             ...defaultForm,
-            storeId: defaultStoreId && defaultStoreId !== 'all' ? defaultStoreId : (stores.length > 0 ? stores[0].id : '')
+            storeIds: initialStoreIds
         });
       }
       setSkuInput(''); // Reset SKU input
       // Reset currency toggle to CNY on open
       setShippingCurrency('CNY');
       setCompetitorAnalysis(null);
+      setIsStoreDropdownOpen(false);
     }
   }, [isOpen, initialData, defaultStoreId, stores]);
+
+  // Close store dropdown when clicking outside
+  useEffect(() => {
+      const handleClickOutside = (event: MouseEvent) => {
+          if (storeDropdownRef.current && !storeDropdownRef.current.contains(event.target as Node)) {
+              setIsStoreDropdownOpen(false);
+          }
+      };
+      if(isStoreDropdownOpen) {
+          document.addEventListener('mousedown', handleClickOutside);
+      }
+      return () => {
+          document.removeEventListener('mousedown', handleClickOutside);
+      };
+  }, [isStoreDropdownOpen]);
 
   if (!isOpen) return null;
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
     // Check if field is string or number type in defaultForm to decide parsing
-    const isStringField = ['date', 'productName', 'sku', 'shippingMethod', 'warehouse', 'imageUrl', 'lifecycle', 'storeId', 'supplierName', 'supplierContact', 'competitorUrl', 'trackingNumber', 'carrier'].includes(name);
+    const isStringField = ['date', 'productName', 'sku', 'shippingMethod', 'warehouse', 'imageUrl', 'lifecycle', 'supplierName', 'supplierContact', 'competitorUrl', 'trackingNumber', 'carrier'].includes(name);
     
     setFormData(prev => ({
       ...prev,
       [name]: isStringField ? value : (parseFloat(value) || 0)
     }));
+  };
+
+  const toggleStore = (storeId: string) => {
+      setFormData(prev => {
+          const currentIds = prev.storeIds || [];
+          if (currentIds.includes(storeId)) {
+              return { ...prev, storeIds: currentIds.filter(id => id !== storeId) };
+          } else {
+              return { ...prev, storeIds: [...currentIds, storeId] };
+          }
+      });
   };
 
   // Helper to auto-calculate cartons if user wants to (Reverse)
@@ -222,7 +263,12 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
         finalCartons = Math.ceil(formData.quantity / formData.itemsPerBox);
     }
 
-    onSave({ ...formData, totalCartons: finalCartons, status });
+    onSave({ 
+        ...formData, 
+        totalCartons: finalCartons, 
+        status,
+        storeId: formData.storeIds?.[0] // Backward compatibility: keep primary storeId
+    });
     onClose();
   };
 
@@ -258,20 +304,44 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
                 <h3 className="text-base font-bold text-gray-800">产品与供应链</h3>
               </div>
               
-              {/* Store Selector Highlight */}
-              <div className="flex items-center gap-2 bg-purple-50 px-3 py-1 rounded-lg border border-purple-100">
-                 <StoreIcon size={16} className="text-purple-600"/>
-                 <select 
-                    name="storeId" 
-                    value={formData.storeId} 
-                    onChange={handleChange}
-                    className="bg-transparent text-sm font-bold text-purple-700 outline-none cursor-pointer min-w-[120px]"
-                 >
-                    <option value="">未分配店铺 (General)</option>
-                    {stores.map(s => (
-                        <option key={s.id} value={s.id}>{s.name}</option>
-                    ))}
-                 </select>
+              {/* Multi-Store Selector */}
+              <div className="relative" ref={storeDropdownRef}>
+                  <div 
+                    className="flex items-center gap-2 bg-purple-50 px-3 py-1.5 rounded-lg border border-purple-100 cursor-pointer hover:bg-purple-100 transition-colors select-none"
+                    onClick={() => setIsStoreDropdownOpen(!isStoreDropdownOpen)}
+                  >
+                     <StoreIcon size={16} className="text-purple-600"/>
+                     <span className="text-sm font-bold text-purple-700 min-w-[80px] truncate max-w-[200px]">
+                        {formData.storeIds && formData.storeIds.length > 0 
+                          ? `${formData.storeIds.length} 个店铺` 
+                          : '选择店铺'}
+                     </span>
+                     <ChevronDown size={14} className={`text-purple-400 transition-transform ${isStoreDropdownOpen ? 'rotate-180' : ''}`} />
+                  </div>
+                  
+                  {isStoreDropdownOpen && (
+                    <div className="absolute top-full right-0 mt-2 w-56 bg-white rounded-xl shadow-xl border border-gray-200 z-50 p-2 space-y-1 animate-fade-in-down">
+                       <div className="px-2 py-1 text-xs font-bold text-gray-400 uppercase">归属店铺</div>
+                       <div className="max-h-60 overflow-y-auto custom-scrollbar">
+                           {stores.map(store => {
+                             const isSelected = formData.storeIds?.includes(store.id);
+                             return (
+                               <div 
+                                 key={store.id}
+                                 onClick={() => toggleStore(store.id)}
+                                 className={`flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer text-sm font-medium transition-colors ${isSelected ? 'bg-purple-50 text-purple-700' : 'text-gray-600 hover:bg-gray-50'}`}
+                               >
+                                 <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${isSelected ? 'bg-purple-600 border-purple-600' : 'border-gray-300 bg-white'}`}>
+                                    {isSelected && <Check size={10} className="text-white" />}
+                                 </div>
+                                 <span className="truncate">{store.name}</span>
+                               </div>
+                             )
+                           })}
+                           {stores.length === 0 && <div className="text-center text-xs text-gray-400 py-2">暂无店铺</div>}
+                       </div>
+                    </div>
+                  )}
               </div>
             </div>
             

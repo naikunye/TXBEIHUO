@@ -94,7 +94,6 @@ import { PurchaseOrderModal } from './components/PurchaseOrderModal';
 import { PurchaseOrderManager } from './components/PurchaseOrderManager';
 import { SettingsModal } from './components/SettingsModal';
 import { InventoryWMS } from './components/InventoryWMS';
-import { OrderSyncCenter } from './components/OrderSyncCenter';
 import { FinanceCenter } from './components/FinanceCenter'; // NEW IMPORT
 import { ToastContainer, ToastMessage, ToastType } from './components/Toast'; 
 import { analyzeInventory, generateAdStrategy, generateSelectionStrategy, generateMarketingContent, analyzeLogisticsChannels, generateFinancialReport } from './services/geminiService';
@@ -103,7 +102,7 @@ import { fetchLingxingInventory, fetchLingxingSales } from './services/lingxingS
 import { fetchMiaoshouInventory, fetchMiaoshouSales } from './services/miaoshouService';
 import { DataBackupModal } from './components/DataBackupModal'; 
 
-type ViewState = 'overview' | 'inventory' | 'analytics' | 'calculator' | 'logistics' | 'marketing' | 'purchasing' | 'wms' | 'oms' | 'finance';
+type ViewState = 'overview' | 'inventory' | 'analytics' | 'calculator' | 'logistics' | 'marketing' | 'purchasing' | 'wms' | 'finance';
 
 // Extended type for sorting
 type EnrichedRecord = ReplenishmentRecord & { metrics: CalculatedMetrics };
@@ -406,9 +405,15 @@ function App() {
   // --- Derived State: Active & Deleted Records ---
   const activeRecords = useMemo(() => {
     let filtered = records.filter(r => !r.isDeleted);
+    
+    // Multi-store filter support
     if (activeStoreId !== 'all') {
-      filtered = filtered.filter(r => r.storeId === activeStoreId);
+      filtered = filtered.filter(r => {
+         const ids = r.storeIds || (r.storeId ? [r.storeId] : []);
+         return ids.includes(activeStoreId);
+      });
     }
+    
     if (searchQuery) {
         const q = searchQuery.toLowerCase();
         filtered = filtered.filter(r => 
@@ -608,7 +613,8 @@ function App() {
       const newRecord: ReplenishmentRecord = {
           ...distributeSourceRecord,
           id: newRecordId,
-          storeId: targetStoreId,
+          storeId: targetStoreId, // Keep for backward compat
+          storeIds: [targetStoreId], // NEW: Explicitly set single store for distributed item
           quantity: quantity,
           totalCartons: newTotalCartons,
           manualTotalWeightKg: manualWeightRatio,
@@ -661,8 +667,6 @@ function App() {
               return <LogisticsTools />;
           case 'wms':
               return <InventoryWMS records={records} logs={inventoryLogs} onAddLog={handleAddInventoryLog} />;
-          case 'oms':
-              return <OrderSyncCenter records={records} onAddLogs={handleAddBatchLogs} />;
           case 'finance':
               return (
                   <FinanceCenter 
@@ -1062,7 +1066,6 @@ function App() {
           <div className="px-4 py-2 mt-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">供应链管理</div>
           <button onClick={() => setCurrentView('purchasing')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${currentView === 'purchasing' ? 'bg-orange-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><ShoppingCart size={20} /><span className="font-medium">采购管理 (PO)</span></button>
           <button onClick={() => setCurrentView('wms')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${currentView === 'wms' ? 'bg-purple-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><Warehouse size={20} /><span className="font-medium">库存中心 (WMS)</span></button>
-          <button onClick={() => setCurrentView('oms')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${currentView === 'oms' ? 'bg-pink-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><ShoppingBag size={20} /><span className="font-medium">订单同步 (OMS)</span></button>
 
           <div className="px-4 py-2 mt-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">运营与工具</div>
           <button onClick={() => setCurrentView('finance')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${currentView === 'finance' ? 'bg-slate-700 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><Wallet size={20} /><span className="font-medium">财务中心 (Finance)</span></button>
@@ -1122,7 +1125,6 @@ function App() {
                    currentView === 'inventory' ? '备货清单' :
                    currentView === 'purchasing' ? '采购管理 (ERP)' :
                    currentView === 'wms' ? '库存中心 (WMS)' :
-                   currentView === 'oms' ? '订单同步 (OMS)' :
                    currentView === 'finance' ? '财务中心 (Finance)' :
                    currentView === 'analytics' ? '数据分析' :
                    currentView === 'marketing' ? 'AI 营销中心' :
@@ -1132,7 +1134,6 @@ function App() {
                 <p className="text-sm text-gray-500 mt-1">
                     {currentView === 'finance' ? '企业经营收支与利润分析' : 
                      currentView === 'wms' ? '多仓库库存流水与调拨管理' : 
-                     currentView === 'oms' ? '集成 TikTok Shop / Amazon 订单自动拉取' :
                      '智能化供应链管理'}
                 </p>
               </div>
