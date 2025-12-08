@@ -19,7 +19,9 @@ import {
   Search,
   DollarSign,
   BoxSelect,
-  Save
+  LayoutGrid,
+  List as ListIcon,
+  MoreHorizontal
 } from 'lucide-react';
 
 interface PurchaseOrderManagerProps {
@@ -35,6 +37,7 @@ export const PurchaseOrderManager: React.FC<PurchaseOrderManagerProps> = ({
   onDeleteOrder,
   onReceiveStock 
 }) => {
+  const [viewMode, setViewMode] = useState<'list' | 'board'>('board'); // Default to Board for "Pro" feel
   const [activeTab, setActiveTab] = useState<'All' | 'Active' | 'Completed'>('All');
   const [searchQuery, setSearchQuery] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -111,14 +114,9 @@ export const PurchaseOrderManager: React.FC<PurchaseOrderManagerProps> = ({
           newStatus = 'PartiallyArrived';
       }
 
-      // 1. Trigger Inventory Update (Callback) with the *current batch qty*
-      // We pass a modified object just for the event logic, or handle inside parent.
-      // The parent `onReceiveStock` expects a PO object to derive qty.
-      // We'll create a temporary object representing THIS shipment.
       const shipmentDelta = { ...order, quantity: receiveQty, status: newStatus };
       onReceiveStock(shipmentDelta);
 
-      // 2. Update the Actual Order Record
       onUpdateOrder({ 
           ...order, 
           receivedQuantity: newTotalReceived,
@@ -158,15 +156,17 @@ export const PurchaseOrderManager: React.FC<PurchaseOrderManagerProps> = ({
   };
 
   // --- Constants ---
-  const statusConfig: Record<POStatus, { label: string, color: string, bg: string, icon: any }> = {
-      'Draft': { label: '草稿', color: 'text-gray-600', bg: 'bg-gray-100', icon: FileText },
-      'Ordered': { label: '已下单', color: 'text-blue-600', bg: 'bg-blue-100', icon: CheckCircle2 },
-      'Production': { label: '生产中', color: 'text-yellow-600', bg: 'bg-yellow-100', icon: Clock },
-      'Shipped': { label: '运输中', color: 'text-purple-600', bg: 'bg-purple-100', icon: Truck },
-      'PartiallyArrived': { label: '部分到货', color: 'text-orange-600', bg: 'bg-orange-100', icon: BoxSelect },
-      'Arrived': { label: '已完成', color: 'text-green-600', bg: 'bg-green-100', icon: CheckCircle2 },
-      'Cancelled': { label: '已取消', color: 'text-red-600', bg: 'bg-red-100', icon: XCircle }
+  const statusConfig: Record<POStatus, { label: string, color: string, bg: string, icon: any, border: string }> = {
+      'Draft': { label: '草稿 (Draft)', color: 'text-gray-600', bg: 'bg-gray-50', icon: FileText, border: 'border-gray-200' },
+      'Ordered': { label: '已下单 (Ordered)', color: 'text-blue-600', bg: 'bg-blue-50', icon: CheckCircle2, border: 'border-blue-200' },
+      'Production': { label: '生产中 (Prod)', color: 'text-amber-600', bg: 'bg-amber-50', icon: Clock, border: 'border-amber-200' },
+      'Shipped': { label: '运输中 (Shipped)', color: 'text-purple-600', bg: 'bg-purple-50', icon: Truck, border: 'border-purple-200' },
+      'PartiallyArrived': { label: '部分收货 (Partial)', color: 'text-indigo-600', bg: 'bg-indigo-50', icon: BoxSelect, border: 'border-indigo-200' },
+      'Arrived': { label: '已入库 (Done)', color: 'text-emerald-600', bg: 'bg-emerald-50', icon: CheckCircle2, border: 'border-emerald-200' },
+      'Cancelled': { label: '已取消 (Void)', color: 'text-red-600', bg: 'bg-red-50', icon: XCircle, border: 'border-red-200' }
   };
+
+  const kanbanColumns: POStatus[] = ['Draft', 'Ordered', 'Production', 'Shipped', 'Arrived'];
 
   const getTrackingLink = (number?: string, carrier?: string) => {
       if (!number) return '#';
@@ -174,11 +174,66 @@ export const PurchaseOrderManager: React.FC<PurchaseOrderManagerProps> = ({
       return `https://t.17track.net/zh-cn#nums=${number}`;
   };
 
+  // --- Render Board Card ---
+  const renderBoardCard = (order: PurchaseOrder) => {
+      const StatusIcon = statusConfig[order.status].icon;
+      const isReceiving = ['Shipped', 'PartiallyArrived'].includes(order.status);
+      
+      return (
+          <div key={order.id} className="bg-white p-3 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-all group relative">
+              <div className="flex justify-between items-start mb-2">
+                  <span className="text-[10px] font-mono text-gray-400 bg-gray-50 px-1.5 py-0.5 rounded">{order.poNumber.split('-').pop()}</span>
+                  <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      {order.status !== 'Arrived' && (
+                          <button onClick={() => handleNextStatus(order)} className="p-1 hover:bg-slate-100 rounded text-slate-600" title="推进流程">
+                              <ArrowRight size={14} />
+                          </button>
+                      )}
+                      <button onClick={() => onDeleteOrder(order.id)} className="p-1 hover:bg-red-50 rounded text-red-400">
+                          <Trash2 size={14} />
+                      </button>
+                  </div>
+              </div>
+              
+              <div className="flex items-start gap-3 mb-3">
+                  <div className="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center shrink-0">
+                      <Package size={18} className="text-gray-400"/>
+                  </div>
+                  <div className="min-w-0">
+                      <h4 className="font-bold text-gray-800 text-sm truncate" title={order.productName}>{order.productName}</h4>
+                      <div className="text-xs text-gray-500 mt-0.5 flex items-center gap-1">
+                          <span>{order.quantity} pcs</span>
+                          <span className="text-gray-300">|</span>
+                          <span>¥{formatCurrency(order.totalAmountCNY, 'CNY').replace('¥','')}</span>
+                      </div>
+                  </div>
+              </div>
+
+              {/* Progress Bar Visual */}
+              <div className="h-1 w-full bg-gray-100 rounded-full overflow-hidden mb-2">
+                  <div 
+                    className={`h-full ${statusConfig[order.status].bg.replace('bg-', 'bg-')} ${statusConfig[order.status].color.replace('text-', 'bg-')}`} 
+                    style={{ width: '100%' }}
+                  ></div>
+              </div>
+
+              <div className="flex justify-between items-center text-[10px] text-gray-400">
+                  <span className="truncate max-w-[80px]">{order.supplierName}</span>
+                  {isReceiving && (
+                      <span className="text-orange-500 font-bold bg-orange-50 px-1.5 rounded">
+                          已收: {order.receivedQuantity || 0}
+                      </span>
+                  )}
+              </div>
+          </div>
+      );
+  };
+
   return (
-    <div className="space-y-6 animate-fade-in pb-20 relative">
+    <div className="space-y-6 animate-fade-in pb-20 relative h-full flex flex-col">
        
        {/* 1. Dashboard Stats */}
-       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 shrink-0">
            <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex items-center gap-4">
                <div className="p-3 rounded-full bg-blue-50 text-blue-600"><FileText size={24} /></div>
                <div>
@@ -203,41 +258,87 @@ export const PurchaseOrderManager: React.FC<PurchaseOrderManagerProps> = ({
        </div>
 
        {/* 2. Toolbar */}
-       <div className="flex flex-col md:flex-row justify-between items-center gap-4 bg-white p-4 rounded-xl border border-gray-200 shadow-sm sticky top-0 z-20">
+       <div className="flex flex-col md:flex-row justify-between items-center gap-4 bg-white p-3 rounded-xl border border-gray-200 shadow-sm sticky top-0 z-20 shrink-0">
            
-           <div className="flex bg-gray-100 p-1 rounded-lg">
-               {(['All', 'Active', 'Completed'] as const).map(tab => (
-                   <button
-                       key={tab}
-                       onClick={() => setActiveTab(tab)}
-                       className={`px-4 py-2 rounded-md text-sm font-bold transition-all ${activeTab === tab ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-                   >
-                       {tab === 'All' ? '全部' : tab === 'Active' ? '进行中' : '已归档'}
+           <div className="flex gap-2 items-center">
+               <div className="flex bg-gray-100 p-1 rounded-lg">
+                   <button onClick={() => setViewMode('board')} className={`p-2 rounded-md transition-all ${viewMode === 'board' ? 'bg-white shadow text-slate-900' : 'text-gray-400 hover:text-gray-600'}`}>
+                       <LayoutGrid size={18} />
                    </button>
-               ))}
+                   <button onClick={() => setViewMode('list')} className={`p-2 rounded-md transition-all ${viewMode === 'list' ? 'bg-white shadow text-slate-900' : 'text-gray-400 hover:text-gray-600'}`}>
+                       <ListIcon size={18} />
+                   </button>
+               </div>
+               <div className="h-6 w-px bg-gray-200"></div>
+               <div className="flex bg-gray-100 p-1 rounded-lg">
+                   {(['All', 'Active', 'Completed'] as const).map(tab => (
+                       <button
+                           key={tab}
+                           onClick={() => setActiveTab(tab)}
+                           className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all ${activeTab === tab ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                       >
+                           {tab === 'All' ? '全部' : tab === 'Active' ? '进行中' : '归档'}
+                       </button>
+                   ))}
+               </div>
            </div>
 
-           <div className="relative w-full md:w-80">
-               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+           <div className="relative w-full md:w-64">
+               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={14} />
                <input 
                    type="text" 
-                   placeholder="搜索单号、SKU、产品名..." 
+                   placeholder="搜索 PO..." 
                    value={searchQuery}
                    onChange={e => setSearchQuery(e.target.value)}
-                   className="w-full pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400"
+                   className="w-full pl-9 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400"
                />
            </div>
        </div>
 
-       {/* 3. Orders List */}
-       <div className="space-y-4">
-           {filteredOrders.length === 0 ? (
-               <div className="text-center py-16 bg-gray-50 rounded-xl border border-dashed border-gray-300">
-                   <Package className="mx-auto text-gray-300 mb-4" size={48} />
-                   <p className="text-gray-500 font-medium">暂无符合条件的采购单</p>
+       {/* 3. Content Area */}
+       {viewMode === 'board' ? (
+           <div className="flex-1 overflow-x-auto pb-4">
+               <div className="flex gap-4 min-w-[1000px] h-full">
+                   {kanbanColumns.map(col => {
+                       const colOrders = filteredOrders.filter(o => {
+                           if (col === 'Shipped') return o.status === 'Shipped' || o.status === 'PartiallyArrived';
+                           return o.status === col;
+                       });
+                       const conf = statusConfig[col];
+                       
+                       return (
+                           <div key={col} className="flex-1 min-w-[200px] flex flex-col h-full rounded-2xl bg-gray-50/50 border border-gray-200/60">
+                               {/* Column Header */}
+                               <div className={`p-3 border-b border-gray-100 rounded-t-2xl ${conf.bg} bg-opacity-30`}>
+                                   <div className="flex justify-between items-center">
+                                       <div className="flex items-center gap-2">
+                                           <div className={`w-2 h-2 rounded-full ${conf.color.replace('text-', 'bg-')}`}></div>
+                                           <span className={`text-xs font-bold ${conf.color}`}>{conf.label}</span>
+                                       </div>
+                                       <span className="bg-white px-2 py-0.5 rounded-full text-[10px] font-bold text-gray-500 shadow-sm border border-gray-100">
+                                           {colOrders.length}
+                                       </span>
+                                   </div>
+                               </div>
+                               
+                               {/* Draggable Area (Simulated) */}
+                               <div className="p-3 space-y-3 flex-1 overflow-y-auto custom-scrollbar">
+                                   {colOrders.map(order => renderBoardCard(order))}
+                                   {colOrders.length === 0 && (
+                                       <div className="h-20 border-2 border-dashed border-gray-200 rounded-xl flex items-center justify-center text-gray-300 text-xs">
+                                           空
+                                       </div>
+                                   )}
+                               </div>
+                           </div>
+                       )
+                   })}
                </div>
-           ) : (
-               filteredOrders.map(order => {
+           </div>
+       ) : (
+           /* LIST VIEW (Legacy) */
+           <div className="space-y-4">
+               {filteredOrders.map(order => {
                    const isEditing = editingId === order.id;
                    const StatusIcon = statusConfig[order.status].icon;
                    const isDone = ['Arrived', 'Cancelled'].includes(order.status);
@@ -245,7 +346,7 @@ export const PurchaseOrderManager: React.FC<PurchaseOrderManagerProps> = ({
 
                    return (
                        <div key={order.id} className={`bg-white rounded-xl border transition-all hover:shadow-md ${isDone ? 'border-gray-200 opacity-90' : 'border-gray-200 shadow-sm'}`}>
-                           
+                           {/* ... (Keep existing List View Card Logic) ... */}
                            {/* Card Header */}
                            <div className="flex flex-wrap items-center justify-between p-4 border-b border-gray-50 gap-4">
                                <div className="flex items-center gap-3">
@@ -433,32 +534,11 @@ export const PurchaseOrderManager: React.FC<PurchaseOrderManagerProps> = ({
                                    )}
                                </div>
                            </div>
-
-                           {/* Timeline Footer (Visual Delight) */}
-                           {!isDone && !isEditing && (
-                               <div className="px-4 pb-4">
-                                   <div className="flex items-center gap-1 h-1.5 w-full bg-gray-100 rounded-full overflow-hidden">
-                                       {['Draft', 'Ordered', 'Production', 'Shipped', 'PartiallyArrived'].map((step, i) => {
-                                           const flow = ['Draft', 'Ordered', 'Production', 'Shipped', 'PartiallyArrived'];
-                                           const currentIdx = flow.indexOf(order.status === 'PartiallyArrived' ? 'PartiallyArrived' : order.status);
-                                           // Treat 'Arrived' as separate final state, 'PartiallyArrived' shares slot with 'Shipped' visually or extends it
-                                           const active = i <= currentIdx;
-                                           return (
-                                               <div 
-                                                  key={step} 
-                                                  className={`h-full flex-1 transition-all duration-500 ${active ? 'bg-blue-500' : 'bg-transparent'}`} 
-                                                  title={step}
-                                               ></div>
-                                           );
-                                       })}
-                                   </div>
-                               </div>
-                           )}
                        </div>
                    );
-               })
-           )}
-       </div>
+               })}
+           </div>
+       )}
 
        {/* Receive Modal Overlay */}
        {receivingOrderId && (

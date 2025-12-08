@@ -71,7 +71,7 @@ import {
   Wallet,
   Sliders // New Icon
 } from 'lucide-react';
-import { ReplenishmentRecord, Store, CalculatedMetrics, PurchaseOrder, AppSettings, InventoryLog, FinanceTransaction } from './types';
+import { ReplenishmentRecord, Store, CalculatedMetrics, PurchaseOrder, AppSettings, InventoryLog, FinanceTransaction, Supplier } from './types';
 import { MOCK_DATA_INITIAL } from './constants';
 import { calculateMetrics, formatCurrency } from './utils/calculations';
 import { StatsCard } from './components/StatsCard';
@@ -97,6 +97,7 @@ import { PurchaseOrderManager } from './components/PurchaseOrderManager';
 import { SettingsModal } from './components/SettingsModal';
 import { InventoryWMS } from './components/InventoryWMS';
 import { FinanceCenter } from './components/FinanceCenter'; 
+import { SupplierManager } from './components/SupplierManager'; // NEW
 import { ToastContainer, ToastMessage, ToastType } from './components/Toast'; 
 import { analyzeInventory, generateAdStrategy, generateSelectionStrategy, generateMarketingContent, analyzeLogisticsChannels, generateFinancialReport } from './services/geminiService';
 import { supabase, isSupabaseConfigured } from './lib/supabaseClient';
@@ -104,7 +105,7 @@ import { fetchLingxingInventory, fetchLingxingSales } from './services/lingxingS
 import { fetchMiaoshouInventory, fetchMiaoshouSales } from './services/miaoshouService';
 import { DataBackupModal } from './components/DataBackupModal'; 
 
-type ViewState = 'overview' | 'inventory' | 'analytics' | 'calculator' | 'logistics' | 'marketing' | 'purchasing' | 'wms' | 'finance';
+type ViewState = 'overview' | 'inventory' | 'analytics' | 'calculator' | 'logistics' | 'marketing' | 'purchasing' | 'wms' | 'finance' | 'suppliers';
 
 // Extended type for sorting
 type EnrichedRecord = ReplenishmentRecord & { metrics: CalculatedMetrics };
@@ -145,6 +146,9 @@ function App() {
   
   // --- Purchase Orders State ---
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>(() => safeParse('tanxing_purchase_orders', []));
+
+  // --- NEW: Suppliers State ---
+  const [suppliers, setSuppliers] = useState<Supplier[]>(() => safeParse('tanxing_suppliers', []));
 
   // --- Inventory Logs State (WMS) ---
   const [inventoryLogs, setInventoryLogs] = useState<InventoryLog[]>(() => safeParse('tanxing_inventory_logs', []));
@@ -320,6 +324,34 @@ function App() {
           return newList;
       });
       addToast('记录已删除', 'info');
+  };
+
+  // --- Supplier Handlers (NEW) ---
+  const handleAddSupplier = (s: Supplier) => {
+      setSuppliers(prev => {
+          const newList = [...prev, s];
+          localStorage.setItem('tanxing_suppliers', JSON.stringify(newList));
+          return newList;
+      });
+      addToast('供应商已添加', 'success');
+  };
+
+  const handleUpdateSupplier = (s: Supplier) => {
+      setSuppliers(prev => {
+          const newList = prev.map(old => old.id === s.id ? s : old);
+          localStorage.setItem('tanxing_suppliers', JSON.stringify(newList));
+          return newList;
+      });
+      addToast('供应商信息已更新', 'success');
+  };
+
+  const handleDeleteSupplier = (id: string) => {
+      setSuppliers(prev => {
+          const newList = prev.filter(s => s.id !== id);
+          localStorage.setItem('tanxing_suppliers', JSON.stringify(newList));
+          return newList;
+      });
+      addToast('供应商已删除', 'info');
   };
 
   // --- Save Handlers ---
@@ -725,6 +757,16 @@ function App() {
               return <LogisticsTools />;
           case 'wms':
               return <InventoryWMS records={records} logs={inventoryLogs} onAddLog={handleAddInventoryLog} />;
+          case 'suppliers':
+              return (
+                  <SupplierManager 
+                      suppliers={suppliers} 
+                      purchaseOrders={purchaseOrders} 
+                      onAddSupplier={handleAddSupplier}
+                      onUpdateSupplier={handleUpdateSupplier}
+                      onDeleteSupplier={handleDeleteSupplier}
+                  />
+              );
           case 'finance':
               return (
                   <FinanceCenter 
@@ -1153,6 +1195,11 @@ function App() {
                       <ShoppingCart size={18} className={currentView === 'purchasing' ? 'text-orange-400' : 'group-hover:text-slate-200'} />
                       <span>采购管理 PO</span>
                   </button>
+                  {/* NEW: Supplier Link */}
+                  <button onClick={() => setCurrentView('suppliers')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all group ${currentView === 'suppliers' ? 'bg-white/10 text-white shadow-lg border border-white/10 font-bold backdrop-blur-md' : 'text-slate-400 hover:bg-white/5 hover:text-white font-medium'}`}>
+                      <Factory size={18} className={currentView === 'suppliers' ? 'text-indigo-400' : 'group-hover:text-slate-200'} />
+                      <span>供应商 CRM</span>
+                  </button>
                   <button onClick={() => setCurrentView('wms')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all group ${currentView === 'wms' ? 'bg-white/10 text-white shadow-lg border border-white/10 font-bold backdrop-blur-md' : 'text-slate-400 hover:bg-white/5 hover:text-white font-medium'}`}>
                       <Warehouse size={18} className={currentView === 'wms' ? 'text-purple-400' : 'group-hover:text-slate-200'} />
                       <span>库存中心 WMS</span>
@@ -1238,7 +1285,8 @@ function App() {
                    currentView === 'analytics' ? '数据分析' :
                    currentView === 'marketing' ? 'AI 营销中心' :
                    currentView === 'calculator' ? '智能试算' :
-                   currentView === 'logistics' ? '物流查询' : '系统总览'}
+                   currentView === 'logistics' ? '物流查询' :
+                   currentView === 'suppliers' ? '供应商管理' : '系统总览'}
                    
                    <span className="text-xs font-extrabold text-indigo-600 bg-indigo-50 border border-indigo-100 px-2.5 py-0.5 rounded-full hidden lg:block tracking-wide shadow-sm">
                        v5.0 Pro
@@ -1247,6 +1295,7 @@ function App() {
                 <p className="text-sm text-slate-500 mt-1 font-bold">
                     {currentView === 'finance' ? '企业经营收支与利润全景分析' : 
                      currentView === 'wms' ? '多仓库库存流水与智能调拨管理' : 
+                     currentView === 'suppliers' ? '供应商 CRM 与采购绩效评估' :
                      currentView === 'inventory' ? '全渠道 SKU 备货与生命周期管理' :
                      '智能化供应链决策支持系统'}
                 </p>

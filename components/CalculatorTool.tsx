@@ -1,13 +1,16 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { Box, Calculator, Scale, AlertTriangle, Grid3X3, Delete, Equal, Tag, DollarSign, Settings, Sliders, TrendingUp, RefreshCcw } from 'lucide-react';
+import { Box, Calculator, Scale, AlertTriangle, Grid3X3, Delete, Equal, Tag, DollarSign, Settings, Sliders, TrendingUp, RefreshCcw, Lock, Unlock, Target } from 'lucide-react';
 import { EXCHANGE_RATE } from '../constants';
 
 // --- Helper Component: Range Slider ---
-const RangeSlider = ({ label, value, min, max, step, unit, onChange, colorClass }: any) => (
-    <div className="space-y-2">
+const RangeSlider = ({ label, value, min, max, step, unit, onChange, colorClass, disabled = false }: any) => (
+    <div className={`space-y-2 ${disabled ? 'opacity-50 pointer-events-none grayscale' : ''}`}>
         <div className="flex justify-between items-end">
-            <label className="text-xs font-bold text-gray-500 uppercase">{label}</label>
+            <label className="text-xs font-bold text-gray-500 uppercase flex items-center gap-1">
+                {label}
+                {disabled && <Lock size={10} />}
+            </label>
             <span className={`text-sm font-bold font-mono ${colorClass}`}>{value} <span className="text-[10px] text-gray-400">{unit}</span></span>
         </div>
         <input 
@@ -18,6 +21,7 @@ const RangeSlider = ({ label, value, min, max, step, unit, onChange, colorClass 
             value={value} 
             onChange={(e) => onChange(parseFloat(e.target.value))}
             className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-slate-900"
+            disabled={disabled}
         />
     </div>
 );
@@ -26,8 +30,11 @@ export const CalculatorTool: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'simulator' | 'freight' | 'standard'>('simulator');
   
   // --- Simulator State ---
+  const [mode, setMode] = useState<'forward' | 'reverse'>('forward'); // forward = Profit Sim, reverse = Pricing Calc
+  
   const [simParams, setSimParams] = useState({
-      salesPrice: 29.99,
+      salesPrice: 29.99,       // Primary Input for Forward
+      targetMargin: 30,        // Primary Input for Reverse (%)
       productCostCNY: 45,
       shippingCostCNY: 35,
       adCpaUSD: 8,
@@ -35,22 +42,61 @@ export const CalculatorTool: React.FC = () => {
       estimatedSales: 1000 // units
   });
 
-  // Simulator Calculation
+  // Simulator Engine
   const simResult = useMemo(() => {
-      const { salesPrice, productCostCNY, shippingCostCNY, adCpaUSD, platformRate, estimatedSales } = simParams;
+      const { salesPrice, targetMargin, productCostCNY, shippingCostCNY, adCpaUSD, platformRate, estimatedSales } = simParams;
       
-      const revenue = salesPrice * estimatedSales;
       const cogsUSD = (productCostCNY + shippingCostCNY) / EXCHANGE_RATE;
-      const platformFee = salesPrice * (platformRate / 100);
       
-      const totalCostPerUnit = cogsUSD + adCpaUSD + platformFee;
-      const profitPerUnit = salesPrice - totalCostPerUnit;
-      const totalProfit = profitPerUnit * estimatedSales;
-      const margin = (profitPerUnit / salesPrice) * 100;
-      const roi = (profitPerUnit / totalCostPerUnit) * 100;
+      let calculatedPrice = salesPrice;
+      let profitPerUnit = 0;
+      let totalCostPerUnit = 0;
 
-      return { revenue, totalProfit, margin, roi, profitPerUnit, totalCostPerUnit };
-  }, [simParams]);
+      if (mode === 'forward') {
+          // 1. Forward: Price is Fixed -> Calculate Profit
+          const platformFee = salesPrice * (platformRate / 100);
+          totalCostPerUnit = cogsUSD + adCpaUSD + platformFee;
+          profitPerUnit = salesPrice - totalCostPerUnit;
+      } else {
+          // 2. Reverse: Margin is Fixed -> Calculate Price
+          // Formula: Profit / Price = Margin
+          // (Price - Costs - Price*Rate) / Price = Margin
+          // Price * (1 - Rate - Margin) = Costs
+          // Price = Costs / (1 - Rate - Margin)
+          
+          const fixedCosts = cogsUSD + adCpaUSD;
+          const rateDecimal = platformRate / 100;
+          const marginDecimal = targetMargin / 100;
+          
+          // Avoid division by zero or negative denominator
+          const denominator = 1 - rateDecimal - marginDecimal;
+          
+          if (denominator > 0.01) {
+              calculatedPrice = fixedCosts / denominator;
+          } else {
+              calculatedPrice = 9999; // Impossible price
+          }
+          
+          const platformFee = calculatedPrice * rateDecimal;
+          totalCostPerUnit = cogsUSD + adCpaUSD + platformFee;
+          profitPerUnit = calculatedPrice - totalCostPerUnit;
+      }
+
+      const revenue = calculatedPrice * estimatedSales;
+      const totalProfit = profitPerUnit * estimatedSales;
+      const margin = calculatedPrice > 0 ? (profitPerUnit / calculatedPrice) * 100 : 0;
+      const roi = totalCostPerUnit > 0 ? (profitPerUnit / totalCostPerUnit) * 100 : 0;
+
+      return { 
+          calculatedPrice, 
+          revenue, 
+          totalProfit, 
+          margin: mode === 'reverse' ? targetMargin : margin, 
+          roi, 
+          profitPerUnit, 
+          totalCostPerUnit 
+      };
+  }, [simParams, mode]);
 
   // --- Freight Calculator State ---
   const [dims, setDims] = useState({ length: 0, width: 0, height: 0, weight: 0, quantity: 1 });
@@ -162,7 +208,7 @@ export const CalculatorTool: React.FC = () => {
            className={`px-5 py-2.5 rounded-xl text-sm font-bold flex items-center gap-2 transition-all whitespace-nowrap ${activeTab === 'simulator' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200' : 'text-gray-500 hover:bg-gray-50'}`}
          >
             <Sliders size={16} />
-            利润沙盘推演
+            智能利润/定价
          </button>
          <button 
            onClick={() => setActiveTab('freight')}
@@ -180,34 +226,55 @@ export const CalculatorTool: React.FC = () => {
          </button>
       </div>
       
-      {/* --- Tab 1: Profit Simulator (New & Interactive) --- */}
+      {/* --- Tab 1: Profit Simulator & Pricing Reverse --- */}
       {activeTab === 'simulator' && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+              
               {/* Controls */}
-              <div className="lg:col-span-7 bg-white rounded-3xl p-8 shadow-sm border border-gray-200">
+              <div className="lg:col-span-7 bg-white rounded-3xl p-8 shadow-sm border border-gray-200 relative overflow-hidden">
                   <div className="flex items-center justify-between mb-8">
                       <div>
                           <h3 className="text-xl font-black text-slate-800 flex items-center gap-2">
-                              <Sliders className="text-indigo-600" /> 核心参数调节
+                              {mode === 'forward' ? <Sliders className="text-indigo-600" /> : <Target className="text-pink-600" />}
+                              {mode === 'forward' ? '利润沙盘推演' : 'TikTok 定价反推'}
                           </h3>
-                          <p className="text-xs text-gray-500 mt-1">拖动滑块，实时模拟利润变化趋势</p>
+                          <p className="text-xs text-gray-500 mt-1">
+                              {mode === 'forward' ? '调节成本与售价，预测利润与ROI' : '设定目标利润率，自动反推建议售价'}
+                          </p>
                       </div>
-                      <button onClick={() => setSimParams({salesPrice: 29.99, productCostCNY: 45, shippingCostCNY: 35, adCpaUSD: 8, platformRate: 15, estimatedSales: 1000})} className="p-2 text-gray-400 hover:text-indigo-600 transition-colors bg-gray-50 rounded-lg">
-                          <RefreshCcw size={16} />
-                      </button>
+                      
+                      {/* Mode Toggle */}
+                      <div className="flex bg-gray-100 p-1 rounded-xl">
+                          <button 
+                            onClick={() => setMode('forward')}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${mode === 'forward' ? 'bg-white shadow text-indigo-600' : 'text-gray-500'}`}
+                          >
+                              顺向推演
+                          </button>
+                          <button 
+                            onClick={() => setMode('reverse')}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${mode === 'reverse' ? 'bg-white shadow text-pink-600' : 'text-gray-500'}`}
+                          >
+                              逆向定价
+                          </button>
+                      </div>
                   </div>
 
-                  <div className="space-y-8">
-                      {/* Product Section */}
-                      <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100 space-y-6">
-                          <RangeSlider 
-                              label="销售单价 (Price)" value={simParams.salesPrice} unit="$" min={5} max={200} step={0.5} colorClass="text-indigo-600"
-                              onChange={(v: number) => setSimParams(p => ({...p, salesPrice: v}))}
-                          />
-                          <RangeSlider 
-                              label="预估销量 (Volume)" value={simParams.estimatedSales} unit="pcs" min={100} max={10000} step={100} colorClass="text-slate-700"
-                              onChange={(v: number) => setSimParams(p => ({...p, estimatedSales: v}))}
-                          />
+                  <div className="space-y-8 relative z-10">
+                      
+                      {/* Primary Driver Section */}
+                      <div className={`p-5 rounded-2xl border transition-colors ${mode === 'forward' ? 'bg-indigo-50 border-indigo-100' : 'bg-pink-50 border-pink-100'}`}>
+                          {mode === 'forward' ? (
+                              <RangeSlider 
+                                  label="销售单价 (Price)" value={simParams.salesPrice} unit="$" min={5} max={200} step={0.5} colorClass="text-indigo-600"
+                                  onChange={(v: number) => setSimParams(p => ({...p, salesPrice: v}))}
+                              />
+                          ) : (
+                              <RangeSlider 
+                                  label="目标利润率 (Target Margin)" value={simParams.targetMargin} unit="%" min={0} max={80} step={1} colorClass="text-pink-600"
+                                  onChange={(v: number) => setSimParams(p => ({...p, targetMargin: v}))}
+                              />
+                          )}
                       </div>
 
                       {/* Cost Section */}
@@ -224,7 +291,7 @@ export const CalculatorTool: React.FC = () => {
                           </div>
                           <div className="space-y-6">
                               <RangeSlider 
-                                  label="广告成本 (CPA)" value={simParams.adCpaUSD} unit="$" min={0} max={50} step={0.5} colorClass="text-pink-600"
+                                  label="广告成本 (CPA)" value={simParams.adCpaUSD} unit="$" min={0} max={50} step={0.5} colorClass="text-purple-600"
                                   onChange={(v: number) => setSimParams(p => ({...p, adCpaUSD: v}))}
                               />
                               <RangeSlider 
@@ -233,70 +300,87 @@ export const CalculatorTool: React.FC = () => {
                               />
                           </div>
                       </div>
+                      
+                      <div className="pt-4 border-t border-gray-100">
+                          <RangeSlider 
+                              label="预估销量 (Volume)" value={simParams.estimatedSales} unit="pcs" min={100} max={10000} step={100} colorClass="text-slate-500"
+                              onChange={(v: number) => setSimParams(p => ({...p, estimatedSales: v}))}
+                          />
+                      </div>
                   </div>
               </div>
 
               {/* Visualization */}
               <div className="lg:col-span-5 flex flex-col gap-6">
-                  {/* Big Number Card */}
-                  <div className={`rounded-3xl p-8 shadow-xl text-white transition-all duration-500 ${simResult.totalProfit > 0 ? 'bg-gradient-to-br from-indigo-600 to-purple-700' : 'bg-gradient-to-br from-red-600 to-orange-700'}`}>
-                      <div className="flex justify-between items-start mb-4">
-                          <div className="p-3 bg-white/20 backdrop-blur-md rounded-xl">
-                              <TrendingUp size={28} className="text-white" />
+                  
+                  {/* Result Card */}
+                  <div className={`rounded-3xl p-8 shadow-2xl text-white transition-all duration-500 bg-noise flex flex-col justify-between h-full relative overflow-hidden ${mode === 'forward' ? 'bg-gradient-to-br from-indigo-600 to-purple-800' : 'bg-gradient-to-br from-slate-900 to-slate-800'}`}>
+                      {/* Decoration */}
+                      <div className={`absolute top-0 right-0 w-64 h-64 rounded-full blur-[80px] opacity-30 -translate-y-1/2 translate-x-1/3 ${mode === 'forward' ? 'bg-white' : 'bg-pink-500'}`}></div>
+
+                      <div className="relative z-10">
+                          <div className="flex justify-between items-start mb-6">
+                              <div className="p-3 bg-white/10 backdrop-blur-md rounded-xl border border-white/10">
+                                  {mode === 'forward' ? <TrendingUp size={28} className="text-indigo-200" /> : <Tag size={28} className="text-pink-300" />}
+                              </div>
+                              <div className="text-right">
+                                  <p className="text-xs font-bold opacity-60 uppercase tracking-widest">{mode === 'forward' ? 'Net Profit Margin' : 'Target Price'}</p>
+                                  {mode === 'forward' ? (
+                                      <p className="text-3xl font-black">{simResult.margin.toFixed(1)}%</p>
+                                  ) : (
+                                      <p className="text-3xl font-black text-pink-300">${simResult.calculatedPrice.toFixed(2)}</p>
+                                  )}
+                              </div>
                           </div>
-                          <div className="text-right">
-                              <p className="text-xs font-bold opacity-70 uppercase tracking-widest">Net Profit Margin</p>
-                              <p className="text-3xl font-black">{simResult.margin.toFixed(1)}%</p>
+
+                          <div className="mb-8">
+                              <p className="text-sm font-medium opacity-70 mb-1">{mode === 'forward' ? '预估总净利 (Total Net Profit)' : '建议定价以保利润 (Suggested)'}</p>
+                              {mode === 'forward' ? (
+                                  <p className="text-5xl font-black tracking-tight flex items-baseline gap-2">
+                                      ${simResult.totalProfit.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 0})}
+                                  </p>
+                              ) : (
+                                  <div className="flex flex-col">
+                                      <div className="text-sm opacity-50 mb-2">若要维持 {simParams.targetMargin}% 毛利，售价至少为:</div>
+                                      <p className="text-5xl font-black tracking-tight text-pink-400 drop-shadow-lg">
+                                          ${simResult.calculatedPrice.toFixed(2)}
+                                      </p>
+                                  </div>
+                              )}
                           </div>
-                      </div>
-                      <div>
-                          <p className="text-sm font-medium opacity-80 mb-1">预估总净利 (Total Net Profit)</p>
-                          <p className="text-5xl font-black tracking-tight flex items-baseline gap-2">
-                              ${simResult.totalProfit.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 0})}
-                          </p>
                       </div>
                       
                       {/* Mini Bar Breakdown */}
-                      <div className="mt-8 pt-6 border-t border-white/20">
+                      <div className="pt-6 border-t border-white/10 relative z-10">
                           <div className="flex text-xs mb-2 justify-between font-bold opacity-90">
-                              <span>Revenue</span>
-                              <span>${simResult.revenue.toLocaleString()}</span>
+                              <span>Revenue Breakdown</span>
+                              <span>${(mode === 'forward' ? simParams.salesPrice : simResult.calculatedPrice).toFixed(2)}/unit</span>
                           </div>
-                          <div className="w-full bg-black/20 h-2 rounded-full overflow-hidden flex">
-                              <div style={{width: `${(simResult.totalCostPerUnit / simParams.salesPrice) * 100}%`}} className="h-full bg-white/40"></div>
-                              <div style={{width: `${simResult.margin}%`}} className="h-full bg-white"></div>
+                          <div className="w-full bg-black/30 h-3 rounded-full overflow-hidden flex shadow-inner">
+                              <div style={{width: `${(simResult.totalCostPerUnit / (mode === 'forward' ? simParams.salesPrice : simResult.calculatedPrice)) * 100}%`}} className="h-full bg-white/40"></div>
+                              <div style={{width: `${simResult.margin}%`}} className={`h-full ${mode === 'forward' ? 'bg-indigo-300' : 'bg-pink-400'}`}></div>
                           </div>
-                          <div className="flex justify-between text-[10px] mt-1 opacity-60">
-                              <span>Cost (${simResult.totalCostPerUnit.toFixed(2)}/u)</span>
-                              <span>Profit (${simResult.profitPerUnit.toFixed(2)}/u)</span>
+                          <div className="flex justify-between text-[10px] mt-2 opacity-60">
+                              <span className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-white/40"></div>Cost: ${simResult.totalCostPerUnit.toFixed(2)}</span>
+                              <span className="flex items-center gap-1"><div className={`w-2 h-2 rounded-full ${mode === 'forward' ? 'bg-indigo-300' : 'bg-pink-400'}`}></div>Profit: ${simResult.profitPerUnit.toFixed(2)}</span>
                           </div>
                       </div>
                   </div>
 
-                  {/* ROI Gauge (Simulated CSS) */}
-                  <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-200 flex-1 flex flex-col justify-center items-center relative overflow-hidden">
-                      <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-red-500 via-yellow-400 to-green-500"></div>
-                      
-                      <div className="relative w-48 h-24 mt-4 overflow-hidden">
-                          <div className="absolute top-0 left-0 w-48 h-48 rounded-full border-[20px] border-slate-100 border-b-0"></div>
-                          <div 
-                            className="absolute top-0 left-0 w-48 h-48 rounded-full border-[20px] border-indigo-500 border-l-transparent border-r-transparent border-b-transparent transition-all duration-700 ease-out"
-                            style={{ transform: `rotate(${(Math.min(simResult.roi, 200) / 200) * 180 - 135}deg)` }}
-                          ></div>
+                  {/* Secondary ROI Card */}
+                  <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-200 flex items-center justify-between">
+                      <div>
+                          <p className="text-xs text-gray-400 font-bold uppercase tracking-wider">投资回报率 (ROI)</p>
+                          <p className={`text-3xl font-black mt-1 ${simResult.roi > 30 ? 'text-emerald-500' : 'text-slate-700'}`}>
+                              {simResult.roi.toFixed(0)}%
+                          </p>
                       </div>
-                      
-                      <div className="text-center -mt-8 relative z-10">
-                          <p className="text-4xl font-black text-slate-800">{simResult.roi.toFixed(0)}<span className="text-lg text-slate-400">%</span></p>
-                          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">ROI (回报率)</p>
-                      </div>
-
-                      <div className="mt-6 flex gap-4 text-xs text-center w-full justify-center">
-                          <div className={`px-4 py-2 rounded-lg font-bold ${simResult.roi > 30 ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-400'}`}>
-                              High ROI
-                          </div>
-                          <div className={`px-4 py-2 rounded-lg font-bold ${simResult.roi < 0 ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-400'}`}>
-                              Risk
-                          </div>
+                      <div className="h-12 w-px bg-gray-100 mx-4"></div>
+                      <div className="text-right">
+                          <p className="text-xs text-gray-400 font-bold uppercase tracking-wider">盈亏平衡点 (BEP)</p>
+                          <p className="text-xl font-bold text-slate-700 mt-1">
+                              ${simResult.totalCostPerUnit.toFixed(2)}
+                          </p>
                       </div>
                   </div>
               </div>
@@ -410,7 +494,7 @@ export const CalculatorTool: React.FC = () => {
             </div>
 
             {/* Result Section */}
-            <div className="bg-gradient-to-br from-slate-900 to-slate-800 text-white rounded-3xl p-8 shadow-2xl flex flex-col justify-between relative overflow-hidden">
+            <div className="bg-gradient-to-br from-slate-900 to-slate-800 text-white rounded-3xl p-8 shadow-2xl flex flex-col justify-between relative overflow-hidden bg-noise">
                 <div className="absolute -top-24 -right-24 w-64 h-64 bg-blue-500 rounded-full blur-[80px] opacity-20"></div>
                 
                 <div className="relative z-10">
@@ -477,7 +561,7 @@ export const CalculatorTool: React.FC = () => {
       {/* --- Standard Calculator --- */}
       {activeTab === 'standard' && (
         <div className="max-w-md mx-auto py-10">
-            <div className="bg-slate-900 rounded-[2.5rem] p-8 shadow-2xl border-4 border-slate-800 relative">
+            <div className="bg-slate-900 rounded-[2.5rem] p-8 shadow-2xl border-4 border-slate-800 relative bg-noise">
                 <div className="absolute top-0 left-1/2 -translate-x-1/2 w-20 h-6 bg-slate-800 rounded-b-xl"></div>
                 
                 {/* Screen */}

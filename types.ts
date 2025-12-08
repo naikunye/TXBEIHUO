@@ -10,6 +10,23 @@ export interface Store {
   platform: 'TikTok' | 'Amazon' | 'Temu' | 'Other';
 }
 
+// --- NEW: Supplier CRM ---
+export type PaymentTerm = '100% Prepay' | '30/70' | 'Net 30' | 'Net 60';
+
+export interface Supplier {
+    id: string;
+    name: string;
+    contactName: string;
+    contactPhone: string;
+    contactEmail?: string;
+    paymentTerms: PaymentTerm;
+    leadTimeDays: number; // Agreed lead time
+    rating: number; // 1-5 stars (Manual or Auto)
+    tags: string[]; // e.g. "Electronics", "Shenzhen"
+    mainProducts: string[]; // SKUs provided
+    notes?: string;
+}
+
 // --- NEW: Global Settings ---
 export interface LogisticsTier {
   minWeight: number; // e.g. 0
@@ -32,7 +49,8 @@ export interface PurchaseOrder {
   date: string;
   sku: string;
   productName: string;
-  supplierName?: string;
+  supplierId?: string; // NEW: Link to Supplier
+  supplierName?: string; // Legacy/Display
   quantity: number;
   receivedQuantity?: number; // NEW: Track partial receipts
   unitPriceCNY: number;
@@ -144,6 +162,7 @@ export interface ReplenishmentRecord {
   safetyStockDays?: number; 
   
   // Supplier CRM
+  supplierId?: string; // NEW
   supplierName?: string;
   supplierContact?: string; 
   moq?: number; 
