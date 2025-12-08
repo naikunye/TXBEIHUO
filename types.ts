@@ -38,6 +38,7 @@ export interface AppSettings {
   exchangeRate: number; // USD to CNY
   airTiers: LogisticsTier[];
   seaTiers: LogisticsTier[];
+  simulatedFreightMarkup?: number; // Optional: For simulation scenarios
 }
 
 // --- NEW: Purchase Order Flow with Approval ---

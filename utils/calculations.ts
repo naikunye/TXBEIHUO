@@ -37,16 +37,19 @@ export const calculateMetrics = (record: ReplenishmentRecord, settings?: AppSett
 
   // 3. First Leg Shipping Cost (RMB)
   // Dynamic Pricing Logic:
-  // If user entered a specific price in record (manual override), use it.
-  // Otherwise, if settings exist, look up tiered price.
   let shippingUnitPrice = record.shippingUnitPriceCNY;
   
+  // Apply Simulation Markup if active (for manual prices)
+  if (shippingUnitPrice && shippingUnitPrice > 0 && settings?.simulatedFreightMarkup) {
+      shippingUnitPrice = shippingUnitPrice * (1 + settings.simulatedFreightMarkup / 100);
+  }
+
+  // Fallback to Tiers if no manual price (or it's 0)
   if (settings && (!shippingUnitPrice || shippingUnitPrice === 0)) {
       if (record.shippingMethod === 'Air') {
+          // Note: airTiers in settings might already be marked up if passed from App.tsx 'effectiveSettings'
           shippingUnitPrice = getTieredPrice(totalWeightKg, settings.airTiers);
       } else {
-          // For Sea, usually price per kg or cbm. Simplified here to kg for consistency with current model, 
-          // or we could check volume. For now assuming kg based tier for simplicity in this refactor.
           shippingUnitPrice = getTieredPrice(totalWeightKg, settings.seaTiers);
       }
   }

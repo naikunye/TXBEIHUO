@@ -74,6 +74,95 @@ export const parseAgentAction = async (message: string, records: ReplenishmentRe
     }
 };
 
+// --- NEW: Natural Language Query Parser ---
+export interface NLQueryResponse {
+    searchQuery: string;
+    statusFilter: 'All' | 'Planning' | 'Shipped' | 'Arrived';
+    sortKey: string;
+    sortDirection: 'asc' | 'desc';
+    explanation: string;
+}
+
+export const parseNaturalLanguageQuery = async (query: string): Promise<NLQueryResponse> => {
+    try {
+        const ai = getAiClient();
+        const prompt = `
+            You are a translation layer between User Natural Language and System Filter State.
+            User Query: "${query}"
+            
+            System Capabilities:
+            - searchQuery: string (matches product name or sku)
+            - statusFilter: 'All' | 'Planning' | 'Shipped' | 'Arrived'
+            - sortKey: 'profit' | 'daysOfSupply' | 'quantity' | 'totalInvestment' | 'date'
+            - sortDirection: 'asc' (low to high) | 'desc' (high to low)
+            
+            Mapping Rules:
+            - "Stockout", "Emergency", "Low stock" -> sortKey: 'daysOfSupply', sortDirection: 'asc'
+            - "Best selling", "Hot", "High profit" -> sortKey: 'profit', sortDirection: 'desc'
+            - "Expensive", "High cost" -> sortKey: 'totalInvestment', sortDirection: 'desc'
+            - "New", "Latest" -> sortKey: 'date', sortDirection: 'desc'
+            - "On the way", "Transit" -> statusFilter: 'Shipped'
+            - "Arrived", "In stock" -> statusFilter: 'Arrived'
+            
+            Output JSON ONLY. No markdown.
+            Structure: { searchQuery, statusFilter, sortKey, sortDirection, explanation }
+        `;
+
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: prompt,
+            config: { responseMimeType: 'application/json' }
+        });
+
+        return JSON.parse(response.text || '{}');
+    } catch (e) {
+        console.error("NL Query Parse Failed", e);
+        // Fallback defaults
+        return { searchQuery: '', statusFilter: 'All', sortKey: 'date', sortDirection: 'desc', explanation: 'AI 解析失败' };
+    }
+};
+
+// --- NEW: Image to Record Parser ---
+export const parseImageToRecord = async (base64Image: string): Promise<Partial<ReplenishmentRecord>> => {
+    try {
+        const ai = getAiClient();
+        
+        // Remove header if present
+        const base64Data = base64Image.split(',')[1] || base64Image;
+
+        const prompt = `
+            Analyze this product image/invoice/quote. Extract structured data for an ERP system.
+            Return a JSON object with these keys (infer if necessary):
+            - productName (string): Short descriptive name
+            - sku (string): Generate a short SKU code if not visible (e.g. CAT-001)
+            - unitPriceCNY (number): Cost in RMB
+            - boxLengthCm (number)
+            - boxWidthCm (number)
+            - boxHeightCm (number)
+            - unitWeightKg (number)
+            - itemsPerBox (number)
+            
+            Output JSON ONLY. No Markdown.
+        `;
+
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: {
+                parts: [
+                    { inlineData: { mimeType: 'image/jpeg', data: base64Data } },
+                    { text: prompt }
+                ]
+            },
+            config: { responseMimeType: 'application/json' }
+        });
+
+        return JSON.parse(response.text || '{}');
+    } catch (e) {
+        console.error("Image Parse Failed", e);
+        return {};
+    }
+};
+
 export const generateDailyBriefing = async (records: ReplenishmentRecord[]) => {
     try {
         const ai = getAiClient();

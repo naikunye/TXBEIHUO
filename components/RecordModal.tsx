@@ -1,9 +1,9 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { ReplenishmentRecord, Store, ChangeLogEntry } from '../types';
-import { X, Upload, Image as ImageIcon, Plane, Ship, RefreshCcw, Package, Box, Percent, Zap, BarChart, Tag, Calculator, DollarSign, RotateCcw, Scale, Store as StoreIcon, Clock, ShieldCheck, Factory, Swords, Truck, ChevronDown, Check, History, FileText, User } from 'lucide-react';
+import { X, Upload, Image as ImageIcon, Plane, Ship, RefreshCcw, Package, Box, Percent, Zap, BarChart, Tag, Calculator, DollarSign, RotateCcw, Scale, Store as StoreIcon, Clock, ShieldCheck, Factory, Swords, Truck, ChevronDown, Check, History, FileText, User, Sparkles, Loader2 } from 'lucide-react';
 import { EXCHANGE_RATE } from '../constants';
-import { analyzeCompetitor } from '../services/geminiService';
+import { analyzeCompetitor, parseImageToRecord } from '../services/geminiService';
 
 interface RecordModalProps {
   isOpen: boolean;
@@ -70,8 +70,10 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
   const [shippingCurrency, setShippingCurrency] = useState<'CNY' | 'USD'>('CNY');
   const [skuInput, setSkuInput] = useState(''); 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const magicUploadRef = useRef<HTMLInputElement>(null); // For Magic Upload
   const [competitorAnalysis, setCompetitorAnalysis] = useState<string | null>(null);
   const [isAnalyzingCompetitor, setIsAnalyzingCompetitor] = useState(false);
+  const [isMagicParsing, setIsMagicParsing] = useState(false); // Magic Parser State
   
   const [isStoreDropdownOpen, setIsStoreDropdownOpen] = useState(false);
   const storeDropdownRef = useRef<HTMLDivElement>(null);
@@ -226,6 +228,36 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
     }
   };
 
+  // --- NEW: Magic Image Parser Handler ---
+  const handleMagicUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+
+      setIsMagicParsing(true);
+      const reader = new FileReader();
+      reader.onloadend = async () => {
+          const base64 = reader.result as string;
+          // Set image first for preview
+          setFormData(prev => ({ ...prev, imageUrl: base64 }));
+          
+          // Call AI Service
+          const parsedData = await parseImageToRecord(base64);
+          
+          // Merge data
+          if (parsedData) {
+              setFormData(prev => ({
+                  ...prev,
+                  ...parsedData,
+                  // Ensure defaults if AI missed them
+                  itemsPerBox: parsedData.itemsPerBox || prev.itemsPerBox,
+                  unitWeightKg: parsedData.unitWeightKg || prev.unitWeightKg
+              }));
+          }
+          setIsMagicParsing(false);
+      };
+      reader.readAsDataURL(file);
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const status = initialData ? initialData.status : 'Planning';
@@ -306,9 +338,23 @@ export const RecordModal: React.FC<RecordModalProps> = ({ isOpen, onClose, onSav
                   </button>
               </div>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 bg-white p-2 rounded-full shadow-sm hover:shadow transition">
-            <X size={20} />
-          </button>
+          <div className="flex gap-2">
+              {!initialData && (
+                  <button 
+                    onClick={() => magicUploadRef.current?.click()}
+                    disabled={isMagicParsing}
+                    className="flex items-center gap-1 bg-gradient-to-r from-purple-500 to-pink-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow-lg hover:shadow-purple-200 transition-all active:scale-95"
+                  >
+                      {isMagicParsing ? <Loader2 className="animate-spin" size={14} /> : <Sparkles size={14} />}
+                      {isMagicParsing ? 'AI 识别中...' : '魔法识图填单'}
+                  </button>
+              )}
+              <input type="file" ref={magicUploadRef} className="hidden" accept="image/*" onChange={handleMagicUpload} />
+              
+              <button onClick={onClose} className="text-gray-400 hover:text-gray-600 bg-white p-2 rounded-full shadow-sm hover:shadow transition">
+                <X size={20} />
+              </button>
+          </div>
         </div>
 
         {/* Modal Content */}
