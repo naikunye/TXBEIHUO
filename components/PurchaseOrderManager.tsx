@@ -16,14 +16,10 @@ import {
   Ship, 
   Plane, 
   Edit2, 
-  Save, 
   Search,
-  Filter,
-  AlertCircle,
-  MoreHorizontal,
   DollarSign,
-  TrendingUp,
-  X
+  BoxSelect,
+  Save
 } from 'lucide-react';
 
 interface PurchaseOrderManagerProps {
@@ -46,18 +42,20 @@ export const PurchaseOrderManager: React.FC<PurchaseOrderManagerProps> = ({
   // Edit Form State
   const [editForm, setEditForm] = useState<Partial<PurchaseOrder>>({});
 
+  // Receiving Modal State
+  const [receivingOrderId, setReceivingOrderId] = useState<string | null>(null);
+  const [receiveQty, setReceiveQty] = useState<number>(0);
+
   // --- Derived Data ---
   const filteredOrders = useMemo(() => {
     let result = [...orders];
 
-    // Tab Filter
     if (activeTab === 'Active') {
       result = result.filter(o => !['Arrived', 'Cancelled'].includes(o.status));
     } else if (activeTab === 'Completed') {
       result = result.filter(o => ['Arrived', 'Cancelled'].includes(o.status));
     }
 
-    // Search Filter
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       result = result.filter(o => 
@@ -68,7 +66,6 @@ export const PurchaseOrderManager: React.FC<PurchaseOrderManagerProps> = ({
       );
     }
 
-    // Sort by Date Desc
     return result.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [orders, activeTab, searchQuery]);
 
@@ -83,19 +80,53 @@ export const PurchaseOrderManager: React.FC<PurchaseOrderManagerProps> = ({
   // --- Handlers ---
 
   const handleNextStatus = (order: PurchaseOrder) => {
-      const flow: POStatus[] = ['Draft', 'Ordered', 'Production', 'Shipped', 'Arrived'];
+      const flow: POStatus[] = ['Draft', 'Ordered', 'Production', 'Shipped', 'PartiallyArrived', 'Arrived'];
       const currentIndex = flow.indexOf(order.status);
       
-      if (currentIndex !== -1 && currentIndex < flow.length - 1) {
+      // If current is Shipped or PartiallyArrived, next action is Receiving
+      if (order.status === 'Shipped' || order.status === 'PartiallyArrived') {
+          setReceivingOrderId(order.id);
+          const remaining = order.quantity - (order.receivedQuantity || 0);
+          setReceiveQty(remaining); // Default to remaining
+      } else if (currentIndex !== -1 && currentIndex < flow.length - 1) {
+          // Normal flow for Draft -> Ordered -> Production -> Shipped
           const nextStatus = flow[currentIndex + 1];
-          if (nextStatus === 'Arrived') {
-              if(window.confirm(`确认收货？\n\n这将自动增加 "${order.productName}" 的库存 ${order.quantity} 件。\n此操作不可撤销。`)) {
-                  onReceiveStock({ ...order, status: 'Arrived' });
-              }
-          } else {
-              onUpdateOrder({ ...order, status: nextStatus });
-          }
+          onUpdateOrder({ ...order, status: nextStatus });
       }
+  };
+
+  const confirmReceive = () => {
+      if (!receivingOrderId) return;
+      const order = orders.find(o => o.id === receivingOrderId);
+      if (!order) return;
+
+      const currentReceived = order.receivedQuantity || 0;
+      const newTotalReceived = currentReceived + receiveQty;
+      
+      // Determine new status
+      let newStatus: POStatus = order.status;
+      if (newTotalReceived >= order.quantity) {
+          newStatus = 'Arrived';
+      } else {
+          newStatus = 'PartiallyArrived';
+      }
+
+      // 1. Trigger Inventory Update (Callback) with the *current batch qty*
+      // We pass a modified object just for the event logic, or handle inside parent.
+      // The parent `onReceiveStock` expects a PO object to derive qty.
+      // We'll create a temporary object representing THIS shipment.
+      const shipmentDelta = { ...order, quantity: receiveQty, status: newStatus };
+      onReceiveStock(shipmentDelta);
+
+      // 2. Update the Actual Order Record
+      onUpdateOrder({ 
+          ...order, 
+          receivedQuantity: newTotalReceived,
+          status: newStatus 
+      });
+
+      setReceivingOrderId(null);
+      setReceiveQty(0);
   };
 
   const handleStartEdit = (order: PurchaseOrder) => {
@@ -106,7 +137,6 @@ export const PurchaseOrderManager: React.FC<PurchaseOrderManagerProps> = ({
 
   const handleSaveEdit = () => {
       if (editingId && editForm.id) {
-          // Recalculate total if price/qty changed
           const newQty = editForm.quantity || 0;
           const newPrice = editForm.unitPriceCNY || 0;
           const newTotal = newQty * newPrice;
@@ -127,21 +157,14 @@ export const PurchaseOrderManager: React.FC<PurchaseOrderManagerProps> = ({
       setEditForm({});
   };
 
-  const handleStatusChange = (order: PurchaseOrder, newStatus: POStatus) => {
-      if (newStatus === 'Arrived') {
-          handleNextStatus(order); // Re-use logic for arrival check
-      } else {
-          onUpdateOrder({ ...order, status: newStatus });
-      }
-  };
-
   // --- Constants ---
   const statusConfig: Record<POStatus, { label: string, color: string, bg: string, icon: any }> = {
       'Draft': { label: '草稿', color: 'text-gray-600', bg: 'bg-gray-100', icon: FileText },
       'Ordered': { label: '已下单', color: 'text-blue-600', bg: 'bg-blue-100', icon: CheckCircle2 },
       'Production': { label: '生产中', color: 'text-yellow-600', bg: 'bg-yellow-100', icon: Clock },
       'Shipped': { label: '运输中', color: 'text-purple-600', bg: 'bg-purple-100', icon: Truck },
-      'Arrived': { label: '已入库', color: 'text-green-600', bg: 'bg-green-100', icon: CheckCircle2 },
+      'PartiallyArrived': { label: '部分到货', color: 'text-orange-600', bg: 'bg-orange-100', icon: BoxSelect },
+      'Arrived': { label: '已完成', color: 'text-green-600', bg: 'bg-green-100', icon: CheckCircle2 },
       'Cancelled': { label: '已取消', color: 'text-red-600', bg: 'bg-red-100', icon: XCircle }
   };
 
@@ -152,7 +175,7 @@ export const PurchaseOrderManager: React.FC<PurchaseOrderManagerProps> = ({
   };
 
   return (
-    <div className="space-y-6 animate-fade-in pb-20">
+    <div className="space-y-6 animate-fade-in pb-20 relative">
        
        {/* 1. Dashboard Stats */}
        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -182,7 +205,6 @@ export const PurchaseOrderManager: React.FC<PurchaseOrderManagerProps> = ({
        {/* 2. Toolbar */}
        <div className="flex flex-col md:flex-row justify-between items-center gap-4 bg-white p-4 rounded-xl border border-gray-200 shadow-sm sticky top-0 z-20">
            
-           {/* Tabs */}
            <div className="flex bg-gray-100 p-1 rounded-lg">
                {(['All', 'Active', 'Completed'] as const).map(tab => (
                    <button
@@ -195,7 +217,6 @@ export const PurchaseOrderManager: React.FC<PurchaseOrderManagerProps> = ({
                ))}
            </div>
 
-           {/* Search */}
            <div className="relative w-full md:w-80">
                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
                <input 
@@ -220,6 +241,7 @@ export const PurchaseOrderManager: React.FC<PurchaseOrderManagerProps> = ({
                    const isEditing = editingId === order.id;
                    const StatusIcon = statusConfig[order.status].icon;
                    const isDone = ['Arrived', 'Cancelled'].includes(order.status);
+                   const isReceiving = ['Shipped', 'PartiallyArrived'].includes(order.status);
 
                    return (
                        <div key={order.id} className={`bg-white rounded-xl border transition-all hover:shadow-md ${isDone ? 'border-gray-200 opacity-90' : 'border-gray-200 shadow-sm'}`}>
@@ -258,10 +280,10 @@ export const PurchaseOrderManager: React.FC<PurchaseOrderManagerProps> = ({
                                             </button>
                                             <button 
                                                 onClick={() => handleNextStatus(order)}
-                                                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 text-white rounded-lg text-xs font-bold hover:bg-slate-800 transition-colors shadow-sm"
+                                                className={`flex items-center gap-1.5 px-3 py-1.5 text-white rounded-lg text-xs font-bold transition-colors shadow-sm ${isReceiving ? 'bg-orange-600 hover:bg-orange-700' : 'bg-slate-900 hover:bg-slate-800'}`}
                                             >
-                                                {order.status === 'Draft' ? '确认下单' : order.status === 'Ordered' ? '开始生产' : order.status === 'Production' ? '发货' : '入库'}
-                                                <ArrowRight size={12} />
+                                                {order.status === 'Draft' ? '确认下单' : order.status === 'Ordered' ? '开始生产' : order.status === 'Production' ? '发货' : '收货入库'}
+                                                {isReceiving ? <BoxSelect size={12} /> : <ArrowRight size={12} />}
                                             </button>
                                            </>
                                        )}
@@ -316,10 +338,17 @@ export const PurchaseOrderManager: React.FC<PurchaseOrderManagerProps> = ({
                                                </div>
                                            </div>
                                        ) : (
-                                           <div className="flex items-center gap-4 mt-2 text-sm">
-                                               <span className="font-medium text-gray-700">{order.quantity} units</span>
-                                               <span className="text-gray-400">x</span>
-                                               <span className="font-medium text-gray-700">¥{order.unitPriceCNY}</span>
+                                           <div className="flex flex-col gap-1 mt-2">
+                                               <div className="flex items-center gap-2 text-sm">
+                                                   <span className="font-medium text-gray-700">共 {order.quantity} pcs</span>
+                                                   <span className="text-gray-300">|</span>
+                                                   <span className="font-medium text-gray-700">¥{order.unitPriceCNY}</span>
+                                               </div>
+                                               {order.receivedQuantity !== undefined && order.receivedQuantity > 0 && (
+                                                   <div className="text-xs font-bold text-orange-600 bg-orange-50 px-2 py-0.5 rounded w-fit">
+                                                       已收货: {order.receivedQuantity} / {order.quantity}
+                                                   </div>
+                                               )}
                                            </div>
                                        )}
                                    </div>
@@ -374,7 +403,7 @@ export const PurchaseOrderManager: React.FC<PurchaseOrderManagerProps> = ({
                                        <>
                                            <div className="flex justify-between items-center mb-2">
                                                <span className="text-xs font-bold text-gray-500">物流信息</span>
-                                               {['Shipped', 'Arrived'].includes(order.status) && order.trackingNumber && (
+                                               {['Shipped', 'PartiallyArrived', 'Arrived'].includes(order.status) && order.trackingNumber && (
                                                    <a 
                                                        href={getTrackingLink(order.trackingNumber, order.carrier)}
                                                        target="_blank"
@@ -385,7 +414,7 @@ export const PurchaseOrderManager: React.FC<PurchaseOrderManagerProps> = ({
                                                    </a>
                                                )}
                                            </div>
-                                           {['Shipped', 'Arrived'].includes(order.status) ? (
+                                           {['Shipped', 'PartiallyArrived', 'Arrived'].includes(order.status) ? (
                                                <div className="space-y-1">
                                                    <div className="flex items-center gap-2 text-xs text-gray-700">
                                                        {order.shippingMethod === 'Air' ? <Plane size={12}/> : <Ship size={12}/>}
@@ -409,9 +438,10 @@ export const PurchaseOrderManager: React.FC<PurchaseOrderManagerProps> = ({
                            {!isDone && !isEditing && (
                                <div className="px-4 pb-4">
                                    <div className="flex items-center gap-1 h-1.5 w-full bg-gray-100 rounded-full overflow-hidden">
-                                       {['Draft', 'Ordered', 'Production', 'Shipped', 'Arrived'].map((step, i) => {
-                                           const flow = ['Draft', 'Ordered', 'Production', 'Shipped', 'Arrived'];
-                                           const currentIdx = flow.indexOf(order.status);
+                                       {['Draft', 'Ordered', 'Production', 'Shipped', 'PartiallyArrived'].map((step, i) => {
+                                           const flow = ['Draft', 'Ordered', 'Production', 'Shipped', 'PartiallyArrived'];
+                                           const currentIdx = flow.indexOf(order.status === 'PartiallyArrived' ? 'PartiallyArrived' : order.status);
+                                           // Treat 'Arrived' as separate final state, 'PartiallyArrived' shares slot with 'Shipped' visually or extends it
                                            const active = i <= currentIdx;
                                            return (
                                                <div 
@@ -429,6 +459,39 @@ export const PurchaseOrderManager: React.FC<PurchaseOrderManagerProps> = ({
                })
            )}
        </div>
+
+       {/* Receive Modal Overlay */}
+       {receivingOrderId && (
+           <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black bg-opacity-50 backdrop-blur-sm p-4 animate-fade-in">
+               <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm overflow-hidden p-6">
+                   <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
+                       <BoxSelect className="text-orange-600"/> 确认收货数量
+                   </h3>
+                   <div className="bg-orange-50 text-orange-800 text-sm p-3 rounded-lg mb-4">
+                       订单总量: {orders.find(o => o.id === receivingOrderId)?.quantity}
+                       <br/>
+                       已收数量: {orders.find(o => o.id === receivingOrderId)?.receivedQuantity || 0}
+                   </div>
+                   
+                   <div className="mb-4">
+                       <label className="block text-sm font-bold text-gray-700 mb-1">本次实收 (Units)</label>
+                       <input 
+                           type="number" 
+                           autoFocus
+                           className="w-full p-3 rounded-xl border border-gray-300 font-bold text-lg focus:border-orange-500 focus:ring-2 focus:ring-orange-200 outline-none"
+                           value={receiveQty}
+                           onChange={e => setReceiveQty(parseInt(e.target.value) || 0)}
+                       />
+                   </div>
+
+                   <div className="flex gap-3">
+                       <button onClick={() => setReceivingOrderId(null)} className="flex-1 py-3 rounded-xl border border-gray-200 font-bold text-gray-600 hover:bg-gray-50">取消</button>
+                       <button onClick={confirmReceive} className="flex-1 py-3 rounded-xl bg-slate-900 text-white font-bold hover:bg-slate-800 shadow-lg">确认入库</button>
+                   </div>
+               </div>
+           </div>
+       )}
+
     </div>
   );
 };

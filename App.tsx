@@ -65,6 +65,7 @@ import {
   Factory,
   ShoppingCart,
   ArrowRight,
+  ArrowUpRight,
   Warehouse,
   ShoppingBag,
   Wallet // New Icon for Finance
@@ -224,6 +225,62 @@ function App() {
   const removeToast = (id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
+
+  // --- 1. Real-time Subscription Setup ---
+  useEffect(() => {
+      // Only subscribe if we have a workspace ID and Supabase is configured
+      if (!workspaceId || !isSupabaseConfigured()) {
+          setSyncStatus('disconnected');
+          return;
+      }
+
+      setSyncStatus('connected');
+
+      // Subscribe to changes on 'replenishment_data' table
+      const channel = supabase
+          .channel('realtime-replenishment')
+          .on(
+              'postgres_changes',
+              {
+                  event: '*', // Listen to INSERT, UPDATE, DELETE
+                  schema: 'public',
+                  table: 'replenishment_data',
+                  filter: `workspace_id=eq.${workspaceId}`
+              },
+              (payload) => {
+                  console.log('Real-time change received:', payload);
+                  
+                  if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+                      const newRecord = payload.new.json_content as ReplenishmentRecord;
+                      setRecords(prev => {
+                          const exists = prev.find(r => r.id === newRecord.id);
+                          const updated = exists 
+                              ? prev.map(r => r.id === newRecord.id ? newRecord : r)
+                              : [...prev, newRecord];
+                          
+                          // Sync to local storage to keep offline capability
+                          localStorage.setItem('tanxing_records', JSON.stringify(updated));
+                          return updated;
+                      });
+                      addToast('数据已实时同步', 'info');
+                  } else if (payload.eventType === 'DELETE') {
+                      const deletedId = payload.old.id;
+                      setRecords(prev => {
+                          const updated = prev.filter(r => r.id !== deletedId);
+                          localStorage.setItem('tanxing_records', JSON.stringify(updated));
+                          return updated;
+                      });
+                      addToast('数据已远程删除', 'warning');
+                  }
+              }
+          )
+          .subscribe();
+
+      // Cleanup subscription on unmount or workspace change
+      return () => {
+          supabase.removeChannel(channel);
+      };
+  }, [workspaceId]);
 
   // --- Helper: Generic Cloud Sync ---
   const syncItemToCloud = async (item: ReplenishmentRecord | Store) => {
@@ -679,23 +736,23 @@ function App() {
               );
           case 'purchasing':
               return (
-                <div className="flex flex-col gap-4">
+                <div className="flex flex-col gap-4 animate-fade-in">
                     {purchaseOrders.length === 0 && (
-                        <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 flex items-center justify-between mb-2">
-                            <div className="flex items-center gap-3">
-                                <div className="bg-blue-100 p-2 rounded-full text-blue-600">
-                                    <ShoppingCart size={20} />
+                        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 rounded-2xl p-6 flex items-center justify-between mb-2 shadow-sm">
+                            <div className="flex items-center gap-4">
+                                <div className="bg-white p-3 rounded-full text-blue-600 shadow-sm">
+                                    <ShoppingCart size={24} />
                                 </div>
-                                <div className="text-sm text-blue-800">
-                                    <span className="font-bold block">尚未创建采购单</span>
+                                <div className="text-sm text-blue-900">
+                                    <span className="font-bold text-lg block mb-1">尚未创建采购单</span>
                                     请前往“备货清单”选择商品，点击“采购”按钮创建第一笔订单。
                                 </div>
                             </div>
                             <button 
                                 onClick={() => setCurrentView('inventory')} 
-                                className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-blue-700 transition-colors shadow-sm flex items-center gap-2"
+                                className="bg-blue-600 text-white px-5 py-2.5 rounded-xl text-sm font-bold hover:bg-blue-700 transition-all shadow-md active:scale-95 flex items-center gap-2"
                             >
-                                去备货 <ArrowRight size={14} />
+                                去备货 <ArrowRight size={16} />
                             </button>
                         </div>
                     )}
@@ -713,29 +770,28 @@ function App() {
               const paginatedRecords = sortedRecords.slice(startIndex, startIndex + itemsPerPage);
 
               return (
-                <div className="space-y-4 animate-fade-in pb-20">
+                <div className="space-y-6 animate-fade-in pb-20">
                     {/* Top Toolbar */}
-                    <div className="flex flex-col xl:flex-row gap-4 justify-between items-start xl:items-center bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+                    <div className="glass-panel p-2 rounded-2xl shadow-sm flex flex-col xl:flex-row gap-4 justify-between items-start xl:items-center">
                         <div className="relative group w-full xl:w-96">
-                             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 group-focus-within:text-blue-500 transition-colors" size={18} />
+                             <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-500 transition-colors" size={20} />
                              <input 
                                 type="text" 
                                 placeholder="搜索产品名称或 SKU..." 
                                 value={searchQuery}
                                 onChange={(e) => setSearchQuery(e.target.value)}
-                                className="pl-10 pr-4 py-2.5 bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 w-full transition-all text-sm"
+                                className="pl-12 pr-4 py-3 bg-transparent w-full text-sm font-medium text-slate-700 placeholder-slate-400 focus:outline-none"
                              />
                         </div>
-                        <div className="flex items-center gap-3 w-full xl:w-auto justify-end">
-                             <div className="flex items-center gap-2 bg-gray-50 px-3 py-2 rounded-lg border border-gray-200">
-                                 <Filter size={14} className="text-gray-500"/>
-                                 <span className="text-xs text-gray-500 font-medium">状态:</span>
+                        <div className="flex items-center gap-2 w-full xl:w-auto justify-end p-2">
+                             <div className="flex items-center gap-2 bg-white/50 px-4 py-2 rounded-xl border border-white/50 backdrop-blur-sm">
+                                 <Filter size={16} className="text-slate-500"/>
                                  <select 
                                     value={statusFilter}
                                     onChange={(e) => setStatusFilter(e.target.value as any)}
-                                    className="bg-transparent text-sm font-bold text-gray-700 outline-none cursor-pointer"
+                                    className="bg-transparent text-sm font-bold text-slate-700 outline-none cursor-pointer"
                                  >
-                                     <option value="All">全部 (All)</option>
+                                     <option value="All">全部状态</option>
                                      <option value="Planning">计划中</option>
                                      <option value="Shipped">运输中</option>
                                      <option value="Arrived">已入库</option>
@@ -746,81 +802,85 @@ function App() {
 
                     {/* AI Analysis Result */}
                     {aiAnalysis && (
-                        <div className="bg-white p-6 rounded-2xl shadow-lg border border-indigo-100 relative overflow-hidden animate-slide-up">
-                            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500"></div>
+                        <div className="bg-white/80 backdrop-blur-md p-6 rounded-2xl shadow-xl border border-white/20 relative overflow-hidden animate-slide-up ring-1 ring-purple-100">
+                            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500"></div>
                             <div className="flex justify-between items-center mb-4">
-                                <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
-                                    <Sparkles className="text-purple-500" size={20} />
+                                <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                                    <Sparkles className="text-purple-500 fill-purple-100" size={20} />
                                     {analysisTitle}
                                 </h3>
-                                <button onClick={() => setAiAnalysis(null)} className="text-gray-400 hover:text-gray-600"><X size={20}/></button>
+                                <button onClick={() => setAiAnalysis(null)} className="p-2 hover:bg-gray-100 rounded-full transition-colors"><X size={20} className="text-gray-400"/></button>
                             </div>
-                            <div className="prose max-w-none text-sm" dangerouslySetInnerHTML={{ __html: aiAnalysis }} />
+                            <div className="prose prose-sm max-w-none text-gray-600 leading-relaxed" dangerouslySetInnerHTML={{ __html: aiAnalysis }} />
                         </div>
                     )}
 
                     {/* Table Container */}
-                    <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-                        <div className="px-6 py-4 border-b border-gray-100 flex flex-col md:flex-row justify-between items-center gap-4 bg-gray-50/50">
-                            <div className="flex items-center gap-3">
-                                <div className="flex items-center gap-2 text-sm font-bold text-gray-700">
-                                    <List size={16} className="text-gray-400"/>
+                    <div className="bg-white/80 backdrop-blur-xl rounded-3xl shadow-sm border border-white/50 overflow-hidden">
+                        <div className="px-6 py-5 border-b border-slate-100 flex flex-col md:flex-row justify-between items-center gap-4 bg-white/40">
+                            <div className="flex items-center gap-4">
+                                <div className="flex items-center gap-2 text-sm font-bold text-slate-800">
+                                    <List size={18} className="text-indigo-500"/>
                                     库存清单
-                                    <span className="bg-gray-200 text-gray-600 px-2 py-0.5 rounded-full text-xs">{activeRecords.length}</span>
+                                    <span className="bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full text-xs border border-indigo-100">{activeRecords.length}</span>
                                 </div>
-                                <div className="flex items-center gap-1.5 bg-green-100/50 text-green-700 px-2 py-1 rounded-md border border-green-200 text-[10px] font-bold">
-                                    <Clock size={10} />
-                                    Auto: ON
+                                <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[10px] font-bold tracking-wide uppercase ${syncStatus === 'connected' ? 'bg-emerald-50/50 text-emerald-600 border-emerald-200' : 'bg-gray-100 text-gray-500 border-gray-200'}`}>
+                                    {syncStatus === 'connected' ? <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div> : <WifiOff size={10} />}
+                                    {syncStatus === 'connected' ? 'Live Sync' : 'Offline'}
                                 </div>
                             </div>
                             <div className="flex items-center gap-2">
-                                <button onClick={() => setIsErpSyncOpen(true)} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-blue-200 text-blue-600 rounded-lg text-xs font-bold hover:bg-blue-50 transition-colors shadow-sm">
-                                    <RefreshCw size={12} /> ERP 同步
+                                <button onClick={() => setIsErpSyncOpen(true)} className="group flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 text-slate-600 rounded-xl text-xs font-bold hover:border-blue-300 hover:text-blue-600 transition-all shadow-sm">
+                                    <RefreshCw size={14} className="group-hover:rotate-180 transition-transform duration-500" /> ERP 同步
                                 </button>
-                                <button onClick={() => setIsRestockPlanOpen(true)} className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 border border-slate-900 text-white rounded-lg text-xs font-bold hover:bg-slate-700 transition-colors shadow-sm">
-                                    <CalendarClock size={12} /> {selectedIds.size > 0 ? `补货规划 (${selectedIds.size})` : '智能补货规划'}
+                                <button onClick={() => setIsRestockPlanOpen(true)} className="flex items-center gap-2 px-4 py-2 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-slate-800 transition-all shadow-lg hover:shadow-xl active:scale-95">
+                                    <CalendarClock size={14} /> {selectedIds.size > 0 ? `补货 (${selectedIds.size})` : '智能补货'}
                                 </button>
-                                <button onClick={() => setIsBackupModalOpen(true)} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-200 text-gray-600 rounded-lg text-xs font-bold hover:bg-gray-50 transition-colors shadow-sm" title="导出数据">
-                                    <Download size={12} /> 导出
+                                <button onClick={() => setIsBackupModalOpen(true)} className="p-2 bg-white border border-slate-200 text-slate-500 rounded-xl hover:bg-slate-50 transition-colors" title="导出数据">
+                                    <Download size={16} />
                                 </button>
                             </div>
                         </div>
 
                         <div className="overflow-x-auto">
                             <table className="w-full text-left">
-                                <thead className="bg-gray-50 border-b border-gray-200">
+                                <thead className="bg-slate-50/50 border-b border-slate-200 text-xs text-slate-500 font-semibold uppercase tracking-wider">
                                     <tr>
-                                        <th className="p-4 pl-6 w-12">
-                                            <button onClick={toggleSelectAll} className="flex items-center text-gray-400 hover:text-blue-500">
-                                                {selectedIds.size > 0 && selectedIds.size === activeRecords.length ? <CheckSquare size={18} className="text-blue-600" /> : <Square size={18} />}
+                                        <th className="p-5 pl-6 w-12">
+                                            <button onClick={toggleSelectAll} className="flex items-center text-slate-400 hover:text-indigo-500 transition-colors">
+                                                {selectedIds.size > 0 && selectedIds.size === activeRecords.length ? <CheckSquare size={20} className="text-indigo-600" /> : <Square size={20} />}
                                             </button>
                                         </th>
-                                        <th onClick={() => requestSort('sku')} className="p-4 pl-0 text-xs font-bold text-gray-500 uppercase cursor-pointer hover:bg-gray-100 w-[180px]">
-                                            <div className="flex items-center gap-1">SKU / 阶段 {sortConfig?.key === 'sku' && <ChevronDown size={12} />}</div>
+                                        <th onClick={() => requestSort('sku')} className="p-5 pl-0 cursor-pointer hover:text-indigo-600 transition-colors w-[200px]">
+                                            <div className="flex items-center gap-1">SKU / 阶段 {sortConfig?.key === 'sku' && <ChevronDown size={14} />}</div>
                                         </th>
-                                        <th className="p-4 text-xs font-bold text-gray-500 uppercase">产品信息 / 供应商</th>
-                                        <th className="p-4 text-xs font-bold text-gray-500 uppercase">物流 (Live Tracking)</th>
-                                        <th onClick={() => requestSort('totalInvestment')} className="p-4 text-xs font-bold text-gray-500 uppercase cursor-pointer hover:bg-gray-100">
-                                            <div className="flex items-center gap-1">资金投入 (TOTAL) {sortConfig?.key === 'totalInvestment' && <ChevronDown size={12} />}</div>
+                                        <th className="p-5">产品信息 / 供应商</th>
+                                        <th className="p-5">物流 (Live)</th>
+                                        <th onClick={() => requestSort('totalInvestment')} className="p-5 cursor-pointer hover:text-indigo-600 transition-colors">
+                                            <div className="flex items-center gap-1">资金投入 {sortConfig?.key === 'totalInvestment' && <ChevronDown size={14} />}</div>
                                         </th>
-                                        <th onClick={() => requestSort('daysOfSupply')} className="p-4 text-xs font-bold text-gray-500 uppercase cursor-pointer hover:bg-gray-100">
-                                            <div className="flex items-center gap-1">库存数量 (STOCK) {sortConfig?.key === 'daysOfSupply' && <ChevronDown size={12} />}</div>
+                                        <th onClick={() => requestSort('daysOfSupply')} className="p-5 cursor-pointer hover:text-indigo-600 transition-colors">
+                                            <div className="flex items-center gap-1">库存 (Stock) {sortConfig?.key === 'daysOfSupply' && <ChevronDown size={14} />}</div>
                                         </th>
-                                        <th onClick={() => requestSort('profit')} className="p-4 text-xs font-bold text-gray-500 uppercase cursor-pointer hover:bg-gray-100">
-                                            <div className="flex items-center gap-1">销售表现 {sortConfig?.key === 'profit' && <ChevronDown size={12} />}</div>
+                                        <th onClick={() => requestSort('profit')} className="p-5 cursor-pointer hover:text-indigo-600 transition-colors">
+                                            <div className="flex items-center gap-1">销售表现 {sortConfig?.key === 'profit' && <ChevronDown size={14} />}</div>
                                         </th>
-                                        <th className="p-4 pr-6 text-xs font-bold text-gray-500 uppercase text-right">操作</th>
+                                        <th className="p-5 pr-6 text-right">操作</th>
                                     </tr>
                                 </thead>
-                                <tbody className="divide-y divide-gray-50">
+                                <tbody className="divide-y divide-slate-100">
                                     {paginatedRecords.length === 0 ? (
                                         <tr>
-                                            <td colSpan={8} className="p-12 text-center text-gray-400">
-                                                <Package size={48} className="mx-auto mb-3 opacity-20" />
-                                                <p>暂无符合条件的记录</p>
-                                                <button onClick={() => { setEditingRecord(null); setIsModalOpen(true); }} className="mt-4 text-blue-600 font-bold text-sm hover:underline">
-                                                    立即添加
-                                                </button>
+                                            <td colSpan={8} className="p-16 text-center text-slate-400">
+                                                <div className="flex flex-col items-center">
+                                                    <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mb-4">
+                                                        <Package size={32} className="opacity-40" />
+                                                    </div>
+                                                    <p className="font-medium text-slate-500">暂无符合条件的记录</p>
+                                                    <button onClick={() => { setEditingRecord(null); setIsModalOpen(true); }} className="mt-4 text-indigo-600 font-bold text-sm hover:underline">
+                                                        + 立即添加产品
+                                                    </button>
+                                                </div>
                                             </td>
                                         </tr>
                                     ) : (
@@ -828,7 +888,7 @@ function App() {
                                             const metrics = calculateMetrics(record, appSettings);
                                             const totalInvestment = (record.quantity * record.unitPriceCNY) + metrics.firstLegCostCNY;
                                             
-                                            let lifecycleClass = 'bg-gray-100 text-gray-500';
+                                            let lifecycleClass = 'bg-slate-100 text-slate-500 border-slate-200';
                                             let lifecycleIcon = null;
                                             if (record.lifecycle === 'New') { lifecycleClass = 'bg-blue-50 text-blue-600 border-blue-100'; lifecycleIcon = '🌱 新品'; }
                                             else if (record.lifecycle === 'Growth') { lifecycleClass = 'bg-emerald-50 text-emerald-600 border-emerald-100'; lifecycleIcon = '🚀 爆品'; }
@@ -840,25 +900,25 @@ function App() {
                                             const isSelected = selectedIds.has(record.id);
 
                                             return (
-                                                <tr key={record.id} className={`hover:bg-blue-50/20 transition-colors group ${isSelected ? 'bg-blue-50/40' : ''}`}>
-                                                    <td className="p-4 pl-6 align-top">
-                                                        <button onClick={() => toggleSelection(record.id)} className="text-gray-300 hover:text-blue-500 pt-1">
-                                                            {isSelected ? <CheckSquare size={18} className="text-blue-600" /> : <Square size={18} />}
+                                                <tr key={record.id} className={`group hover:bg-slate-50/80 transition-colors ${isSelected ? 'bg-indigo-50/40' : ''}`}>
+                                                    <td className="p-5 pl-6 align-top">
+                                                        <button onClick={() => toggleSelection(record.id)} className="text-slate-300 hover:text-indigo-500 pt-1 transition-colors">
+                                                            {isSelected ? <CheckSquare size={20} className="text-indigo-600" /> : <Square size={20} />}
                                                         </button>
                                                     </td>
-                                                    <td className="p-4 pl-0 align-top">
+                                                    <td className="p-5 pl-0 align-top">
                                                         <div className="flex flex-col gap-2">
-                                                            <div className="flex items-center gap-2 font-bold text-gray-800 text-sm">
-                                                                <span className="w-2 h-2 rounded-full bg-gray-300"></span>
+                                                            <div className="flex items-center gap-2 font-bold text-slate-900 text-sm">
+                                                                <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
                                                                 {record.sku}
                                                             </div>
-                                                            <div className="flex flex-wrap gap-1">
-                                                                <span className={`text-[10px] px-1.5 py-0.5 rounded border ${lifecycleClass} font-medium flex items-center gap-1`}>
+                                                            <div className="flex flex-wrap gap-1.5">
+                                                                <span className={`text-[10px] px-2 py-0.5 rounded border ${lifecycleClass} font-bold flex items-center gap-1 shadow-sm`}>
                                                                     {lifecycleIcon}
                                                                 </span>
-                                                                <span className={`text-[10px] px-1.5 py-0.5 rounded border font-medium ${
+                                                                <span className={`text-[10px] px-2 py-0.5 rounded border font-bold shadow-sm ${
                                                                     record.status === 'Planning' ? 'bg-yellow-50 text-yellow-700 border-yellow-200' :
-                                                                    record.status === 'Shipped' ? 'bg-blue-50 text-blue-700 border-blue-200' :
+                                                                    record.status === 'Shipped' ? 'bg-sky-50 text-sky-700 border-sky-200' :
                                                                     'bg-green-50 text-green-700 border-green-200'
                                                                 }`}>
                                                                     {record.status === 'Planning' ? '计划中' : record.status === 'Shipped' ? '运输中' : '已入库'}
@@ -866,125 +926,118 @@ function App() {
                                                             </div>
                                                         </div>
                                                     </td>
-                                                    <td className="p-4 align-top">
-                                                        <div className="flex items-start gap-3">
+                                                    <td className="p-5 align-top">
+                                                        <div className="flex items-start gap-4">
                                                             <div 
-                                                                className="w-10 h-10 rounded-lg bg-gray-100 border border-gray-200 overflow-hidden flex-shrink-0 cursor-pointer"
+                                                                className="w-12 h-12 rounded-xl bg-slate-100 border border-slate-200 overflow-hidden flex-shrink-0 cursor-pointer hover:shadow-md transition-all"
                                                                 onClick={() => { setEditingRecord(record); setIsModalOpen(true); }}
                                                             >
-                                                                {record.imageUrl ? <img src={record.imageUrl} className="w-full h-full object-cover" /> : <Package className="w-full h-full p-2 text-gray-300"/>}
+                                                                {record.imageUrl ? <img src={record.imageUrl} className="w-full h-full object-cover" /> : <Package className="w-full h-full p-3 text-slate-300"/>}
                                                             </div>
-                                                            <div>
-                                                                <div className="text-sm font-medium text-gray-800 line-clamp-1 max-w-[150px]" title={record.productName}>{record.productName}</div>
-                                                                <div className="text-[10px] text-gray-400 font-mono mt-0.5">{record.date}</div>
+                                                            <div className="min-w-0">
+                                                                <div className="text-sm font-bold text-slate-800 line-clamp-1 group-hover:text-indigo-600 transition-colors" title={record.productName}>{record.productName}</div>
+                                                                <div className="text-[10px] text-slate-400 font-mono mt-1">{record.date}</div>
                                                                 {record.supplierName && (
-                                                                    <div className="flex items-center gap-1 text-[10px] text-gray-500 mt-1 bg-gray-100 px-1.5 py-0.5 rounded w-fit">
+                                                                    <div className="flex items-center gap-1 text-[10px] text-slate-500 mt-1 bg-slate-100 px-1.5 py-0.5 rounded w-fit border border-slate-200">
                                                                         <Factory size={10} />
-                                                                        <span className="truncate max-w-[100px]">{record.supplierName}</span>
+                                                                        <span className="truncate max-w-[80px]">{record.supplierName}</span>
                                                                     </div>
                                                                 )}
                                                             </div>
                                                         </div>
                                                     </td>
-                                                    <td className="p-4 align-top">
-                                                        <div className="flex items-center gap-1 text-xs font-bold text-gray-600 mb-1">
-                                                            {record.shippingMethod === 'Air' ? <Plane size={12} className="text-blue-500"/> : <Ship size={12} className="text-indigo-500"/>}
-                                                            <span className={record.shippingMethod === 'Air' ? 'text-blue-600' : 'text-indigo-600'}>
+                                                    <td className="p-5 align-top">
+                                                        <div className="flex items-center gap-1.5 text-xs font-bold mb-1">
+                                                            <div className={`p-1 rounded ${record.shippingMethod === 'Air' ? 'bg-blue-100 text-blue-600' : 'bg-indigo-100 text-indigo-600'}`}>
+                                                                {record.shippingMethod === 'Air' ? <Plane size={12}/> : <Ship size={12}/>}
+                                                            </div>
+                                                            <span className={record.shippingMethod === 'Air' ? 'text-blue-700' : 'text-indigo-700'}>
                                                                 {record.shippingMethod === 'Air' ? '空运' : '海运'}
                                                             </span>
                                                         </div>
-                                                        <div className="text-[10px] text-gray-500">
-                                                            {record.totalCartons}箱 | {metrics.totalWeightKg.toFixed(1)}kg
+                                                        <div className="text-[10px] text-slate-500 font-medium pl-1">
+                                                            {record.totalCartons}箱 · {metrics.totalWeightKg.toFixed(1)}kg
                                                         </div>
                                                         {record.status === 'Shipped' && record.trackingNumber && (
-                                                            <div className="mt-1">
+                                                            <div className="mt-1.5">
                                                                 <a 
                                                                     href={`https://www.17track.net/zh-cn/track?nums=${record.trackingNumber}`} 
                                                                     target="_blank" 
                                                                     rel="noopener noreferrer"
-                                                                    className="flex items-center gap-1 text-[10px] text-blue-500 hover:underline bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100 w-fit"
+                                                                    className="flex items-center gap-1 text-[10px] text-blue-600 hover:text-blue-800 bg-blue-50/50 px-2 py-1 rounded-lg border border-blue-100 w-fit transition-colors"
                                                                 >
                                                                     <Truck size={10} />
-                                                                    {record.carrier || 'Track'}: {record.trackingNumber.slice(0, 8)}...
+                                                                    {record.carrier ? `${record.carrier}: ` : ''}{record.trackingNumber.slice(0, 8)}...
                                                                 </a>
                                                             </div>
                                                         )}
                                                     </td>
-                                                    <td className="p-4 align-top">
+                                                    <td className="p-5 align-top">
                                                         <div className="font-bold text-sm text-slate-800">
                                                             {formatCurrency(totalInvestment, 'CNY')}
                                                         </div>
-                                                        <div className="flex flex-col gap-0.5 mt-1">
-                                                            <div className="flex items-center gap-1 text-[10px] text-gray-500">
-                                                                <span className="w-1.5 h-1.5 rounded-full bg-blue-400"></span>
+                                                        <div className="flex flex-col gap-1 mt-1.5">
+                                                            <div className="flex items-center gap-1.5 text-[10px] text-slate-500">
+                                                                <div className="w-1 h-3 rounded-full bg-blue-400"></div>
                                                                 货: {formatCurrency(record.quantity * record.unitPriceCNY, 'CNY')}
                                                             </div>
-                                                            <div className="flex items-center gap-1 text-[10px] text-gray-500">
-                                                                <span className="w-1.5 h-1.5 rounded-full bg-orange-400"></span>
+                                                            <div className="flex items-center gap-1.5 text-[10px] text-slate-500">
+                                                                <div className="w-1 h-3 rounded-full bg-orange-400"></div>
                                                                 运: {formatCurrency(metrics.firstLegCostCNY, 'CNY')}
                                                             </div>
                                                         </div>
                                                     </td>
-                                                    <td className="p-4 align-top">
-                                                        <div className="flex items-center gap-3">
-                                                            <div className="text-lg font-bold text-gray-800">{record.quantity} <span className="text-xs font-normal text-gray-400">pcs</span></div>
+                                                    <td className="p-5 align-top">
+                                                        <div className="flex items-center gap-2">
+                                                            <div className="text-base font-bold text-slate-900">{record.quantity}</div>
                                                             {record.dailySales > 0 && (
-                                                                <div className="text-xs font-mono font-bold text-gray-500 bg-gray-100 px-1.5 rounded">
-                                                                    {metrics.daysOfSupply.toFixed(0)}天
+                                                                <div className="text-[10px] font-mono font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
+                                                                    {metrics.daysOfSupply.toFixed(0)}d
                                                                 </div>
                                                             )}
                                                         </div>
-                                                        <div className="flex justify-between items-center mt-1 pr-4">
-                                                            <span className="text-[10px] text-gray-400">日销: {record.dailySales}</span>
-                                                            {isUrgent && <span className="text-[10px] font-bold text-red-500 bg-red-50 px-1 rounded">急需补货</span>}
-                                                            {isRecommended && <span className="text-[10px] font-bold text-orange-500 bg-orange-50 px-1 rounded">建议备货</span>}
+                                                        <div className="flex justify-between items-center mt-1.5">
+                                                            <span className="text-[10px] text-slate-400">日销: {record.dailySales}</span>
+                                                            {isUrgent && <span className="text-[10px] font-bold text-red-600 bg-red-50 px-1.5 py-0.5 rounded flex items-center gap-1"><AlertTriangle size={8}/> 补货</span>}
                                                         </div>
                                                         {record.dailySales > 0 && (
-                                                            <div className="w-full bg-gray-100 h-1 rounded-full mt-1.5 max-w-[100px]">
+                                                            <div className="w-20 bg-slate-100 h-1.5 rounded-full mt-2 overflow-hidden">
                                                                 <div 
-                                                                    className={`h-1 rounded-full ${isUrgent ? 'bg-red-500' : isRecommended ? 'bg-orange-400' : 'bg-green-500'}`}
-                                                                    style={{ width: `${Math.min(metrics.daysOfSupply, 90)}%` }}
+                                                                    className={`h-full rounded-full transition-all duration-500 ${isUrgent ? 'bg-red-500' : isRecommended ? 'bg-orange-400' : 'bg-emerald-500'}`}
+                                                                    style={{ width: `${Math.min(metrics.daysOfSupply, 100)}%` }}
                                                                 ></div>
                                                             </div>
                                                         )}
                                                     </td>
-                                                    <td className="p-4 align-top">
-                                                        <div className="font-bold text-sm text-gray-800">${record.salesPriceUSD}</div>
-                                                        <div className="text-[10px] font-bold text-green-600 mt-1 flex items-center gap-1">
+                                                    <td className="p-5 align-top">
+                                                        <div className="font-bold text-sm text-slate-900">${record.salesPriceUSD}</div>
+                                                        <div className="text-[10px] font-bold text-emerald-600 mt-1 flex items-center gap-1">
                                                             <TrendingUp size={10} />
-                                                            毛利: {metrics.marginRate.toFixed(1)}%
+                                                            {metrics.marginRate.toFixed(1)}%
                                                         </div>
-                                                        <div className="text-[10px] text-red-400 mt-0.5">
-                                                            毛利: ${metrics.estimatedProfitUSD.toFixed(2)}
+                                                        <div className="text-[10px] text-slate-400 mt-0.5 font-mono">
+                                                            Profit: ${metrics.estimatedProfitUSD.toFixed(2)}
                                                         </div>
                                                     </td>
-                                                    <td className="p-4 pr-6 align-top text-right">
-                                                        <div className="flex items-center justify-end gap-2">
+                                                    <td className="p-5 pr-6 align-top text-right">
+                                                        <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
                                                             <button 
                                                                 onClick={() => { setPORecord(record); setIsPOModalOpen(true); }}
-                                                                className="px-3 py-1.5 bg-orange-100 text-orange-700 border border-orange-200 rounded-lg hover:bg-orange-200 hover:border-orange-300 transition-all flex items-center gap-1.5 text-xs font-bold shadow-sm"
-                                                                title="生成 PO / 议价邮件"
+                                                                className="p-2 bg-orange-50 text-orange-600 rounded-lg hover:bg-orange-100 transition-colors shadow-sm"
+                                                                title="采购"
                                                             >
-                                                                <FileText size={14} />
-                                                                采购
+                                                                <ShoppingCart size={14} />
                                                             </button>
                                                             <button 
                                                                 onClick={() => { setEditingRecord(record); setIsModalOpen(true); }}
-                                                                className="p-1.5 bg-purple-50 text-purple-600 rounded-lg hover:bg-purple-100 transition-colors"
-                                                                title="编辑详情"
+                                                                className="p-2 bg-white border border-slate-200 text-slate-600 rounded-lg hover:border-indigo-300 hover:text-indigo-600 transition-colors shadow-sm"
+                                                                title="编辑"
                                                             >
                                                                 <Edit size={14} />
                                                             </button>
                                                             <button 
-                                                                onClick={() => { setDistributeSourceRecord(record); setIsDistributeModalOpen(true); }}
-                                                                className="p-1.5 bg-emerald-50 text-emerald-600 rounded-lg hover:bg-emerald-100 transition-colors"
-                                                                title="库存分发"
-                                                            >
-                                                                <ArrowRightLeft size={14} />
-                                                            </button>
-                                                            <button 
                                                                 onClick={() => setDeleteConfirm({ isOpen: true, id: record.id })}
-                                                                className="p-1.5 bg-gray-50 text-gray-400 rounded-lg hover:bg-red-50 hover:text-red-500 transition-colors"
+                                                                className="p-2 bg-white border border-slate-200 text-slate-400 rounded-lg hover:bg-red-50 hover:text-red-500 hover:border-red-200 transition-colors shadow-sm"
                                                                 title="删除"
                                                             >
                                                                 <Trash2 size={14} />
@@ -998,12 +1051,12 @@ function App() {
                                 </tbody>
                             </table>
                         </div>
-                        <div className="p-4 border-t border-gray-200 bg-white flex justify-between items-center">
-                             <span className="text-xs text-gray-400">显示 1 到 {Math.min(activeRecords.length, itemsPerPage)} 条，共 {activeRecords.length} 条</span>
+                        <div className="p-4 border-t border-slate-200 bg-white/50 backdrop-blur-sm flex justify-between items-center">
+                             <span className="text-xs text-slate-400 font-medium">显示 {startIndex + 1}-{Math.min(startIndex + itemsPerPage, activeRecords.length)} / 共 {activeRecords.length} 条</span>
                              <div className="flex gap-2">
-                                 <button disabled={currentPage === 1} onClick={() => setCurrentPage(c => c - 1)} className="w-8 h-8 flex items-center justify-center rounded-lg bg-gray-50 text-gray-500 hover:bg-gray-100 disabled:opacity-50 transition-colors"><ChevronLeft size={14}/></button>
-                                 <button className="w-8 h-8 flex items-center justify-center rounded-lg bg-blue-600 text-white font-bold text-xs shadow-md shadow-blue-200">{currentPage}</button>
-                                 <button disabled={currentPage * itemsPerPage >= activeRecords.length} onClick={() => setCurrentPage(c => c + 1)} className="w-8 h-8 flex items-center justify-center rounded-lg bg-gray-50 text-gray-500 hover:bg-gray-100 disabled:opacity-50 transition-colors"><ChevronRight size={14}/></button>
+                                 <button disabled={currentPage === 1} onClick={() => setCurrentPage(c => c - 1)} className="w-8 h-8 flex items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-50 transition-all"><ChevronLeft size={14}/></button>
+                                 <div className="flex items-center justify-center px-3 h-8 rounded-lg bg-slate-900 text-white font-bold text-xs shadow-md">{currentPage}</div>
+                                 <button disabled={currentPage * itemsPerPage >= activeRecords.length} onClick={() => setCurrentPage(c => c + 1)} className="w-8 h-8 flex items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-50 transition-all"><ChevronRight size={14}/></button>
                              </div>
                         </div>
                     </div>
@@ -1013,25 +1066,30 @@ function App() {
   };
 
   return (
-    <div className="flex h-screen bg-gray-50 font-sans overflow-hidden">
-      <aside className="w-64 bg-slate-900 text-white flex-shrink-0 hidden md:flex flex-col">
+    <div className="flex h-screen bg-aurora font-sans overflow-hidden text-slate-800">
+      <aside className="w-72 glass-sidebar text-white flex-shrink-0 hidden md:flex flex-col z-50 shadow-2xl">
         {/* Sidebar Header */}
-        <div className="p-6 flex items-center gap-3 border-b border-slate-800">
-           <div className="bg-blue-600 p-2 rounded-lg"><LayoutDashboard className="text-white h-5 w-5" /></div>
-           <div><h1 className="font-bold text-lg tracking-tight">探行跨境ERP</h1><p className="text-xs text-slate-400">全链路供应链管理 v5.0</p></div>
+        <div className="p-6 flex items-center gap-3 border-b border-white/5 bg-slate-950/50">
+           <div className="bg-gradient-to-br from-blue-600 to-indigo-600 p-2.5 rounded-xl shadow-lg shadow-blue-900/50 ring-1 ring-white/10">
+               <LayoutDashboard className="text-white h-5 w-5" />
+           </div>
+           <div>
+               <h1 className="font-bold text-lg tracking-tight leading-none text-white">Tanxing ERP</h1>
+               <p className="text-[10px] text-slate-400 mt-1 font-medium tracking-wide opacity-80 uppercase">Intelligent Supply Chain</p>
+           </div>
         </div>
         
         {/* Sidebar Command Palette Trigger & Store */}
-        <div className="px-4 pt-4">
+        <div className="px-4 pt-6">
             <button 
                 onClick={() => setIsCommandPaletteOpen(true)}
-                className="w-full bg-slate-800 border border-slate-700 text-slate-400 hover:text-white hover:border-slate-600 rounded-lg p-2 flex items-center justify-between transition-colors group"
+                className="w-full bg-white/5 border border-white/5 text-slate-300 hover:bg-white/10 hover:text-white rounded-xl p-3 flex items-center justify-between transition-all group backdrop-blur-sm shadow-inner"
             >
-                <div className="flex items-center gap-2">
-                    <Search size={14} />
-                    <span className="text-xs">搜索...</span>
+                <div className="flex items-center gap-3">
+                    <Search size={16} className="text-slate-400 group-hover:text-white transition-colors" />
+                    <span className="text-xs font-medium">全局搜索 (⌘K)</span>
                 </div>
-                <div className="flex items-center gap-1 bg-slate-900 rounded px-1.5 py-0.5 border border-slate-700">
+                <div className="flex items-center gap-1 bg-black/30 rounded px-1.5 py-0.5 border border-white/5">
                     <Command size={10} />
                     <span className="text-[10px]">K</span>
                 </div>
@@ -1040,118 +1098,173 @@ function App() {
 
         <div className="px-4 pt-4 pb-2">
            <div className="relative">
-             <div className="bg-slate-800 rounded-lg p-2 flex items-center justify-between cursor-pointer hover:bg-slate-700 transition-colors border border-slate-700" onClick={() => setIsStoreManagerOpen(true)}>
-                <div className="flex items-center gap-2 overflow-hidden"><StoreIcon size={16} className="text-slate-400 shrink-0"/><span className="text-sm font-medium truncate">店铺管理</span></div>
-                <div className="bg-slate-600 text-[10px] px-1.5 rounded">{stores.length}</div>
+             <div className="bg-gradient-to-r from-slate-800 to-slate-900 rounded-xl p-3 flex items-center justify-between cursor-pointer hover:from-slate-700 hover:to-slate-800 transition-all border border-white/5 shadow-lg group" onClick={() => setIsStoreManagerOpen(true)}>
+                <div className="flex items-center gap-3 overflow-hidden">
+                    <div className="p-1.5 bg-indigo-500/20 rounded-lg text-indigo-300 group-hover:text-indigo-200 transition-colors">
+                        <StoreIcon size={16} />
+                    </div>
+                    <span className="text-sm font-bold truncate text-slate-200 group-hover:text-white">店铺矩阵</span>
+                </div>
+                <div className="bg-white/10 text-[10px] px-2 py-0.5 rounded-full font-bold text-slate-300">{stores.length}</div>
              </div>
              
-             <div className="mt-2 space-y-1">
-                 <button onClick={() => setActiveStoreId('all')} className={`w-full text-left px-2 py-1.5 rounded text-xs font-medium transition-colors flex items-center justify-between ${activeStoreId === 'all' ? 'bg-blue-600/20 text-blue-400' : 'text-slate-500 hover:text-slate-300'}`}><span>全部店铺 (All)</span>{activeStoreId === 'all' && <div className="w-1.5 h-1.5 rounded-full bg-blue-500"></div>}</button>
+             <div className="mt-3 space-y-1">
+                 <button onClick={() => setActiveStoreId('all')} className={`w-full text-left px-3 py-2 rounded-lg text-xs font-medium transition-all flex items-center justify-between group ${activeStoreId === 'all' ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50 border border-blue-500/50' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}>
+                     <span>全盘数据 (All Stores)</span>
+                     {activeStoreId === 'all' && <div className="w-1.5 h-1.5 rounded-full bg-white animate-pulse"></div>}
+                 </button>
                  {stores.map(store => (
-                     <button key={store.id} onClick={() => setActiveStoreId(store.id)} className={`w-full text-left px-2 py-1.5 rounded text-xs font-medium transition-colors flex items-center justify-between ${activeStoreId === store.id ? 'bg-slate-800 text-white' : 'text-slate-500 hover:text-slate-300'}`}>
-                        <div className="flex items-center gap-2"><span className={`w-2 h-2 rounded-full ${store.color}`}></span><span className="truncate max-w-[120px]">{store.name}</span></div>
-                        {activeStoreId === store.id && <div className="w-1.5 h-1.5 rounded-full bg-white"></div>}
+                     <button key={store.id} onClick={() => setActiveStoreId(store.id)} className={`w-full text-left px-3 py-2 rounded-lg text-xs font-medium transition-all flex items-center justify-between group ${activeStoreId === store.id ? 'bg-white/10 text-white border border-white/5 shadow-sm' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}>
+                        <div className="flex items-center gap-2">
+                            <span className={`w-2 h-2 rounded-full ${store.color} shadow-[0_0_8px_rgba(255,255,255,0.3)]`}></span>
+                            <span className="truncate max-w-[120px] group-hover:translate-x-1 transition-transform">{store.name}</span>
+                        </div>
                      </button>
                  ))}
              </div>
            </div>
         </div>
 
-        <div className="px-4 py-2 border-t border-slate-800 mt-2"></div>
-        <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
-          <div className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">核心业务</div>
-          <button onClick={() => setCurrentView('overview')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${currentView === 'overview' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><Home size={20} /><span className="font-medium">系统总览</span></button>
-          <button onClick={() => setCurrentView('inventory')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${currentView === 'inventory' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><List size={20} /><span className="font-medium">备货清单</span></button>
-          
-          <div className="px-4 py-2 mt-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">供应链管理</div>
-          <button onClick={() => setCurrentView('purchasing')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${currentView === 'purchasing' ? 'bg-orange-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><ShoppingCart size={20} /><span className="font-medium">采购管理 (PO)</span></button>
-          <button onClick={() => setCurrentView('wms')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${currentView === 'wms' ? 'bg-purple-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><Warehouse size={20} /><span className="font-medium">库存中心 (WMS)</span></button>
+        <div className="px-6 py-2">
+            <div className="h-px bg-gradient-to-r from-transparent via-white/10 to-transparent"></div>
+        </div>
 
-          <div className="px-4 py-2 mt-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">运营与工具</div>
-          <button onClick={() => setCurrentView('finance')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${currentView === 'finance' ? 'bg-slate-700 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><Wallet size={20} /><span className="font-medium">财务中心 (Finance)</span></button>
-          <button onClick={() => setCurrentView('analytics')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${currentView === 'analytics' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><PieChart size={20} /><span className="font-medium">数据分析</span></button>
-          <button onClick={() => setCurrentView('marketing')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all group ${currentView === 'marketing' ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><Sparkles size={20} className={currentView === 'marketing' ? 'text-yellow-300' : 'group-hover:text-purple-400'} /><span className="font-medium">AI 营销中心</span></button>
+        <nav className="flex-1 px-4 space-y-6 overflow-y-auto custom-scrollbar py-2">
           
-          <button onClick={() => setCurrentView('calculator')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${currentView === 'calculator' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><Calculator size={20} /><span className="font-medium">智能试算</span></button>
-          <button onClick={() => setCurrentView('logistics')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${currentView === 'logistics' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><Search size={20} /><span className="font-medium">物流查询</span></button>
+          <div>
+              <div className="px-2 mb-2 text-[10px] font-bold text-slate-500 uppercase tracking-widest">Core Business</div>
+              <div className="space-y-1">
+                  <button onClick={() => setCurrentView('overview')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all group ${currentView === 'overview' ? 'bg-white/10 text-white shadow-lg border border-white/5 font-bold backdrop-blur-md' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}>
+                      <Home size={18} className={currentView === 'overview' ? 'text-blue-400' : 'group-hover:text-slate-200'} />
+                      <span>系统总览 Dashboard</span>
+                  </button>
+                  <button onClick={() => setCurrentView('inventory')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all group ${currentView === 'inventory' ? 'bg-white/10 text-white shadow-lg border border-white/5 font-bold backdrop-blur-md' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}>
+                      <List size={18} className={currentView === 'inventory' ? 'text-blue-400' : 'group-hover:text-slate-200'} />
+                      <span>备货清单 Inventory</span>
+                  </button>
+              </div>
+          </div>
           
-          <button 
-            onClick={() => setIsRecycleBinOpen(true)} 
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all text-slate-400 hover:bg-slate-800 hover:text-red-400 group relative`}
-          >
-              <Trash2 size={20} />
-              <span className="font-medium">回收站</span>
-              {deletedRecords.length > 0 && (
-                <span className="absolute right-4 top-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-red-500"></span>
-              )}
-          </button>
+          <div>
+              <div className="px-2 mb-2 text-[10px] font-bold text-slate-500 uppercase tracking-widest">Supply Chain</div>
+              <div className="space-y-1">
+                  <button onClick={() => setCurrentView('purchasing')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all group ${currentView === 'purchasing' ? 'bg-white/10 text-white shadow-lg border border-white/5 font-bold backdrop-blur-md' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}>
+                      <ShoppingCart size={18} className={currentView === 'purchasing' ? 'text-orange-400' : 'group-hover:text-slate-200'} />
+                      <span>采购管理 PO</span>
+                  </button>
+                  <button onClick={() => setCurrentView('wms')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all group ${currentView === 'wms' ? 'bg-white/10 text-white shadow-lg border border-white/5 font-bold backdrop-blur-md' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}>
+                      <Warehouse size={18} className={currentView === 'wms' ? 'text-purple-400' : 'group-hover:text-slate-200'} />
+                      <span>库存中心 WMS</span>
+                  </button>
+                  <button onClick={() => setCurrentView('logistics')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all group ${currentView === 'logistics' ? 'bg-white/10 text-white shadow-lg border border-white/5 font-bold backdrop-blur-md' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}>
+                      <Search size={18} className={currentView === 'logistics' ? 'text-blue-400' : 'group-hover:text-slate-200'} />
+                      <span>物流追踪 Tracker</span>
+                  </button>
+              </div>
+          </div>
 
-          <button onClick={() => setIsGlobalSettingsOpen(true)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all text-slate-400 hover:bg-slate-800 hover:text-white`}><Settings size={20} /><span className="font-medium">全局配置</span></button>
-          <button onClick={() => setIsCloudConfigOpen(true)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${isCloudConfigOpen ? 'bg-slate-800 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><CloudUpload size={20} /><span className="font-medium">云端连接</span></button>
+          <div>
+              <div className="px-2 mb-2 text-[10px] font-bold text-slate-500 uppercase tracking-widest">Growth & Finance</div>
+              <div className="space-y-1">
+                  <button onClick={() => setCurrentView('finance')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all group ${currentView === 'finance' ? 'bg-white/10 text-white shadow-lg border border-white/5 font-bold backdrop-blur-md' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}>
+                      <Wallet size={18} className={currentView === 'finance' ? 'text-emerald-400' : 'group-hover:text-slate-200'} />
+                      <span>财务中心 Finance</span>
+                  </button>
+                  <button onClick={() => setCurrentView('analytics')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all group ${currentView === 'analytics' ? 'bg-white/10 text-white shadow-lg border border-white/5 font-bold backdrop-blur-md' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}>
+                      <PieChart size={18} className={currentView === 'analytics' ? 'text-blue-400' : 'group-hover:text-slate-200'} />
+                      <span>数据分析 Analytics</span>
+                  </button>
+                  <button onClick={() => setCurrentView('marketing')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all group relative overflow-hidden ${currentView === 'marketing' ? 'text-white font-bold' : 'text-slate-400 hover:text-white'}`}>
+                      {currentView === 'marketing' && <div className="absolute inset-0 bg-gradient-to-r from-indigo-600 to-purple-600 opacity-80 backdrop-blur-md border border-white/10"></div>}
+                      {currentView !== 'marketing' && <div className="absolute inset-0 bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity rounded-xl"></div>}
+                      <Sparkles size={18} className={`relative z-10 ${currentView === 'marketing' ? 'text-yellow-300' : 'group-hover:text-purple-400'}`} />
+                      <span className="relative z-10">AI 营销中心</span>
+                  </button>
+                  <button onClick={() => setCurrentView('calculator')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all group ${currentView === 'calculator' ? 'bg-white/10 text-white shadow-lg border border-white/5 font-bold backdrop-blur-md' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}>
+                      <Calculator size={18} className={currentView === 'calculator' ? 'text-blue-400' : 'group-hover:text-slate-200'} />
+                      <span>智能试算 Tools</span>
+                  </button>
+              </div>
+          </div>
         </nav>
         
-        {/* Footer */}
-        <div className="p-4 border-t border-slate-800">
-            <div className="flex items-center gap-3 px-2 mb-4">
-                <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-slate-300">
-                    <UserCircle size={20} />
-                </div>
-                <div className="flex-1 min-w-0">
-                    <p className="text-xs font-medium text-white truncate">Admin User</p>
-                    <p className="text-[10px] text-slate-500 truncate">admin@tanxing.tech</p>
-                </div>
+        {/* Footer Actions */}
+        <div className="p-4 border-t border-white/5 bg-black/20 backdrop-blur-sm">
+            <div className="flex gap-2 mb-4">
+                <button onClick={() => setIsGlobalSettingsOpen(true)} className="flex-1 flex flex-col items-center justify-center p-2 rounded-lg bg-white/5 hover:bg-white/10 transition-colors gap-1 group border border-white/5">
+                    <Settings size={16} className="text-slate-400 group-hover:text-white"/>
+                    <span className="text-[9px] text-slate-500 group-hover:text-slate-300">Setting</span>
+                </button>
+                <button onClick={() => setIsCloudConfigOpen(true)} className={`flex-1 flex flex-col items-center justify-center p-2 rounded-lg transition-colors gap-1 group border border-white/5 ${isCloudConfigOpen ? 'bg-blue-600 text-white' : 'bg-white/5 hover:bg-white/10'}`}>
+                    <CloudUpload size={16} className={isCloudConfigOpen ? 'text-white' : 'text-slate-400 group-hover:text-white'}/>
+                    <span className={`text-[9px] ${isCloudConfigOpen ? 'text-blue-100' : 'text-slate-500 group-hover:text-slate-300'}`}>Cloud</span>
+                </button>
+                <button onClick={() => setIsRecycleBinOpen(true)} className="flex-1 flex flex-col items-center justify-center p-2 rounded-lg bg-white/5 hover:bg-red-500/20 transition-colors gap-1 group relative border border-white/5">
+                    <Trash2 size={16} className="text-slate-400 group-hover:text-red-400"/>
+                    <span className="text-[9px] text-slate-500 group-hover:text-red-300">Bin</span>
+                    {deletedRecords.length > 0 && <span className="absolute top-1 right-1 w-1.5 h-1.5 bg-red-500 rounded-full"></span>}
+                </button>
             </div>
-            <div onClick={() => setIsAiChatOpen(true)} className="bg-slate-800 rounded-xl p-3 cursor-pointer hover:bg-slate-700 transition-all group relative overflow-hidden flex items-center gap-3 border border-slate-700">
-                <div className="bg-purple-900/50 p-1.5 rounded-lg"><Bot className="text-purple-400 h-4 w-4" /></div>
+
+            <div onClick={() => setIsAiChatOpen(true)} className="bg-gradient-to-r from-purple-600 to-indigo-600 rounded-xl p-3 cursor-pointer hover:shadow-lg hover:shadow-purple-900/50 transition-all group relative overflow-hidden flex items-center gap-3 border border-white/10 ring-1 ring-white/10">
+                <div className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                <div className="bg-white/20 p-1.5 rounded-lg backdrop-blur-md"><Bot className="text-white h-4 w-4" /></div>
                 <div>
-                    <span className="text-xs font-bold text-purple-200 block">AI Copilot</span>
-                    <span className="text-[10px] text-slate-400 block">点击唤起助手</span>
+                    <span className="text-xs font-bold text-white block">AI Copilot</span>
+                    <span className="text-[10px] text-purple-200 block opacity-80">点击唤起助手</span>
                 </div>
+                <ArrowUpRight size={14} className="ml-auto text-white/50" />
             </div>
         </div>
       </aside>
       
       {/* Main Content */}
       <div className="flex-1 flex flex-col h-screen overflow-hidden relative">
-        <header className="bg-white border-b border-gray-200 p-4 flex justify-between items-center md:hidden"><div className="font-bold text-gray-800">探行跨境ERP</div><button className="text-gray-500"><Menu /></button></header>
-        <main className="flex-1 overflow-y-auto p-4 sm:p-8 bg-gray-100 relative">
+        <header className="bg-white/80 backdrop-blur-md border-b border-gray-200 p-4 flex justify-between items-center md:hidden z-40 sticky top-0 shadow-sm"><div className="font-bold text-gray-800">探行跨境ERP</div><button className="text-gray-500"><Menu /></button></header>
+        <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 relative custom-scrollbar">
           <ToastContainer toasts={toasts} removeToast={removeToast} />
-          <div className="max-w-[1920px] w-full mx-auto">
-             {/* Header and Page Title - Matching Screenshot V4.2 */}
-             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+          
+          <div className="max-w-[1920px] w-full mx-auto pb-20">
+             {/* Dynamic Page Header with Subtle Blur Background */}
+             <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-8 animate-fade-in sticky top-0 z-30 py-4 -my-4 px-2 -mx-2 bg-white/0 backdrop-blur-0 transition-all duration-300">
               <div>
-                <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-3">
+                <h2 className="text-3xl font-extrabold text-slate-900 flex items-center gap-3 tracking-tight">
                   {currentView === 'overview' ? '系统总览' : 
                    currentView === 'inventory' ? '备货清单' :
-                   currentView === 'purchasing' ? '采购管理 (ERP)' :
-                   currentView === 'wms' ? '库存中心 (WMS)' :
-                   currentView === 'finance' ? '财务中心 (Finance)' :
+                   currentView === 'purchasing' ? '采购管理' :
+                   currentView === 'wms' ? '库存中心' :
+                   currentView === 'finance' ? '财务中心' :
                    currentView === 'analytics' ? '数据分析' :
                    currentView === 'marketing' ? 'AI 营销中心' :
                    currentView === 'calculator' ? '智能试算' :
                    currentView === 'logistics' ? '物流查询' : '系统总览'}
+                   
+                   <span className="text-xs font-bold text-indigo-600 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-full hidden lg:block tracking-wide">
+                       v5.0 Pro
+                   </span>
                 </h2>
-                <p className="text-sm text-gray-500 mt-1">
-                    {currentView === 'finance' ? '企业经营收支与利润分析' : 
-                     currentView === 'wms' ? '多仓库库存流水与调拨管理' : 
-                     '智能化供应链管理'}
+                <p className="text-sm text-slate-500 mt-1 font-medium">
+                    {currentView === 'finance' ? '企业经营收支与利润全景分析' : 
+                     currentView === 'wms' ? '多仓库库存流水与智能调拨管理' : 
+                     currentView === 'inventory' ? '全渠道 SKU 备货与生命周期管理' :
+                     '智能化供应链决策支持系统'}
                 </p>
               </div>
               
-              {/* Feature Buttons from Screenshot (Only show on inventory list) */}
+              {/* Context Actions */}
               {currentView === 'inventory' && (
-                  <div className="flex items-center gap-2 overflow-x-auto pb-1 md:pb-0">
-                     <div className="px-3 py-1.5 bg-emerald-50 text-emerald-600 rounded-lg text-xs font-bold flex items-center gap-2 border border-emerald-100 whitespace-nowrap">
-                         <Wifi size={12} className="animate-pulse"/> 工作区: 001 
-                         <span className="w-1.5 h-1.5 rounded-full bg-green-500"></span>
+                  <div className="flex items-center gap-3 overflow-x-auto pb-1 md:pb-0">
+                     <div className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 border whitespace-nowrap transition-all backdrop-blur-sm ${syncStatus === 'connected' ? 'bg-emerald-50/80 text-emerald-700 border-emerald-200' : 'bg-white/80 text-slate-500 border-slate-200'}`}>
+                         <div className={`w-2 h-2 rounded-full ${syncStatus === 'connected' ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`}></div>
+                         {syncStatus === 'connected' ? '实时同步中' : '离线模式'}
                      </div>
-                     <button onClick={handleFinancialReport} className="flex items-center gap-1.5 bg-slate-100 text-slate-700 px-3 py-2 rounded-lg text-xs font-bold hover:bg-slate-200 transition-colors border border-slate-200 whitespace-nowrap">
-                         <DollarSign size={14} /> 财务损益分析
+                     <button onClick={handleFinancialReport} className="flex items-center gap-2 bg-white text-slate-700 px-4 py-2.5 rounded-xl text-xs font-bold hover:bg-slate-50 transition-all border border-slate-200 shadow-sm hover:shadow active:scale-95 whitespace-nowrap">
+                         <DollarSign size={14} className="text-slate-400"/> 财务分析
                      </button>
-                     <button onClick={handleSmartAnalysis} className="flex items-center gap-1.5 bg-purple-50 text-purple-700 px-3 py-2 rounded-lg text-xs font-bold hover:bg-purple-100 transition-colors border border-purple-100 whitespace-nowrap">
-                         {isAnalyzing ? <Loader2 className="animate-spin" size={14}/> : <BrainCircuit size={14} />} 智能诊断
+                     <button onClick={handleSmartAnalysis} className="flex items-center gap-2 bg-white text-purple-700 px-4 py-2.5 rounded-xl text-xs font-bold hover:bg-purple-50 transition-all border border-purple-100 shadow-sm hover:shadow-purple-100 active:scale-95 whitespace-nowrap group">
+                         {isAnalyzing ? <Loader2 className="animate-spin text-purple-600" size={14}/> : <BrainCircuit size={14} className="text-purple-500 group-hover:text-purple-700"/>} 智能诊断
                      </button>
-                     <button onClick={() => { setEditingRecord(null); setIsModalOpen(true); }} className="flex items-center gap-1.5 bg-blue-600 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-blue-700 transition shadow-lg shadow-blue-200 whitespace-nowrap ml-2">
+                     <button onClick={() => { setEditingRecord(null); setIsModalOpen(true); }} className="flex items-center gap-2 bg-slate-900 text-white px-5 py-2.5 rounded-xl text-xs font-bold hover:bg-black transition-all shadow-lg shadow-slate-900/20 active:scale-95 whitespace-nowrap border border-transparent hover:border-slate-700">
                          <Plus size={16} /> 添加产品
                      </button>
                   </div>

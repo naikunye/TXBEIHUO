@@ -17,9 +17,15 @@ import {
   PieChart as PieChartIcon,
   ChevronDown,
   Store as StoreIcon,
-  HelpCircle
+  HelpCircle,
+  Sparkles,
+  Loader2,
+  Box,
+  BrainCircuit,
+  ArrowUpRight
 } from 'lucide-react';
 import { EXCHANGE_RATE } from '../constants';
+import { generateDailyBriefing } from '../services/geminiService';
 
 interface HomeOverviewProps {
   records: ReplenishmentRecord[];
@@ -30,13 +36,17 @@ interface HomeOverviewProps {
 
 export const HomeOverview: React.FC<HomeOverviewProps> = ({ records, stores, onNavigateToList, currentStoreId }) => {
   const [chartType, setChartType] = useState<'bar' | 'line' | 'pie'>('bar');
+  
+  // Briefing State
+  const [briefing, setBriefing] = useState<string | null>(null);
+  const [isBriefingLoading, setIsBriefingLoading] = useState(false);
 
   // Aggregation Logic
   const data = useMemo(() => {
-    let totalInvestCNY = 0; // Pure Inventory + First Leg (Cash Outflow)
+    let totalInvestCNY = 0; 
     let totalRevenueUSD = 0;
     let totalProfitUSD = 0;
-    let totalCostUSD = 0; // Comprehensive Cost (Inv + Ship + Fee + Ad)
+    let totalCostUSD = 0; 
     let totalWeight = 0;
     let airCostCNY = 0;
     let seaCostCNY = 0;
@@ -47,49 +57,24 @@ export const HomeOverview: React.FC<HomeOverviewProps> = ({ records, stores, onN
 
     records.forEach(r => {
       const m = calculateMetrics(r);
-      
-      // Cash Flow Investment (RMB)
       totalInvestCNY += (r.quantity * r.unitPriceCNY) + m.firstLegCostCNY;
-      
-      // Financial Totals (USD)
       totalRevenueUSD += (r.salesPriceUSD * r.quantity);
       const itemTotalProfit = m.estimatedProfitUSD * r.quantity;
       const itemTotalCost = m.totalCostPerUnitUSD * r.quantity;
-      
       totalProfitUSD += itemTotalProfit;
       totalCostUSD += itemTotalCost;
-
       totalWeight += m.totalWeightKg;
-
       if (r.shippingMethod === 'Air') airCostCNY += m.firstLegCostCNY;
       else seaCostCNY += m.firstLegCostCNY;
-
       statusCounts[r.status]++;
-
-      topProducts.push({
-        name: r.productName,
-        sku: r.sku,
-        profit: itemTotalProfit,
-        roi: m.roi
-      });
-
-      // Aggregate for Store Profit Chart
-      // Support multiple storeIds
+      topProducts.push({ name: r.productName, sku: r.sku, profit: itemTotalProfit, roi: m.roi });
       const ids = r.storeIds && r.storeIds.length > 0 ? r.storeIds : (r.storeId ? [r.storeId] : ['unknown']);
-      
-      ids.forEach(sId => {
-          storeProfitMap[sId] = (storeProfitMap[sId] || 0) + itemTotalProfit;
-      });
+      ids.forEach(sId => { storeProfitMap[sId] = (storeProfitMap[sId] || 0) + itemTotalProfit; });
     });
 
-    // Sort Top Products
     topProducts.sort((a, b) => b.profit - a.profit);
-
-    // Comprehensive ROI (Profit / Total Cost)
-    // Note: totalCostUSD includes Product, Shipping, Ads, Fees, Last Mile.
     const overallROI = totalCostUSD > 0 ? (totalProfitUSD / totalCostUSD) * 100 : 0;
     
-    // Store Ranking Data
     const storeRanking = Object.entries(storeProfitMap)
         .map(([id, profit]) => {
             const store = stores.find(s => s.id === id);
@@ -101,24 +86,12 @@ export const HomeOverview: React.FC<HomeOverviewProps> = ({ records, stores, onN
         })
         .sort((a, b) => b.profit - a.profit);
 
-    return {
-      totalInvestCNY,
-      totalProfitUSD,
-      totalCostUSD, // Export total cost for ROI breakdown
-      totalWeight,
-      overallROI,
-      airCostCNY,
-      seaCostCNY,
-      statusCounts,
-      topProducts: topProducts.slice(0, 4),
-      storeRanking
-    };
+    return { totalInvestCNY, totalProfitUSD, totalCostUSD, totalWeight, overallROI, airCostCNY, seaCostCNY, statusCounts, topProducts: topProducts.slice(0, 4), storeRanking };
   }, [records, stores]);
 
-  // Dynamic Chart Data Preparation
+  // Dynamic Chart Data
   const chartVisualizationData = useMemo(() => {
     if (chartType === 'line') {
-        // Line Chart: Investment Trend over Time (Date sorted)
         const dateMap = new Map<string, number>();
         records.forEach(r => {
              const m = calculateMetrics(r);
@@ -128,81 +101,67 @@ export const HomeOverview: React.FC<HomeOverviewProps> = ({ records, stores, onN
         const sortedData = Array.from(dateMap.entries())
             .sort((a, b) => new Date(a[0]).getTime() - new Date(b[0]).getTime())
             .map(([date, value]) => ({ label: date.substring(5), fullLabel: date, value }));
-        
-        return { 
-            title: '资金投入趋势 (RMB)', 
-            data: sortedData,
-            color: '#3b82f6' // blue
-        };
+        return { title: '资金投入趋势 (RMB)', data: sortedData, color: '#3b82f6' };
     } else if (chartType === 'pie') {
-        // Pie Chart: Cost Distribution by Product
          const sortedData = records.map(r => ({
              label: r.sku,
              fullLabel: r.productName,
              value: (r.quantity * r.unitPriceCNY) + calculateMetrics(r).firstLegCostCNY
          })).sort((a, b) => b.value - a.value).slice(0, 6);
-         
-         return {
-             title: 'SKU 资金占比 Top 6 (RMB)',
-             data: sortedData,
-             color: '#8b5cf6' // violet
-         };
+         return { title: 'SKU 资金占比 Top 6', data: sortedData, color: '#8b5cf6' };
     } else {
-         // Bar Chart: Profit by Product
          const sortedData = records.map(r => ({
              label: r.sku,
              fullLabel: r.productName,
              value: calculateMetrics(r).estimatedProfitUSD * r.quantity
          })).sort((a, b) => b.value - a.value).slice(0, 8);
-
-         return {
-             title: '单品预估总净利 Top 8 (USD)',
-             data: sortedData,
-             color: '#10b981' // emerald
-         };
+         return { title: '单品预估净利 Top 8 (USD)', data: sortedData, color: '#10b981' };
     }
   }, [records, chartType]);
 
-  // Chart Helpers
   const totalLogisticsCost = data.airCostCNY + data.seaCostCNY;
   const airPct = totalLogisticsCost > 0 ? (data.airCostCNY / totalLogisticsCost) * 100 : 0;
   const seaPct = totalLogisticsCost > 0 ? (data.seaCostCNY / totalLogisticsCost) * 100 : 0;
 
-  // --- Simple SVG Components ---
+  const handleGenerateBriefing = async () => {
+      setIsBriefingLoading(true);
+      const res = await generateDailyBriefing(records);
+      setBriefing(res);
+      setIsBriefingLoading(false);
+  };
+
+  // --- Visual Components (Enhanced) ---
   const renderBarChart = () => {
-     const { data, color } = chartVisualizationData;
+     const { data } = chartVisualizationData;
      const maxVal = Math.max(...data.map(d => d.value), 1);
      return (
-        <div className="flex justify-between h-48 gap-2 pt-4">
+        <div className="flex justify-between h-48 gap-3 pt-6 items-end">
            {data.map((d, i) => (
-               <div key={i} className="flex-1 flex flex-col items-center justify-end h-full group relative">
-                  <div className="w-full bg-gray-100 rounded-t-md relative overflow-hidden flex items-end flex-1">
-                     <div 
-                        className="w-full rounded-t-md transition-all duration-700 ease-out opacity-80 group-hover:opacity-100"
-                        style={{ height: `${Math.max((d.value / maxVal) * 100, 1)}%`, backgroundColor: color }}
-                     ></div>
-                     {/* Tooltip */}
-                     <div className="absolute bottom-full mb-2 left-1/2 transform -translate-x-1/2 bg-gray-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10 pointer-events-none shadow-lg">
-                        {d.fullLabel}: {Math.round(d.value).toLocaleString()}
-                     </div>
+               <div key={i} className="flex-1 flex flex-col items-center group relative h-full justify-end">
+                  <div 
+                    className="w-full bg-gradient-to-t from-emerald-500 to-teal-400 rounded-t-lg relative overflow-hidden transition-all duration-700 ease-out opacity-80 group-hover:opacity-100 group-hover:scale-105 shadow-lg group-hover:shadow-emerald-500/30"
+                    style={{ height: `${Math.max((d.value / maxVal) * 100, 5)}%` }}
+                  >
+                     <div className="absolute top-0 left-0 w-full h-full bg-white opacity-0 group-hover:opacity-10 transition-opacity"></div>
                   </div>
-                  <span className="text-[10px] text-gray-500 mt-2 truncate w-full text-center h-4">{d.label}</span>
+                  {/* Floating Tooltip */}
+                  <div className="absolute bottom-full mb-3 left-1/2 transform -translate-x-1/2 bg-slate-900/90 backdrop-blur text-white text-[10px] px-3 py-1.5 rounded-lg opacity-0 group-hover:opacity-100 transition-all duration-300 whitespace-nowrap z-20 shadow-xl pointer-events-none translate-y-2 group-hover:translate-y-0">
+                    <span className="font-bold block text-emerald-300">{d.fullLabel}</span>
+                    <span className="font-mono">${Math.round(d.value).toLocaleString()}</span>
+                  </div>
+                  <span className="text-[10px] font-medium text-slate-400 mt-2 truncate w-full text-center group-hover:text-slate-600 transition-colors">{d.label}</span>
                </div>
            ))}
-           {data.length === 0 && <div className="w-full h-full flex items-center justify-center text-gray-400 text-sm">暂无数据</div>}
+           {data.length === 0 && <div className="w-full h-full flex items-center justify-center text-slate-400 text-sm">暂无数据</div>}
         </div>
      );
   };
 
   const renderLineChart = () => {
-    const { data, color } = chartVisualizationData;
-    if (data.length < 2) return <div className="h-48 flex items-center justify-center text-gray-400 text-sm">需要至少两条数据记录以显示趋势</div>;
-
+    const { data } = chartVisualizationData;
+    if (data.length < 2) return <div className="h-48 flex items-center justify-center text-slate-400 text-sm">需要至少两条数据记录以显示趋势</div>;
     const maxVal = Math.max(...data.map(d => d.value));
-    const width = 1000;
-    const height = 200;
-    const padding = 20;
-    
+    const width = 1000; const height = 200; const padding = 20;
     const points = data.map((d, i) => {
         const x = (i / (data.length - 1)) * (width - 2 * padding) + padding;
         const y = height - padding - (d.value / maxVal) * (height - 2 * padding);
@@ -212,34 +171,29 @@ export const HomeOverview: React.FC<HomeOverviewProps> = ({ records, stores, onN
     return (
         <div className="h-48 w-full relative">
             <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full overflow-visible">
-                {/* Grid Lines */}
-                <line x1={padding} y1={height - padding} x2={width - padding} y2={height - padding} stroke="#f3f4f6" strokeWidth="2" />
-                <line x1={padding} y1={padding} x2={width - padding} y2={padding} stroke="#f3f4f6" strokeWidth="1" strokeDasharray="5,5" />
-                
-                {/* Line */}
-                <polyline 
-                    points={points} 
-                    fill="none" 
-                    stroke={color} 
-                    strokeWidth="4" 
-                    strokeLinecap="round" 
-                    strokeLinejoin="round" 
-                    className="drop-shadow-md"
-                />
-                
-                {/* Dots */}
+                <defs>
+                    <linearGradient id="lineGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.3"/>
+                        <stop offset="100%" stopColor="#3b82f6" stopOpacity="0"/>
+                    </linearGradient>
+                </defs>
+                {/* Area Fill */}
+                <path d={`${points} L ${width-padding},${height} L ${padding},${height} Z`} fill="url(#lineGradient)" />
+                {/* Line Stroke */}
+                <polyline points={points} fill="none" stroke="#3b82f6" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="drop-shadow-md" />
+                {/* Interactive Points */}
                 {data.map((d, i) => {
                     const x = (i / (data.length - 1)) * (width - 2 * padding) + padding;
                     const y = height - padding - (d.value / maxVal) * (height - 2 * padding);
                     return (
                         <g key={i} className="group">
-                           <circle cx={x} cy={y} r="6" fill="white" stroke={color} strokeWidth="3" className="transition-all group-hover:r-8 cursor-pointer" />
-                           <foreignObject x={x - 50} y={y - 50} width="100" height="40" className="opacity-0 group-hover:opacity-100 transition-opacity overflow-visible">
-                               <div className="bg-gray-800 text-white text-xs px-2 py-1 rounded text-center mx-auto w-fit whitespace-nowrap shadow-lg">
-                                  {d.fullLabel}: {Math.round(d.value)}
+                           <circle cx={x} cy={y} r="0" fill="white" stroke="#3b82f6" strokeWidth="2" className="transition-all duration-300 group-hover:r-5 cursor-pointer opacity-0 group-hover:opacity-100" />
+                           <foreignObject x={x - 60} y={y - 60} width="120" height="50" className="opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none">
+                               <div className="bg-slate-900/90 backdrop-blur text-white text-[10px] px-3 py-2 rounded-xl text-center mx-auto w-fit shadow-xl border border-white/10">
+                                  <div className="text-slate-300 mb-0.5">{d.fullLabel}</div>
+                                  <div className="font-bold font-mono text-blue-300">¥{Math.round(d.value).toLocaleString()}</div>
                                 </div>
                            </foreignObject>
-                           <text x={x} y={height} dy="15" textAnchor="middle" fontSize="24" fill="#9ca3af">{d.label}</text>
                         </g>
                     );
                 })}
@@ -248,324 +202,329 @@ export const HomeOverview: React.FC<HomeOverviewProps> = ({ records, stores, onN
     );
   };
 
-  const renderPieChart = () => {
-      const { data } = chartVisualizationData;
-      const total = data.reduce((acc, curr) => acc + curr.value, 0);
-      let cumulativePercent = 0;
-      const colors = ['#8b5cf6', '#a78bfa', '#c4b5fd', '#ddd6fe', '#ede9fe', '#f5f3ff'];
-
-      return (
-          <div className="flex flex-col md:flex-row items-center justify-around h-48 gap-8">
-              {/* SVG Pie */}
-              <div className="relative w-40 h-40 flex-shrink-0">
-                 <svg viewBox="-1 -1 2 2" className="w-full h-full transform -rotate-90">
-                     {data.map((d, i) => {
-                         const startPercent = cumulativePercent;
-                         const slicePercent = d.value / total;
-                         cumulativePercent += slicePercent;
-                         
-                         // Calculate coordinates
-                         const startX = Math.cos(2 * Math.PI * startPercent);
-                         const startY = Math.sin(2 * Math.PI * startPercent);
-                         const endX = Math.cos(2 * Math.PI * cumulativePercent);
-                         const endY = Math.sin(2 * Math.PI * cumulativePercent);
-                         
-                         // If slice is > 50%, take the long way around
-                         const largeArcFlag = slicePercent > 0.5 ? 1 : 0;
-                         
-                         const pathData = `M 0 0 L ${startX} ${startY} A 1 1 0 ${largeArcFlag} 1 ${endX} ${endY} Z`;
-                         
-                         return (
-                             <path 
-                                key={i} 
-                                d={pathData} 
-                                fill={colors[i % colors.length]} 
-                                stroke="white" 
-                                strokeWidth="0.02" 
-                                className="hover:opacity-90 transition-opacity cursor-pointer"
-                             >
-                                <title>{d.fullLabel}: {Math.round(d.value)} ({(slicePercent*100).toFixed(1)}%)</title>
-                             </path>
-                         );
-                     })}
-                 </svg>
-              </div>
-              
-              {/* Legend */}
-              <div className="flex-1 grid grid-cols-2 gap-x-4 gap-y-2 max-h-40 overflow-y-auto pr-2 custom-scrollbar">
-                  {data.map((d, i) => (
-                      <div key={i} className="flex items-center gap-2 text-xs">
-                          <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: colors[i % colors.length] }}></span>
-                          <span className="text-gray-600 truncate flex-1" title={d.fullLabel}>{d.label}</span>
-                          <span className="font-mono font-medium text-gray-800">{Math.round((d.value/total)*100)}%</span>
-                      </div>
-                  ))}
-              </div>
-          </div>
-      );
-  };
-
   return (
     <div className="space-y-6 animate-fade-in pb-10">
       
-      {/* 1. Hero KPI Section */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        {/* Total Investment */}
-        <div className="bg-gradient-to-br from-blue-600 to-blue-700 rounded-2xl p-6 text-white shadow-lg shadow-blue-200 relative overflow-hidden group">
-          <div className="absolute right-0 top-0 opacity-10 transform translate-x-4 -translate-y-4 group-hover:scale-110 transition-transform">
-             <Wallet size={100} />
-          </div>
-          <div className="relative z-10">
-            <p className="text-blue-100 text-sm font-medium mb-1">总投入资金 (CNY)</p>
-            <h3 className="text-3xl font-bold tracking-tight">¥{data.totalInvestCNY.toLocaleString()}</h3>
-            <div className="mt-4 flex items-center gap-2 text-xs text-blue-200 bg-blue-800/30 w-fit px-2 py-1 rounded-lg">
-              <Activity size={14} />
-              <span>资金周转中</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Expected Profit */}
-        <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 relative group hover:border-emerald-200 transition-colors">
-          <div className="flex justify-between items-start">
-            <div>
-              <p className="text-gray-500 text-sm font-medium mb-1">预估总净利 (USD)</p>
-              <h3 className="text-3xl font-bold text-emerald-600">${data.totalProfitUSD.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 0})}</h3>
-            </div>
-            <div className="p-3 bg-emerald-50 rounded-xl text-emerald-600">
-               <TrendingUp size={24} />
-            </div>
-          </div>
-          <div className="mt-4 text-xs text-gray-400">
-             包含扣除头程、尾程及广告后的净收益
-          </div>
-        </div>
-
-        {/* ROI Breakdown Card */}
-        <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 relative hover:border-purple-200 transition-colors flex flex-col justify-between">
-           <div className="flex justify-between items-start">
-            <div>
-              <div className="flex items-center gap-1 mb-1">
-                  <p className="text-gray-500 text-sm font-medium">综合 ROI</p>
-                  <div className="group relative">
-                      <HelpCircle size={12} className="text-gray-300 cursor-pointer" />
-                      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-32 bg-slate-800 text-white text-[10px] p-2 rounded opacity-0 group-hover:opacity-100 transition pointer-events-none z-10">
-                          公式: 总利润 / 总成本 (包含物流/佣金/广告)
+      {/* 1. Bento Grid Layout for KPI & AI */}
+      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6 auto-rows-[minmax(180px,auto)]">
+          
+          {/* A. AI Command Center (Large Card) */}
+          <div className="md:col-span-3 lg:col-span-2 row-span-1 glass-card-dark rounded-3xl p-8 relative overflow-hidden group">
+              {/* Animated Background Blobs */}
+              <div className="absolute top-[-50%] left-[-20%] w-[80%] h-[150%] bg-indigo-600/30 rounded-full mix-blend-screen filter blur-[100px] animate-blob"></div>
+              <div className="absolute bottom-[-50%] right-[-20%] w-[80%] h-[150%] bg-purple-600/30 rounded-full mix-blend-screen filter blur-[100px] animate-blob animation-delay-2000"></div>
+              
+              <div className="relative z-10 h-full flex flex-col justify-between">
+                  <div className="flex justify-between items-start">
+                      <div>
+                          <div className="flex items-center gap-2 mb-2">
+                              <span className="relative flex h-3 w-3">
+                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                                <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
+                              </span>
+                              <h3 className="text-sm font-bold text-white/80 uppercase tracking-widest">AI Command Center</h3>
+                          </div>
+                          <h2 className="text-2xl font-bold text-white mt-1">战略情报局</h2>
+                          <p className="text-slate-300 text-sm mt-2 max-w-md">
+                              基于全量数据的实时经营诊断，提供行动建议与风险预警。
+                          </p>
+                      </div>
+                      <div className="p-3 bg-white/10 rounded-2xl backdrop-blur-md border border-white/10 shadow-inner">
+                          <BrainCircuit className="text-white" size={28} />
                       </div>
                   </div>
-              </div>
-              <h3 className="text-3xl font-bold text-purple-600">{data.overallROI.toFixed(1)}%</h3>
-            </div>
-            <div className="p-3 bg-purple-50 rounded-xl text-purple-600">
-               <Layers size={24} />
-            </div>
-          </div>
-          
-          {/* New Structure Breakdown */}
-          <div className="mt-3 bg-purple-50 rounded-lg p-2 flex items-center justify-between text-xs">
-              <div className="flex flex-col">
-                  <span className="text-[10px] text-purple-400 font-bold uppercase">总净利 (Profit)</span>
-                  <span className="font-bold text-purple-700">${data.totalProfitUSD.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
-              </div>
-              <div className="text-purple-300 font-light text-lg">/</div>
-              <div className="flex flex-col text-right">
-                  <span className="text-[10px] text-purple-400 font-bold uppercase">总成本 (Total Cost)</span>
-                  <span className="font-bold text-purple-700">${data.totalCostUSD.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
-              </div>
-          </div>
-        </div>
 
-        {/* Total Weight */}
-        <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 relative hover:border-orange-200 transition-colors">
-           <div className="flex justify-between items-start">
-            <div>
-              <p className="text-gray-500 text-sm font-medium mb-1">物流总重量</p>
-              <h3 className="text-3xl font-bold text-orange-600">{data.totalWeight.toFixed(0)} <span className="text-lg text-gray-400">kg</span></h3>
-            </div>
-            <div className="p-3 bg-orange-50 rounded-xl text-orange-600">
-               <Package size={24} />
-            </div>
+                  <div className="mt-6">
+                      {!briefing ? (
+                          <button 
+                            onClick={handleGenerateBriefing}
+                            disabled={isBriefingLoading}
+                            className="bg-white text-slate-900 px-6 py-3 rounded-xl text-sm font-bold transition-all flex items-center gap-2 hover:bg-slate-100 shadow-[0_0_20px_rgba(255,255,255,0.3)] hover:scale-105 active:scale-95 disabled:opacity-70 disabled:hover:scale-100"
+                          >
+                              {isBriefingLoading ? <Loader2 className="animate-spin" size={18} /> : <Sparkles size={18} className="text-purple-600"/>}
+                              {isBriefingLoading ? '正在分析全盘数据...' : '生成今日简报'}
+                          </button>
+                      ) : (
+                          <div className="bg-slate-950/50 backdrop-blur-md rounded-xl p-5 border border-white/10 animate-fade-in max-h-60 overflow-y-auto custom-scrollbar">
+                              <div 
+                                className="prose prose-invert prose-sm max-w-none text-slate-200 leading-relaxed"
+                                dangerouslySetInnerHTML={{ __html: briefing }} 
+                              />
+                          </div>
+                      )}
+                  </div>
+              </div>
           </div>
-          <div className="mt-4 flex gap-3 text-xs">
-             <span className="flex items-center gap-1 text-gray-500"><Plane size={12}/> {airPct.toFixed(0)}%</span>
-             <span className="flex items-center gap-1 text-gray-500"><Ship size={12}/> {seaPct.toFixed(0)}%</span>
+
+          {/* B. KPI Card: Profit (Highlighted) */}
+          <div className="glass-panel p-6 rounded-3xl shadow-sm flex flex-col justify-between group hover:border-emerald-200 transition-colors">
+              <div className="flex justify-between items-start">
+                  <div className="p-3 bg-emerald-50 rounded-2xl text-emerald-600 group-hover:bg-emerald-500 group-hover:text-white transition-colors duration-300 shadow-sm">
+                      <TrendingUp size={24} />
+                  </div>
+                  <span className="bg-emerald-50 text-emerald-700 text-[10px] font-bold px-2 py-1 rounded-full uppercase tracking-wider">USD</span>
+              </div>
+              <div>
+                  <p className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-1">预估净利润</p>
+                  <h3 className="text-3xl font-extrabold text-slate-800 tracking-tight group-hover:text-emerald-600 transition-colors">
+                      ${data.totalProfitUSD.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 0})}
+                  </h3>
+                  <div className="mt-2 w-full bg-slate-100 h-1 rounded-full overflow-hidden">
+                      <div className="bg-emerald-500 h-full w-[70%]"></div>
+                  </div>
+              </div>
           </div>
-        </div>
+
+          {/* C. KPI Card: Investment */}
+          <div className="glass-panel p-6 rounded-3xl shadow-sm flex flex-col justify-between group hover:border-blue-200 transition-colors">
+              <div className="flex justify-between items-start">
+                  <div className="p-3 bg-blue-50 rounded-2xl text-blue-600 group-hover:bg-blue-600 group-hover:text-white transition-colors duration-300 shadow-sm">
+                      <Wallet size={24} />
+                  </div>
+                  <span className="bg-blue-50 text-blue-700 text-[10px] font-bold px-2 py-1 rounded-full uppercase tracking-wider">CNY</span>
+              </div>
+              <div>
+                  <p className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-1">总投入资金</p>
+                  <h3 className="text-3xl font-extrabold text-slate-800 tracking-tight">
+                      ¥{(data.totalInvestCNY / 10000).toFixed(2)}<span className="text-lg text-slate-400 font-medium">w</span>
+                  </h3>
+              </div>
+          </div>
+
+          {/* D. KPI Card: ROI */}
+          <div className="glass-panel p-6 rounded-3xl shadow-sm flex flex-col justify-between group hover:border-purple-200 transition-colors">
+              <div className="flex justify-between items-start">
+                  <div className="p-3 bg-purple-50 rounded-2xl text-purple-600 group-hover:bg-purple-600 group-hover:text-white transition-colors duration-300 shadow-sm">
+                      <Layers size={24} />
+                  </div>
+                  <div className="flex items-center gap-1 text-xs font-bold text-purple-600">
+                      <ArrowUpRight size={14} />
+                      {data.overallROI.toFixed(0)}%
+                  </div>
+              </div>
+              <div>
+                  <p className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-1">综合 ROI</p>
+                  <h3 className="text-3xl font-extrabold text-slate-800 tracking-tight group-hover:text-purple-600 transition-colors">
+                      {data.overallROI.toFixed(1)}%
+                  </h3>
+              </div>
+          </div>
+
+          {/* E. KPI Card: Logistics */}
+          <div className="glass-panel p-6 rounded-3xl shadow-sm flex flex-col justify-between group hover:border-orange-200 transition-colors">
+              <div className="flex justify-between items-start">
+                  <div className="p-3 bg-orange-50 rounded-2xl text-orange-600 group-hover:bg-orange-500 group-hover:text-white transition-colors duration-300 shadow-sm">
+                      <Package size={24} />
+                  </div>
+                  <div className="flex gap-1">
+                      <span className="h-2 w-2 rounded-full bg-blue-400"></span>
+                      <span className="h-2 w-2 rounded-full bg-indigo-500"></span>
+                  </div>
+              </div>
+              <div>
+                  <p className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-1">物流总重</p>
+                  <h3 className="text-3xl font-extrabold text-slate-800 tracking-tight">
+                      {data.totalWeight.toFixed(0)} <span className="text-lg text-slate-400 font-medium">kg</span>
+                  </h3>
+              </div>
+          </div>
       </div>
 
-      {/* 2. New Dynamic Chart Section */}
-      <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-200">
-         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 border-b border-gray-100 pb-4">
+      {/* 2. Main Chart Section (Glass Card) */}
+      <div className="glass-panel p-8 rounded-3xl shadow-sm border border-white/50 relative overflow-hidden">
+         {/* Background Decoration */}
+         <div className="absolute top-0 right-0 w-64 h-64 bg-gradient-to-br from-blue-50 to-purple-50 rounded-full blur-3xl opacity-50 -z-10"></div>
+
+         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
              <div>
-                <h4 className="font-bold text-gray-800 flex items-center gap-2 text-lg">
-                   {chartType === 'bar' && <BarChart3 className="text-emerald-500" size={20} />}
-                   {chartType === 'line' && <LineChart className="text-blue-500" size={20} />}
-                   {chartType === 'pie' && <PieChartIcon className="text-violet-500" size={20} />}
+                <h4 className="font-bold text-slate-800 flex items-center gap-2 text-xl">
+                   {chartType === 'bar' && <div className="p-2 bg-emerald-100 rounded-xl text-emerald-600"><BarChart3 size={20} /></div>}
+                   {chartType === 'line' && <div className="p-2 bg-blue-100 rounded-xl text-blue-600"><LineChart size={20} /></div>}
+                   {chartType === 'pie' && <div className="p-2 bg-purple-100 rounded-xl text-purple-600"><PieChartIcon size={20} /></div>}
                    {chartVisualizationData.title}
                 </h4>
-                <p className="text-xs text-gray-400 mt-1">
-                   {chartType === 'bar' && "展示表现最好的产品利润排行，建议重点关注前三名。"}
-                   {chartType === 'line' && "根据时间轴展示资金流出情况，辅助现金流管理。"}
-                   {chartType === 'pie' && "分析库存资金积压情况，优化SKU资金配置。"}
+                <p className="text-xs text-slate-400 mt-1.5 ml-11 font-medium tracking-wide">
+                   VISUAL DATA ANALYTICS
                 </p>
              </div>
              
              {/* Chart Type Selector */}
-             <div className="relative">
-                 <select 
-                    value={chartType} 
-                    onChange={(e) => setChartType(e.target.value as any)}
-                    className="appearance-none bg-gray-50 border border-gray-200 text-gray-700 py-2 pl-4 pr-10 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 text-sm font-medium cursor-pointer hover:bg-gray-100 transition-colors"
-                 >
-                     <option value="bar">柱状图 (Profit Analysis)</option>
-                     <option value="line">折线图 (Investment Trend)</option>
-                     <option value="pie">饼图 (Cost Distribution)</option>
-                 </select>
-                 <ChevronDown className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 pointer-events-none" size={16} />
+             <div className="flex bg-slate-100/50 p-1.5 rounded-2xl backdrop-blur-sm border border-slate-200/50">
+                 <button onClick={() => setChartType('bar')} className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${chartType === 'bar' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}>利润排行</button>
+                 <button onClick={() => setChartType('line')} className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${chartType === 'line' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}>资金趋势</button>
+                 <button onClick={() => setChartType('pie')} className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${chartType === 'pie' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}>成本分布</button>
              </div>
          </div>
          
          {/* Chart Render Area */}
-         <div className="animate-fade-in">
+         <div className="animate-fade-in px-2">
              {chartType === 'bar' && renderBarChart()}
              {chartType === 'line' && renderLineChart()}
-             {chartType === 'pie' && renderPieChart()}
+             {chartType === 'pie' && (
+                 <div className="flex flex-col md:flex-row items-center justify-around h-48 gap-8">
+                    {/* Simplified Pie Visual for elegance */}
+                    <div className="relative w-40 h-40">
+                        <svg viewBox="-1 -1 2 2" className="w-full h-full transform -rotate-90 drop-shadow-xl">
+                            {chartVisualizationData.data.map((d, i) => {
+                                const total = chartVisualizationData.data.reduce((a,c)=>a+c.value,0);
+                                let accum = 0;
+                                for(let j=0; j<i; j++) accum += chartVisualizationData.data[j].value;
+                                const startAngle = (accum / total) * Math.PI * 2;
+                                const endAngle = ((accum + d.value) / total) * Math.PI * 2;
+                                
+                                const x1 = Math.cos(startAngle);
+                                const y1 = Math.sin(startAngle);
+                                const x2 = Math.cos(endAngle);
+                                const y2 = Math.sin(endAngle);
+                                
+                                const largeArc = (d.value / total) > 0.5 ? 1 : 0;
+                                
+                                const pathData = `M 0 0 L ${x1} ${y1} A 1 1 0 ${largeArc} 1 ${x2} ${y2} Z`;
+                                const colors = ['#8b5cf6', '#a78bfa', '#c4b5fd', '#ddd6fe', '#ede9fe', '#f5f3ff'];
+                                
+                                return <path d={pathData} fill={colors[i%colors.length]} stroke="white" strokeWidth="0.05" key={i} className="hover:opacity-80 transition-opacity cursor-pointer"/>
+                            })}
+                        </svg>
+                        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                            <span className="text-xs font-bold text-slate-500 bg-white/80 px-2 py-1 rounded-lg backdrop-blur-sm shadow-sm">Distribution</span>
+                        </div>
+                    </div>
+                    {/* Legend */}
+                    <div className="grid grid-cols-2 gap-x-8 gap-y-3">
+                        {chartVisualizationData.data.map((d,i) => {
+                             const colors = ['bg-purple-500', 'bg-purple-400', 'bg-purple-300', 'bg-purple-200', 'bg-purple-100', 'bg-slate-100'];
+                             return (
+                                <div key={i} className="flex items-center gap-3 text-xs">
+                                    <div className={`w-2.5 h-2.5 rounded-full ${colors[i%colors.length]} shadow-sm`}></div>
+                                    <span className="text-slate-600 font-medium">{d.label}</span>
+                                    <span className="text-slate-400 font-mono ml-auto">
+                                        {Math.round((d.value/chartVisualizationData.data.reduce((a,c)=>a+c.value,0))*100)}%
+                                    </span>
+                                </div>
+                             )
+                        })}
+                    </div>
+                 </div>
+             )}
          </div>
       </div>
 
-      {/* 3. Middle Info Section */}
+      {/* 3. Bottom Section: Logistics & Status */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
-        {/* Logistics Cost Structure (Donut) */}
-        <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-200 flex flex-col">
-          <h4 className="font-bold text-gray-800 mb-6 flex items-center gap-2">
-            <Ship className="text-blue-500" size={18}/>
+        {/* Logistics Cost Structure */}
+        <div className="glass-panel p-6 rounded-3xl shadow-sm border border-white/50 flex flex-col hover:shadow-lg transition-shadow duration-300">
+          <h4 className="font-bold text-slate-800 mb-6 flex items-center gap-3">
+            <div className="p-2 bg-blue-50 rounded-xl text-blue-600 border border-blue-100"><Ship size={18}/></div>
             物流成本结构
           </h4>
           <div className="flex-1 flex items-center justify-center relative">
-             {/* Simple CSS/SVG Pie Chart */}
-             <div className="relative w-48 h-48">
-                <svg viewBox="0 0 36 36" className="w-full h-full transform -rotate-90">
-                  {/* Background Circle */}
-                  <path className="text-gray-100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" strokeWidth="4" />
-                  {/* Sea Segment */}
-                  <path className="text-indigo-500" strokeDasharray={`${seaPct}, 100`} d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" strokeWidth="4" />
-                  {/* Air Segment (offset by Sea pct) */}
-                  <path className="text-sky-400" strokeDasharray={`${airPct}, 100`} strokeDashoffset={`-${seaPct}`} d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" strokeWidth="4" />
+             <div className="relative w-48 h-48 group">
+                <svg viewBox="0 0 36 36" className="w-full h-full transform -rotate-90 drop-shadow-xl transition-transform duration-700 group-hover:scale-105">
+                  <path className="text-slate-100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" strokeWidth="3" />
+                  <path className="text-indigo-500" strokeDasharray={`${seaPct}, 100`} d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                  <path className="text-sky-400" strokeDasharray={`${airPct}, 100`} strokeDashoffset={`-${seaPct}`} d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
                 </svg>
                 <div className="absolute inset-0 flex flex-col items-center justify-center">
-                   <span className="text-xs text-gray-400">总运费(CNY)</span>
-                   <span className="text-lg font-bold text-gray-800">{(totalLogisticsCost/1000).toFixed(1)}k</span>
+                   <span className="text-[10px] text-slate-400 uppercase tracking-widest font-bold">Total Cost</span>
+                   <span className="text-2xl font-extrabold text-slate-800 tracking-tight">{(totalLogisticsCost/1000).toFixed(1)}k</span>
+                   <span className="text-[10px] text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded mt-1">CNY</span>
                 </div>
              </div>
           </div>
           <div className="mt-6 flex justify-center gap-6">
              <div className="flex items-center gap-2">
-                <span className="w-3 h-3 rounded-full bg-indigo-500"></span>
-                <span className="text-sm text-gray-600">海运 {seaPct.toFixed(0)}%</span>
+                <span className="w-3 h-3 rounded-full bg-indigo-500 shadow-sm ring-2 ring-indigo-100"></span>
+                <span className="text-xs font-bold text-slate-600">海运 {seaPct.toFixed(0)}%</span>
              </div>
              <div className="flex items-center gap-2">
-                <span className="w-3 h-3 rounded-full bg-sky-400"></span>
-                <span className="text-sm text-gray-600">空运 {airPct.toFixed(0)}%</span>
+                <span className="w-3 h-3 rounded-full bg-sky-400 shadow-sm ring-2 ring-sky-100"></span>
+                <span className="text-xs font-bold text-slate-600">空运 {airPct.toFixed(0)}%</span>
              </div>
           </div>
         </div>
 
         {/* Status Pipeline / Store Leaderboard */}
-        <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-200 lg:col-span-2">
+        <div className="glass-panel p-6 rounded-3xl shadow-sm border border-white/50 lg:col-span-2 hover:shadow-lg transition-shadow duration-300">
            <div className="flex justify-between items-center mb-6">
-              <h4 className="font-bold text-gray-800 flex items-center gap-2">
-                {currentStoreId === 'all' ? <StoreIcon className="text-purple-500" size={18}/> : <Activity className="text-purple-500" size={18}/>}
+              <h4 className="font-bold text-slate-800 flex items-center gap-3">
+                <div className="p-2 bg-purple-50 rounded-xl text-purple-600 border border-purple-100">
+                    {currentStoreId === 'all' ? <StoreIcon size={18}/> : <Activity size={18}/>}
+                </div>
                 {currentStoreId === 'all' ? '店铺利润贡献排行' : '备货状态分布'}
               </h4>
-              <button onClick={onNavigateToList} className="text-xs text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1">
-                查看详情 <ArrowRight size={12} />
+              <button onClick={onNavigateToList} className="text-xs text-blue-600 hover:text-white font-bold flex items-center gap-1 bg-blue-50 hover:bg-blue-600 px-4 py-2 rounded-xl transition-all shadow-sm">
+                查看详情 <ArrowRight size={14} />
               </button>
            </div>
            
            {currentStoreId === 'all' ? (
-                // Store Ranking View
-                <div className="space-y-4">
+                <div className="space-y-3">
                     {data.storeRanking.map((s, idx) => (
-                        <div key={idx} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
-                             <div className="flex items-center gap-3">
-                                 <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-xs ${s.color}`}>
+                        <div key={idx} className="flex items-center justify-between p-4 bg-white/60 rounded-2xl border border-white hover:border-blue-100 hover:bg-white transition-all shadow-sm group">
+                             <div className="flex items-center gap-4">
+                                 <div className={`w-8 h-8 rounded-xl flex items-center justify-center text-white font-bold text-xs shadow-md ${s.color} ring-2 ring-white`}>
                                      {idx + 1}
                                  </div>
-                                 <span className="font-bold text-gray-700">{s.name}</span>
+                                 <span className="font-bold text-slate-700">{s.name}</span>
                              </div>
                              <div className="text-right">
-                                 <div className="text-sm font-bold text-gray-900">${s.profit.toLocaleString(undefined, {maximumFractionDigits: 0})}</div>
-                                 <div className="text-[10px] text-gray-400">Total Profit</div>
+                                 <div className="text-sm font-bold text-slate-900 group-hover:text-blue-600 transition-colors">${s.profit.toLocaleString(undefined, {maximumFractionDigits: 0})}</div>
+                                 <div className="w-32 bg-slate-100 h-1.5 rounded-full mt-1.5 ml-auto overflow-hidden">
+                                     <div className={`h-full rounded-full ${s.color}`} style={{ width: '100%' }}></div> 
+                                 </div>
                              </div>
                         </div>
                     ))}
-                    {data.storeRanking.length === 0 && <div className="text-gray-400 text-sm text-center py-4">暂无店铺数据</div>}
                 </div>
            ) : (
-                // Status Pipeline View
                 <div className="grid grid-cols-3 gap-4 h-40">
-                    <div className="bg-yellow-50 rounded-xl p-4 flex flex-col justify-between border border-yellow-100 relative overflow-hidden">
-                        <div className="absolute right-0 bottom-0 opacity-10 transform translate-x-2 translate-y-2">
-                            <Activity size={60} />
+                    <div className="bg-gradient-to-br from-amber-50 to-orange-50 rounded-2xl p-5 flex flex-col justify-between border border-amber-100/50 relative overflow-hidden group hover:shadow-md transition-shadow">
+                        <span className="text-amber-800 font-bold text-xs uppercase tracking-wider bg-white/50 w-fit px-2 py-0.5 rounded backdrop-blur-sm">Planning</span>
+                        <div className="flex items-end gap-2 relative z-10">
+                            <span className="text-4xl font-black text-amber-900/90">{data.statusCounts.Planning}</span>
                         </div>
-                        <span className="text-yellow-800 font-medium text-sm">计划中</span>
-                        <div className="flex items-end gap-2">
-                            <span className="text-3xl font-bold text-yellow-900">{data.statusCounts.Planning}</span>
-                            <span className="text-xs text-yellow-700 mb-1">单</span>
-                        </div>
+                        <Activity className="absolute right-[-10px] bottom-[-10px] text-amber-500 opacity-20 group-hover:scale-110 transition-transform duration-500" size={80} />
                     </div>
-                    
-                    <div className="bg-blue-50 rounded-xl p-4 flex flex-col justify-between border border-blue-100 relative overflow-hidden">
-                        <div className="absolute right-0 bottom-0 opacity-10 transform translate-x-2 translate-y-2">
-                            <Ship size={60} />
+                    <div className="bg-gradient-to-br from-sky-50 to-blue-50 rounded-2xl p-5 flex flex-col justify-between border border-sky-100/50 relative overflow-hidden group hover:shadow-md transition-shadow">
+                        <span className="text-sky-800 font-bold text-xs uppercase tracking-wider bg-white/50 w-fit px-2 py-0.5 rounded backdrop-blur-sm">Shipping</span>
+                        <div className="flex items-end gap-2 relative z-10">
+                            <span className="text-4xl font-black text-sky-900/90">{data.statusCounts.Shipped}</span>
                         </div>
-                        <span className="text-blue-800 font-medium text-sm">运输中</span>
-                        <div className="flex items-end gap-2">
-                            <span className="text-3xl font-bold text-blue-900">{data.statusCounts.Shipped}</span>
-                            <span className="text-xs text-blue-700 mb-1">单</span>
-                        </div>
+                        <Ship className="absolute right-[-10px] bottom-[-10px] text-sky-500 opacity-20 group-hover:scale-110 transition-transform duration-500" size={80} />
                     </div>
-
-                    <div className="bg-green-50 rounded-xl p-4 flex flex-col justify-between border border-green-100 relative overflow-hidden">
-                        <div className="absolute right-0 bottom-0 opacity-10 transform translate-x-2 translate-y-2">
-                            <Package size={60} />
+                    <div className="bg-gradient-to-br from-emerald-50 to-green-50 rounded-2xl p-5 flex flex-col justify-between border border-emerald-100/50 relative overflow-hidden group hover:shadow-md transition-shadow">
+                        <span className="text-emerald-800 font-bold text-xs uppercase tracking-wider bg-white/50 w-fit px-2 py-0.5 rounded backdrop-blur-sm">Arrived</span>
+                        <div className="flex items-end gap-2 relative z-10">
+                            <span className="text-4xl font-black text-emerald-900/90">{data.statusCounts.Arrived}</span>
                         </div>
-                        <span className="text-green-800 font-medium text-sm">已入库</span>
-                        <div className="flex items-end gap-2">
-                            <span className="text-3xl font-bold text-green-900">{data.statusCounts.Arrived}</span>
-                            <span className="text-xs text-green-700 mb-1">单</span>
-                        </div>
+                        <Package className="absolute right-[-10px] bottom-[-10px] text-emerald-500 opacity-20 group-hover:scale-110 transition-transform duration-500" size={80} />
                     </div>
                 </div>
            )}
 
-           {/* Profit Leaderboard (Product Level) */}
-           <div className="mt-6 pt-6 border-t border-gray-100">
-              <h5 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
-                  {currentStoreId === 'all' ? '全局爆品 TOP 4' : '本店爆品 TOP 4'}
+           {/* Top Products Mini List */}
+           <div className="mt-6 pt-4 border-t border-slate-100">
+              <h5 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-2">
+                  <TrendingUp size={12} /> Top Performers
               </h5>
-              <div className="space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                  {data.topProducts.map((p, i) => (
-                    <div key={i} className="flex items-center justify-between p-2 hover:bg-gray-50 rounded-lg transition-colors">
-                       <div className="flex items-center gap-3">
-                          <span className={`w-5 h-5 rounded flex items-center justify-center text-[10px] font-bold ${i===0 ? 'bg-yellow-100 text-yellow-700' : 'bg-gray-100 text-gray-500'}`}>
+                    <div key={i} className="flex items-center justify-between p-3 bg-white/50 rounded-xl hover:bg-white hover:shadow-md transition-all border border-slate-100 group cursor-pointer">
+                       <div className="flex items-center gap-3 min-w-0">
+                          <span className={`w-6 h-6 rounded-lg flex items-center justify-center text-[10px] font-bold shrink-0 shadow-sm ${i===0 ? 'bg-amber-400 text-white' : 'bg-slate-200 text-slate-600'}`}>
                              {i + 1}
                           </span>
-                          <div>
-                             <div className="text-sm font-medium text-gray-800">{p.name}</div>
-                             <div className="text-[10px] text-gray-400 font-mono">{p.sku}</div>
+                          <div className="truncate">
+                             <div className="text-xs font-bold text-slate-700 truncate group-hover:text-blue-600 transition-colors">{p.name}</div>
+                             <div className="text-[10px] text-slate-400 font-mono">{p.sku}</div>
                           </div>
                        </div>
                        <div className="text-right">
-                          <div className="text-sm font-bold text-gray-800">${p.profit.toFixed(0)}</div>
-                          <div className="text-[10px] text-emerald-600 font-medium">ROI: {p.roi.toFixed(0)}%</div>
+                          <div className="text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded">${p.profit.toFixed(0)}</div>
                        </div>
                     </div>
                  ))}
-                 {data.topProducts.length === 0 && (
-                    <div className="text-center text-gray-400 text-xs py-2">暂无数据</div>
-                 )}
               </div>
            </div>
         </div>

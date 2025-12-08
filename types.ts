@@ -24,7 +24,7 @@ export interface AppSettings {
 }
 
 // --- NEW: Purchase Order Flow ---
-export type POStatus = 'Draft' | 'Ordered' | 'Production' | 'Shipped' | 'Arrived' | 'Cancelled';
+export type POStatus = 'Draft' | 'Ordered' | 'Production' | 'Shipped' | 'PartiallyArrived' | 'Arrived' | 'Cancelled';
 
 export interface PurchaseOrder {
   id: string;
@@ -34,6 +34,7 @@ export interface PurchaseOrder {
   productName: string;
   supplierName?: string;
   quantity: number;
+  receivedQuantity?: number; // NEW: Track partial receipts
   unitPriceCNY: number;
   totalAmountCNY: number;
   status: POStatus;
@@ -58,6 +59,15 @@ export interface InventoryLog {
   balanceAfter?: number; // Snapshot of balance
   referenceId?: string; // PO Number or Order ID
   note?: string;
+}
+
+// --- NEW: History Log (Audit Trail) ---
+export interface ChangeLogEntry {
+    id: string;
+    date: string;
+    user: string;
+    action: 'Create' | 'Update' | 'Delete';
+    details: string;
 }
 
 // --- NEW: OMS External Order (Enterprise) ---
@@ -180,7 +190,8 @@ export interface ReplenishmentRecord {
   warehouse: string; // Legacy string field
   status: 'Planning' | 'Shipped' | 'Arrived';
 
-  // Trash Bin Logic
+  // History & Trash
+  history?: ChangeLogEntry[]; // Local history cache
   isDeleted?: boolean;
   deletedAt?: string; 
 }

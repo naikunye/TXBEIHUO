@@ -74,6 +74,44 @@ export const parseAgentAction = async (message: string, records: ReplenishmentRe
     }
 };
 
+export const generateDailyBriefing = async (records: ReplenishmentRecord[]) => {
+    try {
+        const ai = getAiClient();
+        const context = prepareDataContext(records);
+        
+        const prompt = `
+            你是一位专业的电商 CEO 助理。请根据当前的库存和销售数据，生成一份**今日晨报 (Daily Briefing)**。
+            
+            数据摘要: ${JSON.stringify(context)}
+            
+            **要求：**
+            1. 输出 HTML 格式，使用 Tailwind CSS 类名。
+            2. 风格要现代、简洁、商务。
+            3. 内容包含 3 个核心板块：
+               - **🚨 紧急预警 (Critical Alerts)**: 库存 < 15天 或 利润为负的产品。
+               - **📈 增长机会 (Growth Opportunities)**: 销量高且 ROI > 30% 的产品，建议增加广告预算。
+               - **🧠 运营建议 (Action Items)**: 基于生命周期给出的具体操作建议（如：新品加速测款，滞销品降价）。
+            4. 语气要像真人在汇报工作，不要像机器人在罗列数据。
+            
+            HTML 结构参考:
+            <div class="space-y-4">
+                <div class="flex items-start gap-3 bg-red-50 p-3 rounded-lg border border-red-100">...</div>
+                <div class="flex items-start gap-3 bg-green-50 p-3 rounded-lg border border-green-100">...</div>
+                <div class="flex items-start gap-3 bg-blue-50 p-3 rounded-lg border border-blue-100">...</div>
+            </div>
+        `;
+
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: prompt,
+        });
+
+        return response.text;
+    } catch (error) {
+        return formatErrorHtml(error, "Daily Briefing");
+    }
+};
+
 export const analyzeInventory = async (records: ReplenishmentRecord[]) => {
   try {
     const ai = getAiClient();

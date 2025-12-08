@@ -12,24 +12,59 @@ import {
   AlertCircle,
   Key,
   Terminal,
-  RefreshCw
+  RefreshCw,
+  ShieldCheck
 } from 'lucide-react';
 import { saveSupabaseConfig, isSupabaseConfigured, getSupabaseConfig } from '../lib/supabaseClient';
 import { createClient } from '@supabase/supabase-js';
 
-// 深度优化后的 SQL 脚本
-const INIT_SQL = `-- 1. 创建数据表 (如果不存在)
+// --- 企业级 SQL 脚本 (带历史审计功能) ---
+const INIT_SQL = `-- 1. 主数据表 (存储当前状态)
 create table if not exists public.replenishment_data (
   id text primary key,
   workspace_id text not null,
   json_content jsonb not null,
-  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+  updated_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
--- 2. 创建索引
+-- 索引：加速查询
 create index if not exists idx_workspace_id on public.replenishment_data(workspace_id);
 
--- 3. [关键] 开启 Realtime 广播
+-- 2. [关键] 历史审计表 (Time Machine)
+-- 用于记录所有修改和删除操作，防止数据意外丢失
+create table if not exists public.replenishment_history (
+  history_id uuid primary key default gen_random_uuid(),
+  record_id text not null,
+  workspace_id text,
+  old_content jsonb,
+  operation_type text, -- 'UPDATE' or 'DELETE'
+  changed_at timestamp with time zone default now()
+);
+
+-- 3. 触发器函数：自动记录历史
+create or replace function log_replenishment_changes()
+returns trigger as $$
+begin
+  if (TG_OP = 'DELETE') then
+    insert into public.replenishment_history (record_id, workspace_id, old_content, operation_type)
+    values (OLD.id, OLD.workspace_id, OLD.json_content, 'DELETE');
+    return OLD;
+  elsif (TG_OP = 'UPDATE') then
+    insert into public.replenishment_history (record_id, workspace_id, old_content, operation_type)
+    values (NEW.id, NEW.workspace_id, OLD.json_content, 'UPDATE');
+    return NEW;
+  end if;
+  return null;
+end;
+$$ language plpgsql security definer;
+
+-- 4. 绑定触发器
+drop trigger if exists trigger_log_replenishment_changes on public.replenishment_data;
+create trigger trigger_log_replenishment_changes
+before update or delete on public.replenishment_data
+for each row execute procedure log_replenishment_changes();
+
+-- 5. 开启 Realtime (多端同步)
 do $$
 begin
   alter publication supabase_realtime add table public.replenishment_data;
@@ -38,11 +73,12 @@ exception when duplicate_object then
 end;
 $$;
 
--- 4. [关键] 设置 Replica Identity Full
+-- 6. 设置 Replica Identity (确保 Delete 事件包含完整数据)
 alter table public.replenishment_data replica identity full;
 
--- 5. 关闭 RLS (允许所有读写)
-alter table public.replenishment_data disable row level security;`;
+-- 7. 安全策略 (根据需要开启，目前为宽容模式)
+alter table public.replenishment_data disable row level security;
+`;
 
 interface CloudConnectProps {
   isOpen: boolean;
@@ -199,7 +235,9 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
                         <div>
                             <h4 className="text-green-800 font-bold text-lg">连接验证成功！</h4>
                             <p className="text-green-700 text-sm mt-2">
-                                请务必复制下方的 SQL 初始化脚本并在 Supabase SQL Editor 中运行，以确保数据同步功能正常。
+                                请务必复制下方的 SQL 初始化脚本并在 Supabase SQL Editor 中运行。
+                                <br/>
+                                <span className="font-bold">该脚本包含“历史审计”功能，可防止数据意外丢失。</span>
                             </p>
                         </div>
                         
@@ -211,7 +249,7 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
                             >
                                 复制
                             </button>
-                            <pre className="text-[10px] text-green-400 overflow-x-auto h-20 custom-scrollbar font-mono">
+                            <pre className="text-[10px] text-green-400 overflow-x-auto h-24 custom-scrollbar font-mono">
                                 {INIT_SQL}
                             </pre>
                         </div>
@@ -330,8 +368,11 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
                                                     {copied ? '已复制' : '复制'}
                                                 </button>
                                             </div>
-                                            <p className="text-[10px] text-gray-400 mb-1">请在 Supabase SQL Editor 中执行：</p>
-                                            <pre className="text-[10px] text-green-400 overflow-x-auto whitespace-pre-wrap font-mono leading-relaxed h-24 custom-scrollbar">
+                                            <div className="flex items-center gap-2 mb-2 text-green-400 text-xs font-bold border-b border-slate-700 pb-2">
+                                                <ShieldCheck size={14} /> 
+                                                企业级 Schema (含防丢失审计)
+                                            </div>
+                                            <pre className="text-[10px] text-slate-300 overflow-x-auto whitespace-pre-wrap font-mono leading-relaxed h-32 custom-scrollbar">
                                                 {INIT_SQL}
                                             </pre>
                                         </div>
