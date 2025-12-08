@@ -7,7 +7,7 @@ import {
   Wallet, TrendingUp, TrendingDown, Plus, Filter, PieChart, BarChart3, 
   ArrowUpRight, ArrowDownRight, Calendar, DollarSign, Landmark, CreditCard, 
   Briefcase, Truck, Trash2, X, Package, Sparkles, Activity, Loader2, Bot, 
-  Megaphone, ShoppingBag, ArrowRightLeft, Banknote, RefreshCw, Coins
+  Megaphone, ShoppingBag, ArrowRightLeft, Banknote, RefreshCw, Coins, Waves
 } from 'lucide-react';
 
 interface FinanceCenterProps {
@@ -30,10 +30,147 @@ const CATEGORY_LABELS: Record<string, string> = {
 const INCOME_CATEGORIES = ['Revenue', 'Deposit', 'Exchange', 'Other'];
 const EXPENSE_CATEGORIES = ['ProductPurchase', 'Logistics', 'TikTokAds', 'Marketing', 'Rent', 'Salary', 'Software', 'Withdrawal', 'Other'];
 
+// --- Sankey Component ---
+const SankeyDiagram: React.FC<{
+    revenue: number;
+    cogs: number;
+    logistics: number;
+    marketing: number;
+    opex: number;
+    netProfit: number;
+}> = ({ revenue, cogs, logistics, marketing, opex, netProfit }) => {
+    
+    // Normalize data for visualization if revenue is 0
+    const totalFlow = Math.max(revenue, 1);
+    
+    // Nodes configuration
+    const width = 800;
+    const height = 400;
+    const nodeWidth = 20;
+    const padding = 50;
+
+    // Y Positions
+    const startY = 150;
+    
+    // Calculate heights proportional to value
+    // Level 1: Revenue
+    const hRev = (revenue / totalFlow) * (height - 100);
+    
+    // Level 2 breakdown
+    const hCogs = (cogs / totalFlow) * (height - 100);
+    const hLogistics = (logistics / totalFlow) * (height - 100);
+    const hMarketing = (marketing / totalFlow) * (height - 100);
+    const hOpex = (opex / totalFlow) * (height - 100);
+    const hProfit = Math.max((netProfit / totalFlow) * (height - 100), 5); // Min height for visibility
+
+    // Coordinates
+    // Source
+    const x0 = padding;
+    const y0 = (height - hRev) / 2;
+
+    // Destination X
+    const x1 = width - padding - nodeWidth;
+
+    // Destination Ys (Stacked)
+    let currentY = (height - (hCogs + hLogistics + hMarketing + hOpex + hProfit + 40)) / 2; // 40 is gaps
+    
+    const destNodes = [
+        { label: '采购成本', value: cogs, h: hCogs, color: '#f97316', y: currentY }, // Orange
+        { label: '物流运费', value: logistics, h: hLogistics, color: '#3b82f6', y: currentY += hCogs + 10 }, // Blue
+        { label: '营销广告', value: marketing, h: hMarketing, color: '#a855f7', y: currentY += hLogistics + 10 }, // Purple
+        { label: '运营杂项', value: opex, h: hOpex, color: '#64748b', y: currentY += hMarketing + 10 }, // Slate
+        { label: '净利润', value: netProfit, h: hProfit, color: '#10b981', y: currentY += hOpex + 10 }, // Emerald
+    ];
+
+    // Helper to draw bezier path
+    const drawPath = (sy: number, sh: number, dy: number, dh: number, color: string) => {
+        const c1x = x0 + (width / 3);
+        const c2x = x1 - (width / 3);
+        // Center of the band
+        const sourceCenter = sy + sh/2;
+        const destCenter = dy + dh/2;
+        
+        // We draw a thick stroke instead of a filled shape for simpler implementation
+        return (
+            <path 
+                d={`M ${x0 + nodeWidth} ${sourceCenter} C ${c1x} ${sourceCenter}, ${c2x} ${destCenter}, ${x1} ${destCenter}`}
+                stroke={color}
+                strokeWidth={Math.max(dh, 2)}
+                fill="none"
+                opacity="0.4"
+                className="hover:opacity-80 transition-opacity duration-500 cursor-pointer"
+            >
+                <animate 
+                    attributeName="stroke-dasharray" 
+                    from="0, 1000" 
+                    to="1000, 0" 
+                    dur="2s" 
+                    fill="freeze" 
+                />
+            </path>
+        );
+    };
+
+    return (
+        <div className="w-full h-[400px] bg-slate-900 rounded-3xl border border-white/5 relative overflow-hidden flex items-center justify-center shadow-inner bg-grid-pattern">
+            <svg width="100%" height="100%" viewBox={`0 0 ${width} ${height}`} className="overflow-visible">
+                <defs>
+                    <linearGradient id="gradRev" x1="0" x2="1" y1="0" y2="0">
+                        <stop offset="0%" stopColor="#06b6d4" />
+                        <stop offset="100%" stopColor="#3b82f6" />
+                    </linearGradient>
+                </defs>
+
+                {/* Source Node (Revenue) */}
+                <g>
+                    <rect x={x0} y={y0} width={nodeWidth} height={hRev} fill="url(#gradRev)" rx="4" />
+                    <text x={x0} y={y0 - 10} fill="#22d3ee" fontSize="14" fontWeight="bold" className="font-mono">总营收</text>
+                    <text x={x0} y={y0 + hRev + 20} fill="#94a3b8" fontSize="12" className="font-mono">¥{(revenue/1000).toFixed(1)}k</text>
+                </g>
+
+                {/* Links */}
+                {(() => {
+                    let sourceYOffset = y0;
+                    return destNodes.map((node, i) => {
+                        if (node.value <= 0) return null;
+                        const linkHeight = (node.value / revenue) * hRev;
+                        const path = drawPath(sourceYOffset, linkHeight, node.y, node.h, node.color);
+                        sourceYOffset += linkHeight;
+                        return <g key={i}>{path}</g>;
+                    });
+                })()}
+
+                {/* Destination Nodes */}
+                {destNodes.map((node, i) => {
+                    if (node.value <= 0) return null;
+                    return (
+                        <g key={i}>
+                            <rect x={x1} y={node.y} width={nodeWidth} height={node.h} fill={node.color} rx="4" />
+                            <text x={x1 + 30} y={node.y + node.h/2 + 5} fill={node.color} fontSize="12" fontWeight="bold" className="font-mono">
+                                {node.label}
+                            </text>
+                            <text x={x1 + 30} y={node.y + node.h/2 + 20} fill="#64748b" fontSize="10" className="font-mono">
+                                {((node.value/revenue)*100).toFixed(1)}%
+                            </text>
+                        </g>
+                    );
+                })}
+            </svg>
+            
+            {revenue === 0 && (
+                <div className="absolute inset-0 flex items-center justify-center text-slate-500 bg-slate-900/80 backdrop-blur-sm">
+                    暂无本月收支数据
+                </div>
+            )}
+        </div>
+    );
+};
+
+
 export const FinanceCenter: React.FC<FinanceCenterProps> = ({ 
   transactions, purchaseOrders, onAddTransaction, onDeleteTransaction, settings
 }) => {
-  const [activeTab, setActiveTab] = useState<'Dashboard' | 'Ledger' | 'Wallet'>('Dashboard');
+  const [activeTab, setActiveTab] = useState<'Dashboard' | 'Flow' | 'Ledger' | 'Wallet'>('Dashboard');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [filterMonth, setFilterMonth] = useState(new Date().toISOString().slice(0, 7)); 
   
@@ -82,21 +219,27 @@ export const FinanceCenter: React.FC<FinanceCenterProps> = ({
   
   const calculateFinancials = (data: FinanceTransaction[]) => {
       let revenue = 0; let cogs = 0; let opex = 0; 
+      let logistics = 0; let marketing = 0;
       const breakdown: Record<string, number> = {};
+      
       data.forEach(t => {
           const amountCNY = t.currency === 'USD' ? t.amount * settings.exchangeRate : t.amount;
           if (t.type === 'Income') {
               revenue += amountCNY;
           } else {
               breakdown[t.category] = (breakdown[t.category] || 0) + amountCNY;
-              if (['COGS', 'ProductPurchase', 'Logistics'].includes(t.category)) cogs += amountCNY;
-              else if (t.category !== 'Withdrawal' && t.category !== 'Exchange') opex += amountCNY;
+              
+              if (['COGS', 'ProductPurchase'].includes(t.category)) cogs += amountCNY;
+              else if (t.category === 'Logistics') logistics += amountCNY;
+              else if (['Marketing', 'TikTokAds'].includes(t.category)) marketing += amountCNY;
+              else if (t.category !== 'Withdrawal' && t.category !== 'Exchange') opex += amountCNY; // Other OPEX
           }
       });
       const grossProfit = revenue - cogs;
-      const netProfit = revenue - cogs - opex;
+      const netProfit = revenue - cogs - logistics - marketing - opex;
       const grossMargin = revenue > 0 ? (grossProfit / revenue) * 100 : 0;
-      return { revenue, cogs, opex, grossProfit, netProfit, grossMargin, breakdown, totalExpense: cogs + opex };
+      
+      return { revenue, cogs, logistics, marketing, opex, grossProfit, netProfit, grossMargin, breakdown, totalExpense: cogs + logistics + marketing + opex };
   };
 
   const currentStats = calculateFinancials(currentMonthData);
@@ -116,7 +259,7 @@ export const FinanceCenter: React.FC<FinanceCenterProps> = ({
   const handleAiAnalysis = async () => {
       setIsAiAnalyzing(true);
       const res = await generateFinancialReport([], {
-          revenue: currentStats.revenue, cogs: currentStats.cogs, opex: currentStats.opex,
+          revenue: currentStats.revenue, cogs: currentStats.cogs, opex: currentStats.opex + currentStats.logistics + currentStats.marketing,
           netProfit: currentStats.netProfit, netMargin: currentStats.revenue > 0 ? (currentStats.netProfit/currentStats.revenue)*100 : 0,
           breakdown: currentStats.breakdown, trend: trendChartData.map(t => ({ month: t.month, revenue: t.revenue, profit: t.netProfit }))
       });
@@ -204,9 +347,9 @@ export const FinanceCenter: React.FC<FinanceCenterProps> = ({
                 </div>
                 
                 <div className="flex bg-slate-900 p-1 rounded-xl border border-slate-700">
-                    {['Dashboard', 'Wallet', 'Ledger'].map(t => (
+                    {['Dashboard', 'Flow', 'Wallet', 'Ledger'].map(t => (
                         <button key={t} onClick={() => setActiveTab(t as any)} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === t ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-white'}`}>
-                            {t === 'Dashboard' ? '报表' : t === 'Wallet' ? '钱包' : '流水'}
+                            {t === 'Dashboard' ? '报表' : t === 'Flow' ? '流向' : t === 'Wallet' ? '钱包' : '流水'}
                         </button>
                     ))}
                 </div>
@@ -257,6 +400,38 @@ export const FinanceCenter: React.FC<FinanceCenterProps> = ({
             </div>
         )}
 
+        {/* --- Flow View (Sankey) --- */}
+        {activeTab === 'Flow' && (
+            <div className="animate-fade-in space-y-6">
+                <div className="flex justify-between items-center px-2">
+                    <h3 className="text-lg font-bold text-white flex items-center gap-2 text-glow">
+                        <Waves size={20} className="text-cyan-400" /> 资金流向桑基图 (Sankey)
+                    </h3>
+                    <p className="text-xs text-slate-400 font-mono">
+                        本月流向分析 ({filterMonth})
+                    </p>
+                </div>
+                
+                <SankeyDiagram 
+                    revenue={currentStats.revenue}
+                    cogs={currentStats.cogs}
+                    logistics={currentStats.logistics}
+                    marketing={currentStats.marketing}
+                    opex={currentStats.opex}
+                    netProfit={currentStats.netProfit}
+                />
+
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                    {[{l:'总营收', v: currentStats.revenue, c:'cyan'}, {l:'采购成本', v: currentStats.cogs, c:'orange'}, {l:'物流', v: currentStats.logistics, c:'blue'}, {l:'营销', v: currentStats.marketing, c:'purple'}, {l:'净利', v: currentStats.netProfit, c:'emerald'}].map((item,i) => (
+                        <div key={i} className="bg-white/5 border border-white/10 p-4 rounded-xl text-center">
+                            <p className={`text-[10px] uppercase font-bold text-${item.c}-400 mb-1`}>{item.l}</p>
+                            <p className="text-white font-mono font-bold">¥{(item.v/1000).toFixed(1)}k</p>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        )}
+
         {activeTab === 'Dashboard' && (
             <div className="space-y-6">
                 
@@ -296,8 +471,8 @@ export const FinanceCenter: React.FC<FinanceCenterProps> = ({
                     </div>
                     <div className="glass-panel p-5 rounded-2xl border border-white/5 hover:bg-white/5 transition-colors">
                         <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">运营支出 (OPEX)</p>
-                        <h3 className="text-2xl font-black text-white font-mono">¥{formatCurrency(currentStats.opex, 'CNY').replace('¥','')}</h3>
-                        <p className="text-xs text-orange-400 mt-2 font-mono">占比: {currentStats.revenue > 0 ? ((currentStats.opex / currentStats.revenue)*100).toFixed(1) : 0}%</p>
+                        <h3 className="text-2xl font-black text-white font-mono">¥{formatCurrency(currentStats.opex + currentStats.logistics + currentStats.marketing, 'CNY').replace('¥','')}</h3>
+                        <p className="text-xs text-orange-400 mt-2 font-mono">占比: {currentStats.revenue > 0 ? (((currentStats.opex+currentStats.logistics+currentStats.marketing) / currentStats.revenue)*100).toFixed(1) : 0}%</p>
                     </div>
                 </div>
 
@@ -338,7 +513,7 @@ export const FinanceCenter: React.FC<FinanceCenterProps> = ({
                                 <tr key={t.id} className="hover:bg-white/5 transition-colors">
                                     <td className="p-4 font-mono text-slate-300">{t.date}</td>
                                     <td className="p-4">
-                                        <span className={`px-2 py-1 rounded text-[10px] font-bold border ${t.type === 'Income' ? 'bg-emerald-900/30 text-emerald-400 border-emerald-800' : 'bg-slate-700 text-slate-300 border-slate-600'}`}>
+                                        <span className={`px-2 py-1 rounded text-[10px] font-bold border ${t.type === 'Income' ? 'bg-emerald-900/30 text-emerald-400 border-emerald-800' : 'bg-slate-700 text-slate-400 border-slate-600'}`}>
                                             {CATEGORY_LABELS[t.category] || t.category}
                                         </span>
                                     </td>

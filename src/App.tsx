@@ -118,7 +118,7 @@ import { SupplyChainCalendar } from './components/SupplyChainCalendar';
 import { ProductRDLab } from './components/ProductRDLab';
 import { GeoSalesCommand } from './components/GeoSalesCommand';
 import { ToastContainer, ToastMessage, ToastType } from './components/Toast'; 
-import { analyzeInventory, generateAdStrategy, generateSelectionStrategy, generateMarketingContent, analyzeLogisticsChannels, generateFinancialReport } from './services/geminiService';
+import { analyzeInventory, analyzeLogisticsChannels, generateFinancialReport } from './services/geminiService';
 import { supabase, isSupabaseConfigured } from './lib/supabaseClient';
 import { fetchLingxingInventory, fetchLingxingSales } from './services/lingxingService';
 import { fetchMiaoshouInventory, fetchMiaoshouSales } from './services/miaoshouService';
@@ -740,12 +740,10 @@ function App() {
   const handleLogisticsAnalysis = () => runAiTask("物流渠道优选报告", () => analyzeLogisticsChannels(activeRecords));
   const handleFinancialReport = () => runAiTask("供应链财务损益分析", () => generateFinancialReport(activeRecords));
   
-  const handleMarketingGenerate = async (record: ReplenishmentRecord) => {
+  const handleMarketingGenerate = (record: ReplenishmentRecord) => {
       setMarketingRecord(record); 
       setMarketingContent(null);
       setMarketingModalOpen(true);
-      const content = await generateMarketingContent(record);
-      setMarketingContent(content);
   };
   
   const handleDistributeConfirm = async (mode: 'transfer' | 'clone', targetStoreId: string, quantity: number) => {
@@ -839,7 +837,7 @@ function App() {
           case 'rd_lab':
               return <ProductRDLab />;
           case 'geo_command':
-              return <GeoSalesCommand />;
+              return <GeoSalesCommand records={activeRecords} />;
           case 'purchasing':
               return (
                 <div className="flex flex-col gap-4 animate-fade-in">

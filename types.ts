@@ -1,4 +1,5 @@
 
+
 export type ShippingMethod = 'Sea' | 'Air';
 
 export type LifecycleStatus = 'New' | 'Growth' | 'Stable' | 'Clearance';
@@ -8,6 +9,24 @@ export interface Store {
   name: string;
   color: string; 
   platform: 'TikTok' | 'Amazon' | 'Temu' | 'Other';
+}
+
+// --- NEW: Product R&D Lab ---
+export type IdeaStage = 'Concept' | 'Sampling' | 'Costing' | 'Approved' | 'Rejected';
+
+export interface ProductIdea {
+    id: string;
+    name: string;
+    description: string;
+    stage: IdeaStage;
+    imageUrl?: string;
+    targetPriceUSD?: number;
+    estimatedCostCNY?: number; // Estimated Product Cost
+    sampleCostCNY?: number; // Real sample cost spent
+    competitorUrl?: string;
+    aiAnalysis?: string; // Stored AI Report
+    createdAt: string;
+    notes?: string;
 }
 
 // --- NEW: Supplier CRM ---
@@ -95,7 +114,7 @@ export interface ChangeLogEntry {
 export interface ExternalOrder {
   id: string;
   platformOrderId: string;
-  platform: 'TikTok' | 'Amazon' | 'Shopify';
+  platform: 'TikTok' | 'Amazon' | 'Shopify' | 'Manual';
   orderDate: string;
   orderStatus: 'Unfulfilled' | 'Fulfilled' | 'Cancelled';
   customerName: string;
