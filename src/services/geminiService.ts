@@ -126,6 +126,8 @@ export const parseNaturalLanguageQuery = async (query: string): Promise<NLQueryR
 export const parseImageToRecord = async (base64Image: string): Promise<Partial<ReplenishmentRecord>> => {
     try {
         const ai = getAiClient();
+        
+        // Remove header if present
         const base64Data = base64Image.split(',')[1] || base64Image;
 
         const prompt = `
@@ -293,6 +295,7 @@ export const analyzeInventory = async (records: ReplenishmentRecord[]) => {
 export const analyzeLogisticsChannels = async (records: ReplenishmentRecord[]) => {
     try {
     const ai = getAiClient();
+    // Prepare data focused on logistics metrics
     const dataSummary = records.map(r => {
       const m = calculateMetrics(r);
       return {
@@ -517,6 +520,7 @@ export const askAiAssistant = async (message: string, records: ReplenishmentReco
         const ai = getAiClient();
         const dataContext = JSON.stringify(prepareDataContext(records));
 
+        // Construct a prompt that includes context and history
         let promptConstruction = `
             System: 你是探行科技的供应链 AI 助手 (Copilot)。
             你拥有当前用户的实时备货数据权限。
@@ -547,6 +551,7 @@ export const askAiAssistant = async (message: string, records: ReplenishmentReco
 
     } catch (error: any) {
         console.error("AI Chat Failed:", error);
+        // Simple error message for chat, different from HTML cards
         if (error.toString().includes("401")) return "API Key 无效。请检查设置。";
         if (error.toString().includes("429")) return "AI 服务繁忙（配额耗尽），请稍后再试。";
         return "抱歉，我现在的连接有点不稳定，请稍后再试。";

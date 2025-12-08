@@ -16,14 +16,23 @@ interface MarketingModalProps {
   content: string | null; // Legacy content, we might not use it directly in new design but keep for compat
   productName: string;
   record?: ReplenishmentRecord | null;
+  initialTab?: 'strategy' | 'channels' | 'influencer' | 'visuals' | 'insights'; // New Prop
+  initialChannel?: 'TikTok' | 'Amazon' | 'Instagram' | 'Email'; // New Prop
 }
 
 type Tab = 'strategy' | 'channels' | 'influencer' | 'visuals' | 'insights';
 type ChannelType = 'TikTok' | 'Amazon' | 'Instagram' | 'Email';
 
-export const MarketingModal: React.FC<MarketingModalProps> = ({ isOpen, onClose, productName, record }) => {
-  const [activeTab, setActiveTab] = useState<Tab>('strategy');
-  const [activeChannel, setActiveChannel] = useState<ChannelType>('TikTok');
+export const MarketingModal: React.FC<MarketingModalProps> = ({ 
+    isOpen, 
+    onClose, 
+    productName, 
+    record, 
+    initialTab = 'strategy',
+    initialChannel = 'TikTok' 
+}) => {
+  const [activeTab, setActiveTab] = useState<Tab>(initialTab);
+  const [activeChannel, setActiveChannel] = useState<ChannelType>(initialChannel);
   
   // Loading States
   const [loading, setLoading] = useState<Record<string, boolean>>({});
@@ -32,14 +41,16 @@ export const MarketingModal: React.FC<MarketingModalProps> = ({ isOpen, onClose,
   const [results, setResults] = useState<Record<string, string | null>>({});
   const [reviewInput, setReviewInput] = useState('');
 
-  // Reset on open
+  // Reset on open or prop change
   useEffect(() => {
       if (isOpen) {
-          setActiveTab('strategy');
-          setResults({});
+          setActiveTab(initialTab);
+          setActiveChannel(initialChannel);
+          // Don't clear results to allow persistence if closed accidentally
+          // setResults({}); 
           setReviewInput('');
       }
-  }, [isOpen]);
+  }, [isOpen, initialTab, initialChannel]);
 
   if (!isOpen || !record) return null;
 
@@ -91,9 +102,9 @@ export const MarketingModal: React.FC<MarketingModalProps> = ({ isOpen, onClose,
                     <div className="bg-gradient-to-br from-indigo-500 to-purple-600 p-2 rounded-lg shadow-lg">
                         <Megaphone size={20} />
                     </div>
-                    <span className="font-bold text-lg tracking-wide">营销指挥部</span>
+                    <span className="font-bold text-lg tracking-wide">营销工坊</span>
                 </div>
-                <p className="text-[10px] text-slate-500 uppercase tracking-widest mt-2">Marketing OS v2.0</p>
+                <p className="text-[10px] text-slate-500 uppercase tracking-widest mt-2">Marketing OS v3.0</p>
             </div>
 
             <div className="p-4 border-b border-white/10 bg-white/5">

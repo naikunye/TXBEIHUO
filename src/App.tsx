@@ -235,6 +235,9 @@ function App() {
   const [marketingModalOpen, setMarketingModalOpen] = useState(false);
   const [marketingContent, setMarketingContent] = useState<string | null>(null);
   const [marketingRecord, setMarketingRecord] = useState<ReplenishmentRecord | null>(null); 
+  // NEW: Deep linking for marketing tools
+  const [marketingInitialTab, setMarketingInitialTab] = useState<any>('strategy');
+  const [marketingInitialChannel, setMarketingInitialChannel] = useState<any>('TikTok');
 
   // Search and Filter State
   const [searchQuery, setSearchQuery] = useState('');
@@ -740,9 +743,11 @@ function App() {
   const handleLogisticsAnalysis = () => runAiTask("物流渠道优选报告", () => analyzeLogisticsChannels(activeRecords));
   const handleFinancialReport = () => runAiTask("供应链财务损益分析", () => generateFinancialReport(activeRecords));
   
-  const handleMarketingGenerate = (record: ReplenishmentRecord) => {
+  const handleMarketingGenerate = (record: ReplenishmentRecord, initialTab: string = 'strategy', initialChannel: string = 'TikTok') => {
       setMarketingRecord(record); 
       setMarketingContent(null);
+      setMarketingInitialTab(initialTab);
+      setMarketingInitialChannel(initialChannel);
       setMarketingModalOpen(true);
   };
   
@@ -1399,7 +1404,7 @@ function App() {
                       {currentView === 'marketing' && <div className="absolute inset-0 bg-gradient-to-r from-indigo-600/50 to-purple-600/50 opacity-90 backdrop-blur-md"></div>}
                       {currentView !== 'marketing' && <div className="absolute inset-0 bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity rounded-xl"></div>}
                       <Sparkles size={18} className={`relative z-10 ${currentView === 'marketing' ? 'text-yellow-300' : 'group-hover:text-purple-400'}`} />
-                      <span className="relative z-10">AI 营销中心</span>
+                      <span className="relative z-10">AI 营销工坊</span>
                   </button>
                   <button onClick={() => setCurrentView('calculator')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all group ${currentView === 'calculator' ? 'bg-white/10 text-white shadow-lg border border-white/10 font-bold backdrop-blur-md' : 'text-slate-400 hover:bg-white/5 hover:text-white font-medium'}`}>
                       <Calculator size={18} className={currentView === 'calculator' ? 'text-blue-400' : 'group-hover:text-slate-200'} />
@@ -1464,7 +1469,7 @@ function App() {
                         currentView === 'wms' ? 'WAREHOUSE WMS' :
                         currentView === 'finance' ? 'FINANCE CORE' :
                         currentView === 'analytics' ? 'DATA INTELLIGENCE' :
-                        currentView === 'marketing' ? 'AI MARKETING' :
+                        currentView === 'marketing' ? 'MARKETING STUDIO' :
                         currentView === 'calculator' ? 'SIMULATION LAB' :
                         currentView === 'logistics' ? 'LOGISTICS TRACKER' :
                         currentView === 'suppliers' ? 'SUPPLIER CRM' :
@@ -1537,7 +1542,15 @@ function App() {
       <DistributeModal isOpen={isDistributeModalOpen} onClose={() => setIsDistributeModalOpen(false)} sourceRecord={distributeSourceRecord} stores={stores} onConfirm={handleDistributeConfirm} />
       <CommandPalette isOpen={isCommandPaletteOpen} onClose={() => setIsCommandPaletteOpen(false)} records={activeRecords} onNavigate={(v) => setCurrentView(v)} onOpenRecord={(r) => { setEditingRecord(r); setIsModalOpen(true); }} onAction={()=>{}} />
       <AiChatModal isOpen={isAiChatOpen} onClose={() => setIsAiChatOpen(false)} records={activeRecords} onAction={handleAiAction} />
-      <MarketingModal isOpen={marketingModalOpen} onClose={() => setMarketingModalOpen(false)} content={marketingContent} productName={marketingRecord?.productName || ''} record={marketingRecord} />
+      <MarketingModal 
+        isOpen={marketingModalOpen} 
+        onClose={() => setMarketingModalOpen(false)} 
+        content={marketingContent} 
+        productName={marketingRecord?.productName || ''} 
+        record={marketingRecord} 
+        initialTab={marketingInitialTab} 
+        initialChannel={marketingInitialChannel} 
+      />
     </div>
   );
 }
