@@ -40,8 +40,8 @@ export interface AppSettings {
   seaTiers: LogisticsTier[];
 }
 
-// --- NEW: Purchase Order Flow ---
-export type POStatus = 'Draft' | 'Ordered' | 'Production' | 'Shipped' | 'PartiallyArrived' | 'Arrived' | 'Cancelled';
+// --- NEW: Purchase Order Flow with Approval ---
+export type POStatus = 'Draft' | 'PendingApproval' | 'Approved' | 'Rejected' | 'Ordered' | 'Production' | 'Shipped' | 'PartiallyArrived' | 'Arrived' | 'Cancelled';
 
 export interface PurchaseOrder {
   id: string;
@@ -61,6 +61,8 @@ export interface PurchaseOrder {
   carrier?: string;
   shippingMethod?: ShippingMethod;
   notes?: string;
+  approver?: string; // Who approved it
+  rejectionReason?: string; // Why it was rejected
 }
 
 // --- NEW: WMS Inventory Log (Enterprise) ---
@@ -121,6 +123,7 @@ export type FinanceCategory =
   | 'Salary' 
   | 'Software' 
   | 'Withdrawal'
+  | 'Exchange' // New: Currency Exchange
   | 'Other' 
   | string;
 

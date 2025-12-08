@@ -31,7 +31,9 @@ import {
   ShoppingBag,
   ArrowRightLeft,
   Banknote,
-  Download
+  Download,
+  Coins,
+  RefreshCw
 } from 'lucide-react';
 
 interface FinanceCenterProps {
@@ -54,6 +56,7 @@ const CATEGORY_LABELS: Record<string, string> = {
     'Salary': '人力成本',
     'Software': '软件服务',
     'Withdrawal': '提现金额',
+    'Exchange': '货币兑换',
     'Other': '其他杂项',
     'Custom': '手动录入'
 };
@@ -62,7 +65,7 @@ const MANUAL_CATEGORIES: string[] = [
     'Revenue', 'Deposit', 
     'ProductPurchase', 'TikTokAds', 'Logistics', 
     'Marketing', 'Rent', 'Salary', 
-    'Software', 'Withdrawal', 'Other'
+    'Software', 'Withdrawal', 'Exchange', 'Other'
 ];
 
 export const FinanceCenter: React.FC<FinanceCenterProps> = ({ 
@@ -72,7 +75,7 @@ export const FinanceCenter: React.FC<FinanceCenterProps> = ({
   onDeleteTransaction,
   settings
 }) => {
-  const [activeTab, setActiveTab] = useState<'Dashboard' | 'Ledger'>('Dashboard');
+  const [activeTab, setActiveTab] = useState<'Dashboard' | 'Ledger' | 'Wallet'>('Dashboard');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [filterMonth, setFilterMonth] = useState(new Date().toISOString().slice(0, 7)); // YYYY-MM
   
@@ -90,14 +93,14 @@ export const FinanceCenter: React.FC<FinanceCenterProps> = ({
 
   // --- 1. Data Processing Engine ---
   const combinedTransactions = useMemo(() => {
-      // Auto-generate COGS from POs (Only "Shipped" or "Arrived" implies cost incurred usually, or "Ordered" depending on accounting principle. Using Ordered for cash flow view)
+      // Auto-generate COGS from POs
       const poTransactions: FinanceTransaction[] = purchaseOrders
           .filter(po => po.status !== 'Cancelled' && po.status !== 'Draft')
           .map(po => ({
               id: `PO-${po.id}`,
               date: po.date,
               type: 'Expense',
-              category: 'COGS', // Use standard COGS for P&L, but user can manually add "ProductPurchase" for cash flow
+              category: 'ProductPurchase', // Map to ProductPurchase for Cash Flow / COGS
               amount: po.totalAmountCNY,
               currency: 'CNY',
               description: `采购单: ${po.poNumber} (${po.productName})`,
@@ -107,6 +110,20 @@ export const FinanceCenter: React.FC<FinanceCenterProps> = ({
 
       return [...transactions, ...poTransactions].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [transactions, purchaseOrders]);
+
+  // Wallet Balances (All Time)
+  const walletBalances = useMemo(() => {
+      let cny = 0;
+      let usd = 0;
+      
+      combinedTransactions.forEach(t => {
+          const val = t.type === 'Income' ? t.amount : -t.amount;
+          if (t.currency === 'CNY') cny += val;
+          else usd += val;
+      });
+      
+      return { cny, usd };
+  }, [combinedTransactions]);
 
   // Current Month Data
   const currentMonthData = useMemo(() => {
@@ -124,8 +141,8 @@ export const FinanceCenter: React.FC<FinanceCenterProps> = ({
   // Financial Metrics Calculator
   const calculateFinancials = (data: FinanceTransaction[]) => {
       let revenue = 0;
-      let cogs = 0; // Cost of Goods Sold
-      let opex = 0; // Operating Expenses
+      let cogs = 0; 
+      let opex = 0; 
       const breakdown: Record<string, number> = {};
 
       data.forEach(t => {
@@ -135,11 +152,9 @@ export const FinanceCenter: React.FC<FinanceCenterProps> = ({
               revenue += amountCNY;
           } else {
               breakdown[t.category] = (breakdown[t.category] || 0) + amountCNY;
-              // Group logic for P&L
               if (['COGS', 'ProductPurchase', 'Logistics'].includes(t.category)) {
                   cogs += amountCNY;
-              } else if (t.category !== 'Withdrawal') { 
-                  // Exclude Withdrawal from P&L Expenses usually (it's cash movement), but include everything else as OPEX
+              } else if (t.category !== 'Withdrawal' && t.category !== 'Exchange') { 
                   opex += amountCNY;
               }
           }
@@ -179,7 +194,6 @@ export const FinanceCenter: React.FC<FinanceCenterProps> = ({
   // --- Handlers ---
   const handleAiAnalysis = async () => {
       setIsAiAnalyzing(true);
-      
       const context = {
           revenue: currentStats.revenue,
           cogs: currentStats.cogs,
@@ -189,9 +203,7 @@ export const FinanceCenter: React.FC<FinanceCenterProps> = ({
           breakdown: currentStats.breakdown,
           trend: trendChartData.map(t => ({ month: t.month, revenue: t.revenue, profit: t.netProfit }))
       };
-
       const res = await generateFinancialReport([], context);
-      
       setAiReport(res); 
       setIsAiAnalyzing(false);
   };
@@ -204,10 +216,9 @@ export const FinanceCenter: React.FC<FinanceCenterProps> = ({
           CATEGORY_LABELS[t.category] || t.category,
           t.amount,
           t.currency,
-          `"${t.description.replace(/"/g, '""')}"`, // CSV escaping
+          `"${t.description.replace(/"/g, '""')}"`,
           t.referenceId || ''
       ]);
-      
       const csvContent = "\uFEFF" + [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
       const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
@@ -219,41 +230,28 @@ export const FinanceCenter: React.FC<FinanceCenterProps> = ({
       document.body.removeChild(link);
   };
 
-  // --- New: Auto Type Selection Logic ---
   const handleCategorySelect = (cat: string) => {
       let newType: 'Income' | 'Expense' = form.type || 'Expense';
-      
-      // Auto-switch rules
       if (cat === 'Revenue' || cat === 'Deposit') {
           newType = 'Income';
-      } else if (cat !== 'Custom') {
-          // All other presets (Ads, Logistics, Purchase, etc.) are Expenses
+      } else if (cat !== 'Custom' && cat !== 'Exchange') {
           newType = 'Expense';
       }
-      // If 'Custom', keep current selection (allow manual override)
-
       setForm(prev => ({
           ...prev,
           category: cat as FinanceCategory,
           type: newType
       }));
-      
-      if (cat !== 'Custom') {
-          setCustomCategory('');
-      }
+      if (cat !== 'Custom') setCustomCategory('');
   };
 
   const handleAdd = (e: React.FormEvent) => {
       e.preventDefault();
-      
-      // Determine final category (Preset or Custom)
       const finalCategory = form.category === 'Custom' ? customCategory.trim() : form.category;
-
       if (!form.amount || !finalCategory) {
           alert("请填写金额和科目");
           return;
       }
-      
       onAddTransaction({
           id: Date.now().toString(),
           date: form.date || new Date().toISOString().split('T')[0],
@@ -281,52 +279,29 @@ export const FinanceCenter: React.FC<FinanceCenterProps> = ({
           case 'Salary': return <Briefcase size={16} />;
           case 'Rent': return <Landmark size={16} />;
           case 'Withdrawal': return <ArrowRightLeft size={16} />;
+          case 'Exchange': return <RefreshCw size={16} />;
           default: return <CreditCard size={16} />;
       }
   };
 
-  // --- Render Chart (SVG) ---
   const renderTrendChart = () => {
-      const height = 160;
-      const width = 600;
-      const padding = 20;
+      const height = 160; const width = 600; const padding = 20;
       const maxVal = Math.max(...trendChartData.map(d => Math.max(d.revenue, d.totalExpense)), 1000);
-      
       const getX = (i: number) => (i / (trendChartData.length - 1)) * (width - 2 * padding) + padding;
       const getY = (val: number) => height - padding - (val / maxVal) * (height - 2 * padding);
-
       const pointsRev = trendChartData.map((d, i) => `${getX(i)},${getY(d.revenue)}`).join(' ');
       const pointsExp = trendChartData.map((d, i) => `${getX(i)},${getY(d.totalExpense)}`).join(' ');
-      const pointsNet = trendChartData.map((d, i) => `${getX(i)},${getY(Math.max(0, d.netProfit))}`).join(' '); // Clip negative for simple line
 
       return (
           <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full overflow-visible">
-              {/* Grid */}
               <line x1={padding} y1={height-padding} x2={width-padding} y2={height-padding} stroke="#e5e7eb" />
               <line x1={padding} y1={padding} x2={width-padding} y2={padding} stroke="#f3f4f6" strokeDasharray="4"/>
-              
-              {/* Lines */}
               <polyline points={pointsRev} fill="none" stroke="#10b981" strokeWidth="2" />
               <polyline points={pointsExp} fill="none" stroke="#ef4444" strokeWidth="2" strokeDasharray="4"/>
-              
-              {/* Areas/Dots */}
               {trendChartData.map((d, i) => (
                   <g key={i} className="group">
                       <circle cx={getX(i)} cy={getY(d.revenue)} r="3" fill="#10b981" />
                       <circle cx={getX(i)} cy={getY(d.totalExpense)} r="3" fill="#ef4444" />
-                      
-                      {/* Tooltip */}
-                      <foreignObject x={getX(i)-40} y={0} width="80" height="100%" className="opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                          <div className="h-full flex items-center justify-center">
-                              <div className="bg-slate-800 text-white text-[10px] p-2 rounded shadow-xl">
-                                  <div className="font-bold mb-1">{d.month}</div>
-                                  <div className="text-green-400">收: ¥{(d.revenue/1000).toFixed(1)}k</div>
-                                  <div className="text-red-400">支: ¥{(d.totalExpense/1000).toFixed(1)}k</div>
-                                  <div className="border-t border-slate-600 mt-1 pt-1">净: ¥{(d.netProfit/1000).toFixed(1)}k</div>
-                              </div>
-                          </div>
-                      </foreignObject>
-                      
                       <text x={getX(i)} y={height} dy="15" textAnchor="middle" fontSize="10" fill="#9ca3af">{d.month}</text>
                   </g>
               ))}
@@ -338,91 +313,123 @@ export const FinanceCenter: React.FC<FinanceCenterProps> = ({
     <div className="space-y-6 animate-fade-in pb-20">
         
         {/* 1. Header & Controls */}
-        <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center bg-white p-5 rounded-2xl border border-gray-200 shadow-sm gap-4">
+        <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center bg-white dark:bg-slate-800 p-5 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm gap-4">
             <div>
-                <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-                    <Wallet className="text-slate-900" size={24} />
+                <h2 className="text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                    <Wallet className="text-slate-900 dark:text-white" size={24} />
                     财务指挥中心
-                    <span className="text-xs font-normal text-gray-500 bg-gray-100 px-2 py-1 rounded-full">FinOps v2.0</span>
+                    <span className="text-xs font-normal text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-slate-700 px-2 py-1 rounded-full">FinOps v2.0</span>
                 </h2>
-                <p className="text-xs text-gray-500 mt-1">
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                     全维度经营分析 | 利润 = 营收 - (采购 + 物流 + 运营)
                 </p>
             </div>
             
             <div className="flex flex-wrap items-center gap-3">
-                {/* AI CFO Button */}
                 <button 
                     onClick={handleAiAnalysis}
                     disabled={isAiAnalyzing}
-                    className="flex items-center gap-2 bg-gradient-to-r from-purple-600 to-indigo-600 text-white px-4 py-2 rounded-xl text-xs font-bold hover:shadow-lg hover:shadow-purple-200 transition-all active:scale-95"
+                    className="flex items-center gap-2 bg-gradient-to-r from-purple-600 to-indigo-600 text-white px-4 py-2 rounded-xl text-xs font-bold hover:shadow-lg hover:shadow-purple-200 dark:hover:shadow-none transition-all active:scale-95"
                 >
                     {isAiAnalyzing ? <Loader2 className="animate-spin" size={16} /> : <Sparkles size={16} />}
                     {isAiAnalyzing ? 'AI 审计中...' : 'AI 财务诊断'}
                 </button>
 
-                <div className="h-8 w-px bg-gray-200 hidden lg:block"></div>
+                <div className="h-8 w-px bg-gray-200 dark:bg-slate-700 hidden lg:block"></div>
 
-                <div className="flex items-center bg-gray-50 px-3 py-2 rounded-xl border border-gray-200">
+                <div className="flex items-center bg-gray-50 dark:bg-slate-700 px-3 py-2 rounded-xl border border-gray-200 dark:border-slate-600">
                     <Calendar size={16} className="text-gray-400 mr-2" />
                     <input 
                         type="month" 
                         value={filterMonth}
                         onChange={e => setFilterMonth(e.target.value)}
-                        className="bg-transparent text-sm font-bold text-gray-700 outline-none"
+                        className="bg-transparent text-sm font-bold text-gray-700 dark:text-gray-200 outline-none"
                     />
                 </div>
                 
-                <div className="flex bg-gray-100 p-1 rounded-xl">
-                    <button onClick={() => setActiveTab('Dashboard')} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === 'Dashboard' ? 'bg-white shadow text-slate-900' : 'text-gray-500 hover:text-gray-700'}`}>经营报表</button>
-                    <button onClick={() => setActiveTab('Ledger')} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === 'Ledger' ? 'bg-white shadow text-slate-900' : 'text-gray-500 hover:text-gray-700'}`}>流水明细</button>
+                <div className="flex bg-gray-100 dark:bg-slate-700 p-1 rounded-xl">
+                    <button onClick={() => setActiveTab('Dashboard')} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === 'Dashboard' ? 'bg-white dark:bg-slate-600 shadow text-slate-900 dark:text-white' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700'}`}>经营报表</button>
+                    <button onClick={() => setActiveTab('Wallet')} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === 'Wallet' ? 'bg-white dark:bg-slate-600 shadow text-slate-900 dark:text-white' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700'}`}>多币种钱包</button>
+                    <button onClick={() => setActiveTab('Ledger')} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === 'Ledger' ? 'bg-white dark:bg-slate-600 shadow text-slate-900 dark:text-white' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700'}`}>流水明细</button>
                 </div>
                 
-                <button 
-                    onClick={handleExportCSV}
-                    className="bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 p-2.5 rounded-xl shadow-sm transition-all"
-                    title="导出本月报表 (CSV)"
-                >
-                    <Download size={20} />
-                </button>
-
-                <button onClick={() => setIsModalOpen(true)} className="bg-slate-900 hover:bg-slate-800 text-white p-2.5 rounded-xl shadow-lg transition-all active:scale-95">
+                <button onClick={() => setIsModalOpen(true)} className="bg-slate-900 dark:bg-slate-100 hover:bg-slate-800 dark:hover:bg-white text-white dark:text-slate-900 p-2.5 rounded-xl shadow-lg transition-all active:scale-95">
                     <Plus size={20} />
                 </button>
             </div>
         </div>
 
-        {activeTab === 'Dashboard' ? (
+        {activeTab === 'Wallet' && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-fade-in">
+                {/* USD Wallet */}
+                <div className="bg-gradient-to-br from-emerald-600 to-green-700 rounded-3xl p-8 text-white shadow-xl relative overflow-hidden">
+                    <div className="absolute top-0 right-0 w-64 h-64 bg-white opacity-10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2"></div>
+                    <div className="relative z-10 flex flex-col h-full justify-between">
+                        <div className="flex justify-between items-start">
+                            <div className="p-3 bg-white/20 rounded-xl backdrop-blur-md">
+                                <DollarSign size={32} className="text-white"/>
+                            </div>
+                            <span className="bg-white/20 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider">USD Account</span>
+                        </div>
+                        <div className="mt-8">
+                            <p className="text-emerald-100 text-sm font-medium mb-1">美金账户余额</p>
+                            <h3 className="text-5xl font-black tracking-tight">${formatCurrency(walletBalances.usd, 'USD').replace('$','')}</h3>
+                            <p className="text-xs text-emerald-200 mt-2 opacity-80">≈ ¥{formatCurrency(walletBalances.usd * settings.exchangeRate, 'CNY').replace('¥','')}</p>
+                        </div>
+                    </div>
+                </div>
+
+                {/* CNY Wallet */}
+                <div className="bg-gradient-to-br from-red-600 to-orange-700 rounded-3xl p-8 text-white shadow-xl relative overflow-hidden">
+                    <div className="absolute top-0 right-0 w-64 h-64 bg-white opacity-10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2"></div>
+                    <div className="relative z-10 flex flex-col h-full justify-between">
+                        <div className="flex justify-between items-start">
+                            <div className="p-3 bg-white/20 rounded-xl backdrop-blur-md">
+                                <Coins size={32} className="text-white"/>
+                            </div>
+                            <span className="bg-white/20 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider">CNY Account</span>
+                        </div>
+                        <div className="mt-8">
+                            <p className="text-red-100 text-sm font-medium mb-1">人民币账户余额</p>
+                            <h3 className="text-5xl font-black tracking-tight">¥{formatCurrency(walletBalances.cny, 'CNY').replace('¥','')}</h3>
+                            <p className="text-xs text-red-200 mt-2 opacity-80">国内采购与运营资金池</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        )}
+
+        {activeTab === 'Dashboard' && (
             <div className="space-y-6">
                 
-                {/* 2. AI Insight Card (Conditional) */}
+                {/* 2. AI Insight Card */}
                 {aiReport && (
-                    <div className="bg-gradient-to-r from-purple-50 to-indigo-50 p-6 rounded-2xl border border-purple-100 shadow-sm relative overflow-hidden animate-slide-up">
+                    <div className="bg-gradient-to-r from-purple-50 to-indigo-50 dark:from-purple-900/30 dark:to-indigo-900/30 p-6 rounded-2xl border border-purple-100 dark:border-purple-800 shadow-sm relative overflow-hidden animate-slide-up">
                         <div className="absolute top-0 right-0 p-4 opacity-10">
-                            <Sparkles size={100} className="text-purple-600"/>
+                            <Sparkles size={100} className="text-purple-600 dark:text-purple-400"/>
                         </div>
                         <div className="flex justify-between items-start mb-4 relative z-10">
-                            <h3 className="font-bold text-purple-900 flex items-center gap-2">
-                                <Bot className="text-purple-600" size={20}/>
+                            <h3 className="font-bold text-purple-900 dark:text-purple-200 flex items-center gap-2">
+                                <Bot className="text-purple-600 dark:text-purple-400" size={20}/>
                                 AI 首席财务官洞察
                             </h3>
                             <button onClick={() => setAiReport(null)} className="text-purple-400 hover:text-purple-600"><X size={16}/></button>
                         </div>
-                        <div className="prose prose-sm max-w-none text-purple-800 text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: aiReport }}></div>
+                        <div className="prose prose-sm max-w-none text-purple-800 dark:text-purple-200 text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: aiReport }}></div>
                     </div>
                 )}
 
-                {/* 3. KPI Metrics Grid (MoM Enhanced) */}
+                {/* 3. KPI Metrics Grid */}
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                     {/* Revenue */}
-                    <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm hover:border-blue-200 transition-colors">
+                    <div className="bg-white dark:bg-slate-800 p-5 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-sm hover:border-blue-200 transition-colors">
                         <div className="flex justify-between items-start mb-2">
                             <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">总营收 (Revenue)</span>
                             <div className={`p-1.5 rounded-lg ${currentStats.revenue >= prevStats.revenue ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-600'}`}>
                                 {currentStats.revenue >= prevStats.revenue ? <ArrowUpRight size={16}/> : <ArrowDownRight size={16}/>}
                             </div>
                         </div>
-                        <h3 className="text-2xl font-bold text-gray-900">¥{formatCurrency(currentStats.revenue, 'CNY').replace('¥','')}</h3>
+                        <h3 className="text-2xl font-bold text-gray-900 dark:text-white">¥{formatCurrency(currentStats.revenue, 'CNY').replace('¥','')}</h3>
                         <div className="flex items-center gap-2 mt-2 text-xs">
                             <span className={currentStats.revenue >= prevStats.revenue ? 'text-green-600 font-bold' : 'text-red-500 font-bold'}>
                                 {getTrend(currentStats.revenue, prevStats.revenue).toFixed(1)}%
@@ -432,22 +439,21 @@ export const FinanceCenter: React.FC<FinanceCenterProps> = ({
                     </div>
 
                     {/* Gross Profit */}
-                    <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm hover:border-emerald-200 transition-colors">
+                    <div className="bg-white dark:bg-slate-800 p-5 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-sm hover:border-emerald-200 transition-colors">
                         <div className="flex justify-between items-start mb-2">
                             <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">毛利润 (Gross)</span>
-                            <span className="text-xs font-mono text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded">
+                            <span className="text-xs font-mono text-emerald-600 bg-emerald-50 dark:bg-emerald-900/30 px-1.5 py-0.5 rounded">
                                 {currentStats.grossMargin.toFixed(1)}%
                             </span>
                         </div>
-                        <h3 className="text-2xl font-bold text-gray-900">¥{formatCurrency(currentStats.grossProfit, 'CNY').replace('¥','')}</h3>
-                        <div className="mt-2 w-full bg-gray-100 h-1.5 rounded-full overflow-hidden">
+                        <h3 className="text-2xl font-bold text-gray-900 dark:text-white">¥{formatCurrency(currentStats.grossProfit, 'CNY').replace('¥','')}</h3>
+                        <div className="mt-2 w-full bg-gray-100 dark:bg-slate-700 h-1.5 rounded-full overflow-hidden">
                             <div className="bg-emerald-500 h-full" style={{width: `${Math.max(0, currentStats.grossMargin)}%`}}></div>
                         </div>
-                        <div className="text-[10px] text-gray-400 mt-1">目标毛利: 40%</div>
                     </div>
 
                     {/* Net Profit */}
-                    <div className={`p-5 rounded-2xl border shadow-sm text-white ${currentStats.netProfit >= 0 ? 'bg-slate-900 border-slate-800' : 'bg-red-600 border-red-700'}`}>
+                    <div className={`p-5 rounded-2xl border shadow-sm text-white ${currentStats.netProfit >= 0 ? 'bg-slate-900 border-slate-800 dark:bg-slate-700 dark:border-slate-600' : 'bg-red-600 border-red-700'}`}>
                         <div className="flex justify-between items-start mb-2">
                             <span className="text-xs font-bold opacity-60 uppercase tracking-wider">净利润 (Net)</span>
                             <Wallet size={18} className="opacity-80"/>
@@ -463,13 +469,13 @@ export const FinanceCenter: React.FC<FinanceCenterProps> = ({
                     </div>
 
                     {/* Opex Ratio */}
-                    <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm hover:border-orange-200 transition-colors">
+                    <div className="bg-white dark:bg-slate-800 p-5 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-sm hover:border-orange-200 transition-colors">
                         <div className="flex justify-between items-start mb-2">
                             <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">运营支出 (OPEX)</span>
                             <Activity size={18} className="text-orange-500"/>
                         </div>
-                        <h3 className="text-2xl font-bold text-gray-900">¥{formatCurrency(currentStats.opex, 'CNY').replace('¥','')}</h3>
-                        <div className="flex items-center gap-2 mt-2 text-xs text-gray-500">
+                        <h3 className="text-2xl font-bold text-gray-900 dark:text-white">¥{formatCurrency(currentStats.opex, 'CNY').replace('¥','')}</h3>
+                        <div className="flex items-center gap-2 mt-2 text-xs text-gray-500 dark:text-gray-400">
                             占营收比: 
                             <span className="text-orange-600 font-bold">
                                 {currentStats.revenue > 0 ? ((currentStats.opex / currentStats.revenue)*100).toFixed(1) : 0}%
@@ -482,9 +488,9 @@ export const FinanceCenter: React.FC<FinanceCenterProps> = ({
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                     
                     {/* Left: 6-Month Trend */}
-                    <div className="lg:col-span-2 bg-white p-6 rounded-2xl border border-gray-200 shadow-sm">
+                    <div className="lg:col-span-2 bg-white dark:bg-slate-800 p-6 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm">
                         <div className="flex justify-between items-center mb-6">
-                            <h4 className="font-bold text-gray-800 flex items-center gap-2">
+                            <h4 className="font-bold text-gray-800 dark:text-white flex items-center gap-2">
                                 <BarChart3 className="text-blue-600" size={18} />
                                 资金趋势 (近6个月)
                             </h4>
@@ -499,13 +505,12 @@ export const FinanceCenter: React.FC<FinanceCenterProps> = ({
                     </div>
 
                     {/* Right: Cost Breakdown Donut */}
-                    <div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm flex flex-col">
-                        <h4 className="font-bold text-gray-800 flex items-center gap-2 mb-6">
+                    <div className="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm flex flex-col">
+                        <h4 className="font-bold text-gray-800 dark:text-white flex items-center gap-2 mb-6">
                             <PieChart className="text-purple-600" size={18} />
                             本月支出结构
                         </h4>
                         <div className="flex-1 flex items-center justify-center gap-6">
-                            {/* CSS Conic Gradient Donut */}
                             <div className="relative w-40 h-40 rounded-full flex-shrink-0" 
                                 style={{ 
                                     background: `conic-gradient(
@@ -514,12 +519,12 @@ export const FinanceCenter: React.FC<FinanceCenterProps> = ({
                                         #ef4444 ${((currentStats.breakdown['COGS']||0)/currentStats.totalExpense)*100 + ((currentStats.breakdown['Logistics']||0)/currentStats.totalExpense)*100}% 100%
                                     )` 
                                 }}>
-                                <div className="absolute inset-4 bg-white rounded-full flex flex-col items-center justify-center">
+                                <div className="absolute inset-4 bg-white dark:bg-slate-800 rounded-full flex flex-col items-center justify-center">
                                     <span className="text-xs text-gray-400">Total Exp</span>
-                                    <span className="font-bold text-gray-900">¥{(currentStats.totalExpense/1000).toFixed(0)}k</span>
+                                    <span className="font-bold text-gray-900 dark:text-white">¥{(currentStats.totalExpense/1000).toFixed(0)}k</span>
                                 </div>
                             </div>
-                            <div className="text-xs space-y-2">
+                            <div className="text-xs space-y-2 text-gray-500 dark:text-gray-400">
                                 <div className="flex items-center gap-2"><span className="w-2 h-2 bg-blue-500 rounded-full"></span> 采购 {(currentStats.breakdown['COGS']||0).toLocaleString()}</div>
                                 <div className="flex items-center gap-2"><span className="w-2 h-2 bg-amber-500 rounded-full"></span> 物流 {(currentStats.breakdown['Logistics']||0).toLocaleString()}</div>
                                 <div className="flex items-center gap-2"><span className="w-2 h-2 bg-red-500 rounded-full"></span> 运营 {(currentStats.opex).toLocaleString()}</div>
@@ -527,22 +532,14 @@ export const FinanceCenter: React.FC<FinanceCenterProps> = ({
                         </div>
                     </div>
                 </div>
-
-                {/* 5. Health Check Banner */}
-                {currentStats.netMargin < 10 && (
-                    <div className="bg-red-50 border border-red-100 p-4 rounded-xl flex items-center gap-3 text-sm text-red-800 animate-pulse">
-                        <Target size={18} />
-                        <strong>预警：</strong> 本月净利率 ({currentStats.netMargin.toFixed(1)}%) 低于健康水平 (10%)，建议检查 {currentStats.breakdown['Marketing'] > currentStats.breakdown['Logistics'] ? '广告投放效率' : '头程物流成本'}。
-                    </div>
-                )}
-
             </div>
-        ) : (
-            // Ledger View (Compact & Clean)
-            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+        )}
+
+        {activeTab === 'Ledger' && (
+            <div className="bg-white dark:bg-slate-800 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm overflow-hidden">
                 <div className="overflow-x-auto">
                     <table className="w-full text-left text-sm">
-                        <thead className="bg-gray-50 border-b border-gray-200 text-gray-500 font-medium">
+                        <thead className="bg-gray-50 dark:bg-slate-700 border-b border-gray-200 dark:border-slate-600 text-gray-500 dark:text-gray-400 font-medium">
                             <tr>
                                 <th className="p-4">日期</th>
                                 <th className="p-4">收支科目</th>
@@ -551,21 +548,21 @@ export const FinanceCenter: React.FC<FinanceCenterProps> = ({
                                 <th className="p-4 text-right">操作</th>
                             </tr>
                         </thead>
-                        <tbody className="divide-y divide-gray-50">
+                        <tbody className="divide-y divide-gray-50 dark:divide-slate-700">
                             {currentMonthData.map(t => (
-                                <tr key={t.id} className="hover:bg-gray-50 transition-colors">
-                                    <td className="p-4 font-mono text-gray-600">{t.date}</td>
+                                <tr key={t.id} className="hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors">
+                                    <td className="p-4 font-mono text-gray-600 dark:text-gray-400">{t.date}</td>
                                     <td className="p-4">
-                                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold ${t.type === 'Income' ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-700'}`}>
+                                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold ${t.type === 'Income' ? 'bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300'}`}>
                                             {getCategoryIcon(t.category)}
                                             {CATEGORY_LABELS[t.category] || t.category}
                                         </span>
                                     </td>
-                                    <td className="p-4 text-gray-800">
+                                    <td className="p-4 text-gray-800 dark:text-gray-200">
                                         {t.description}
-                                        {t.isSystemGenerated && <span className="ml-2 text-[10px] bg-blue-50 text-blue-600 px-1 rounded border border-blue-100">自动</span>}
+                                        {t.isSystemGenerated && <span className="ml-2 text-[10px] bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 px-1 rounded border border-blue-100 dark:border-blue-800">自动</span>}
                                     </td>
-                                    <td className={`p-4 text-right font-mono font-bold ${t.type === 'Income' ? 'text-green-600' : 'text-gray-900'}`}>
+                                    <td className={`p-4 text-right font-mono font-bold ${t.type === 'Income' ? 'text-green-600 dark:text-green-400' : 'text-gray-900 dark:text-white'}`}>
                                         {t.type === 'Income' ? '+' : '-'} {formatCurrency(t.amount, t.currency)}
                                     </td>
                                     <td className="p-4 text-right">
@@ -587,8 +584,8 @@ export const FinanceCenter: React.FC<FinanceCenterProps> = ({
         {/* Add Modal (Standardized) */}
         {isModalOpen && (
             <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black bg-opacity-50 backdrop-blur-sm p-4 animate-fade-in">
-                <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden">
-                    <div className="bg-slate-900 p-4 flex justify-between items-center text-white">
+                <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-md overflow-hidden">
+                    <div className="bg-slate-900 dark:bg-slate-700 p-4 flex justify-between items-center text-white">
                         <h3 className="font-bold">记一笔 (New Transaction)</h3>
                         <button onClick={() => setIsModalOpen(false)}><X size={20}/></button>
                     </div>
@@ -596,35 +593,35 @@ export const FinanceCenter: React.FC<FinanceCenterProps> = ({
                         <div className="grid grid-cols-2 gap-4">
                             <div>
                                 <label className="block text-xs font-bold text-gray-500 mb-1">类型</label>
-                                <select className="w-full p-2.5 rounded-lg border bg-white text-gray-900 text-sm" value={form.type} onChange={e => setForm({...form, type: e.target.value as any})}>
+                                <select className="w-full p-2.5 rounded-lg border bg-white dark:bg-slate-700 dark:border-slate-600 dark:text-white text-gray-900 text-sm" value={form.type} onChange={e => setForm({...form, type: e.target.value as any})}>
                                     <option value="Expense">支出 (Expense)</option>
                                     <option value="Income">收入 (Income)</option>
                                 </select>
                             </div>
                             <div>
                                 <label className="block text-xs font-bold text-gray-500 mb-1">日期</label>
-                                <input type="date" className="w-full p-2.5 rounded-lg border bg-white text-gray-900 text-sm" value={form.date} onChange={e => setForm({...form, date: e.target.value})} />
+                                <input type="date" className="w-full p-2.5 rounded-lg border bg-white dark:bg-slate-700 dark:border-slate-600 dark:text-white text-gray-900 text-sm" value={form.date} onChange={e => setForm({...form, date: e.target.value})} />
                             </div>
                         </div>
                         <div>
                             <label className="block text-xs font-bold text-gray-500 mb-1">金额</label>
                             <div className="flex gap-2">
-                                <select className="w-24 p-2.5 rounded-lg border bg-gray-50 text-gray-900 text-sm" value={form.currency} onChange={e => setForm({...form, currency: e.target.value as any})}>
+                                <select className="w-24 p-2.5 rounded-lg border bg-gray-50 dark:bg-slate-600 dark:border-slate-500 dark:text-white text-gray-900 text-sm" value={form.currency} onChange={e => setForm({...form, currency: e.target.value as any})}>
                                     <option value="CNY">CNY</option>
                                     <option value="USD">USD</option>
                                 </select>
-                                <input required type="number" step="0.01" className="flex-1 p-2.5 rounded-lg border bg-white text-gray-900 text-sm font-bold" placeholder="0.00" value={form.amount} onChange={e => setForm({...form, amount: parseFloat(e.target.value)})} />
+                                <input required type="number" step="0.01" className="flex-1 p-2.5 rounded-lg border bg-white dark:bg-slate-700 dark:border-slate-600 dark:text-white text-gray-900 text-sm font-bold" placeholder="0.00" value={form.amount} onChange={e => setForm({...form, amount: parseFloat(e.target.value)})} />
                             </div>
                         </div>
                         <div>
                             <label className="block text-xs font-bold text-gray-500 mb-1">科目</label>
                             <div className="grid grid-cols-3 gap-2">
                                 {MANUAL_CATEGORIES.map(cat => (
-                                    <button key={cat} type="button" onClick={() => handleCategorySelect(cat)} className={`px-2 py-2 rounded-lg text-[10px] font-medium border transition-colors ${form.category === cat ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>
+                                    <button key={cat} type="button" onClick={() => handleCategorySelect(cat)} className={`px-2 py-2 rounded-lg text-[10px] font-medium border transition-colors ${form.category === cat ? 'bg-slate-800 text-white border-slate-800' : 'bg-white dark:bg-slate-700 dark:text-gray-300 dark:border-slate-600 text-gray-600 border-gray-200 hover:bg-gray-50'}`}>
                                         {CATEGORY_LABELS[cat] || cat}
                                     </button>
                                 ))}
-                                <button type="button" onClick={() => handleCategorySelect('Custom')} className={`px-2 py-2 rounded-lg text-[10px] font-medium border transition-colors ${form.category === 'Custom' ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>
+                                <button type="button" onClick={() => handleCategorySelect('Custom')} className={`px-2 py-2 rounded-lg text-[10px] font-medium border transition-colors ${form.category === 'Custom' ? 'bg-slate-800 text-white border-slate-800' : 'bg-white dark:bg-slate-700 dark:text-gray-300 dark:border-slate-600 text-gray-600 border-gray-200 hover:bg-gray-50'}`}>
                                     ✍️ 手动录入
                                 </button>
                             </div>
@@ -641,9 +638,9 @@ export const FinanceCenter: React.FC<FinanceCenterProps> = ({
                         </div>
                         <div>
                             <label className="block text-xs font-bold text-gray-500 mb-1">备注</label>
-                            <input type="text" className="w-full p-2.5 rounded-lg border bg-white text-gray-900 text-sm" placeholder="说明..." value={form.description} onChange={e => setForm({...form, description: e.target.value})} />
+                            <input type="text" className="w-full p-2.5 rounded-lg border bg-white dark:bg-slate-700 dark:border-slate-600 dark:text-white text-gray-900 text-sm" placeholder="说明..." value={form.description} onChange={e => setForm({...form, description: e.target.value})} />
                         </div>
-                        <button className="w-full bg-slate-900 text-white font-bold py-3 rounded-xl hover:bg-slate-800 shadow-lg mt-2">
+                        <button className="w-full bg-slate-900 dark:bg-slate-100 dark:text-slate-900 text-white font-bold py-3 rounded-xl hover:bg-slate-800 shadow-lg mt-2">
                             确认保存
                         </button>
                     </form>
