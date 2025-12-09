@@ -36,7 +36,7 @@ import { ProductRDLab } from './components/ProductRDLab';
 import { GeoSalesCommand } from './components/GeoSalesCommand';
 import { ToastContainer, ToastMessage, ToastType } from './components/Toast'; 
 import { analyzeInventory, analyzeLogisticsChannels, generateFinancialReport } from './services/geminiService';
-import { supabase, isSupabaseConfigured } from './lib/supabaseClient';
+import { getSupabase, isSupabaseConfigured } from './lib/supabaseClient';
 import { fetchLingxingInventory, fetchLingxingSales } from './services/lingxingService';
 import { fetchMiaoshouInventory, fetchMiaoshouSales } from './services/miaoshouService';
 import { DataBackupModal } from './components/DataBackupModal'; 
@@ -53,14 +53,15 @@ const safeParse = (key: string, fallback: any) => {
     }
 };
 
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
 function App() {
   const [workspaceId, setWorkspaceId] = useState<string | null>(() => {
-      // 优先从 localStorage 读取，确保刷新后状态保留
       return localStorage.getItem('tanxing_current_workspace');
   });
   
   const [syncStatus, setSyncStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
-  const [clientVersion, setClientVersion] = useState(0); // 用于强制重连 Supabase
+  const [clientVersion, setClientVersion] = useState(0); 
   const [isCloudConfigOpen, setIsCloudConfigOpen] = useState(false); 
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('tanxing_theme') !== 'light'); 
   const [density, setDensity] = useState<'comfortable' | 'compact'>('comfortable');
@@ -113,7 +114,6 @@ function App() {
   const [marketingModalOpen, setMarketingModalOpen] = useState(false);
   const [marketingContent, setMarketingContent] = useState<string | null>(null);
   const [marketingRecord, setMarketingRecord] = useState<ReplenishmentRecord | null>(null); 
-  // NEW: Marketing Deep Linking
   const [marketingInitialTab, setMarketingInitialTab] = useState<any>('strategy');
   const [marketingInitialChannel, setMarketingInitialChannel] = useState<any>('TikTok');
   const [searchQuery, setSearchQuery] = useState('');
@@ -145,8 +145,6 @@ function App() {
       return () => clearInterval(timer);
   }, []);
 
-  // --- CRITICAL FIX: Workspace Persistence ---
-  // 当 workspaceId 变化时，立即写入 localStorage
   useEffect(() => {
       if (workspaceId) {
           localStorage.setItem('tanxing_current_workspace', workspaceId);
@@ -160,17 +158,74 @@ function App() {
       }
   }, [isSimulationActive, appSettings.exchangeRate]);
 
-  // --- 1. Real-time Subscription Setup ---
-  // 添加 clientVersion 依赖，确保配置改变时重连
+  // --- Real-time Subscription Setup ---
   useEffect(() => {
       if (!workspaceId || !isSupabaseConfigured()) {
           setSyncStatus('disconnected');
           return;
       }
       
-      setSyncStatus('connected');
+      setSyncStatus('connecting');
+      const client = getSupabase(); // Use Singleton
+      let isMounted = true;
+
+      const initCloudSync = async (retryCount = 0) => {
+          try {
+              // Fetch existing data
+              const { data, error } = await client
+                  .from('replenishment_data')
+                  .select('json_content')
+                  .eq('workspace_id', workspaceId);
+              
+              if (error) throw error;
+              
+              if (!isMounted) return;
+
+              if (data && data.length > 0) {
+                  // Cloud has data: Download and overwrite local
+                  const cloudRecords = data.map(row => row.json_content as ReplenishmentRecord);
+                  setRecords(cloudRecords);
+                  localStorage.setItem('tanxing_records', JSON.stringify(cloudRecords));
+                  addToast(`同步成功：拉取了 ${cloudRecords.length} 条云端数据`, 'success');
+              } else {
+                  // Cloud is empty: Check if we have local data to upload (First time init)
+                  const localDataStr = localStorage.getItem('tanxing_records');
+                  if (localDataStr) {
+                      const localData = JSON.parse(localDataStr) as ReplenishmentRecord[];
+                      if (localData.length > 0) {
+                          console.log("Cloud empty, uploading local data as init...");
+                          let successCount = 0;
+                          for (const item of localData) {
+                              const { error: upsertError } = await client
+                                  .from('replenishment_data')
+                                  .upsert({ id: item.id, workspace_id: workspaceId, json_content: item });
+                              if (!upsertError) successCount++;
+                          }
+                          addToast(`初始化成功：已上传 ${successCount} 条本地数据至云端`, 'success');
+                      }
+                  }
+              }
+              setSyncStatus('connected');
+          } catch (e: any) {
+              console.error("Cloud Sync Error:", e);
+              
+              if (!isMounted) return;
+
+              if (retryCount < 3) {
+                  const waitTime = 2000 * Math.pow(1.5, retryCount); // ~2s, 3s, 4.5s
+                  console.log(`Sync retry ${retryCount + 1}/3 in ${waitTime}ms`);
+                  await delay(waitTime);
+                  if (isMounted) await initCloudSync(retryCount + 1);
+              } else {
+                  addToast("同步失败: 无法连接云端数据库", 'error');
+                  setSyncStatus('disconnected');
+              }
+          }
+      };
+
+      initCloudSync();
       
-      const channel = supabase
+      const channel = client
           .channel('realtime-replenishment')
           .on(
               'postgres_changes',
@@ -180,11 +235,12 @@ function App() {
                       const newRecord = payload.new.json_content as ReplenishmentRecord;
                       setRecords(prev => {
                           const exists = prev.find(r => r.id === newRecord.id);
+                          if (exists && JSON.stringify(exists) === JSON.stringify(newRecord)) return prev;
+                          
                           const updated = exists ? prev.map(r => r.id === newRecord.id ? newRecord : r) : [...prev, newRecord];
                           localStorage.setItem('tanxing_records', JSON.stringify(updated));
                           return updated;
                       });
-                      addToast('数据已实时同步', 'info');
                   } else if (payload.eventType === 'DELETE') {
                       const deletedId = payload.old.id;
                       setRecords(prev => {
@@ -192,28 +248,71 @@ function App() {
                           localStorage.setItem('tanxing_records', JSON.stringify(updated));
                           return updated;
                       });
-                      addToast('数据已远程删除', 'warning');
+                      addToast('检测到云端删除操作', 'info');
                   }
               }
           )
           .subscribe((status) => {
-              console.log("Supabase Status:", status);
+              if (status === 'SUBSCRIBED') {
+                  // We treat 'connected' status mainly from the initial successful fetch
+              } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+                  console.log(`Realtime status: ${status}`);
+              }
           });
           
-      return () => { supabase.removeChannel(channel); };
-  }, [workspaceId, clientVersion]); // <--- Added clientVersion dependency
+      return () => { 
+          isMounted = false;
+          client.removeChannel(channel); 
+      };
+  }, [workspaceId, clientVersion]);
 
   const syncItemToCloud = async (item: ReplenishmentRecord | Store) => {
       if (workspaceId && isSupabaseConfigured()) {
-        try { await supabase.from('replenishment_data').upsert({ id: item.id, workspace_id: workspaceId, json_content: item }); } 
-        catch (err) { console.error('Cloud Sync Error:', err); }
+        const client = getSupabase();
+        let attempt = 0;
+        const maxRetries = 3;
+        
+        while (attempt < maxRetries) {
+            try { 
+                const { error } = await client.from('replenishment_data').upsert({ id: item.id, workspace_id: workspaceId, json_content: item }); 
+                if (error) throw error;
+                break; // Success
+            } 
+            catch (err) { 
+                console.error(`Cloud Sync Error (Attempt ${attempt + 1}):`, err);
+                attempt++;
+                if (attempt === maxRetries) {
+                    addToast('云端同步失败 (请检查网络)', 'error');
+                } else {
+                    await delay(1000 * attempt); // Backoff
+                }
+            }
+        }
       }
   };
 
   const deleteItemFromCloud = async (id: string) => {
       if (workspaceId && isSupabaseConfigured()) {
-          try { await supabase.from('replenishment_data').delete().eq('id', id); } 
-          catch(err) { console.error('Cloud Delete Error:', err); }
+          const client = getSupabase();
+          let attempt = 0;
+          const maxRetries = 3;
+
+          while (attempt < maxRetries) {
+              try { 
+                  const { error } = await client.from('replenishment_data').delete().eq('id', id); 
+                  if (error) throw error;
+                  break;
+              } 
+              catch(err) { 
+                  console.error(`Cloud Delete Error (Attempt ${attempt + 1}):`, err);
+                  attempt++;
+                  if (attempt === maxRetries) {
+                      addToast('云端删除失败 (请检查网络)', 'error');
+                  } else {
+                      await delay(1000 * attempt);
+                  }
+              }
+          }
       }
   };
 
@@ -291,7 +390,6 @@ function App() {
 
   const deletedRecords = useMemo(() => records.filter(r => r.isDeleted), [records]);
   
-  // NEW: Updated Handler for Marketing Studio
   const handleMarketingGenerate = (record: ReplenishmentRecord, initialTab: string = 'strategy', initialChannel: string = 'TikTok') => {
       setMarketingRecord(record); 
       setMarketingContent(null);
@@ -556,7 +654,6 @@ function App() {
                         <div className="px-6 py-5 border-b border-white/10 flex flex-col md:flex-row justify-between items-center gap-4 bg-white/5">
                             <div className="flex items-center gap-4">
                                 <div className="flex items-center gap-2 text-sm font-bold text-white"><List size={18} className="text-cyan-400"/>库存清单<span className="bg-cyan-900/30 text-cyan-400 px-2 py-0.5 rounded-full text-xs border border-cyan-500/30">{activeRecords.length}</span></div>
-                                {/* Legacy Sync Status (Kept for fallback, but main is in header now) */}
                                 <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[10px] font-bold tracking-wide uppercase ${syncStatus === 'connected' ? 'bg-emerald-900/20 text-emerald-400 border-emerald-800' : 'bg-slate-800 text-slate-400 border-slate-700'}`}>{syncStatus === 'connected' ? <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shadow-glow-green"></div> : <WifiOff size={10} />}{syncStatus === 'connected' ? 'Cloud Active' : 'Local Only'}</div>
                             </div>
                             <div className="flex items-center gap-2">
@@ -646,6 +743,7 @@ function App() {
            <div><h1 className="font-black text-lg tracking-tight leading-none text-white text-glow">Tanxing.OS</h1><p className="text-[10px] text-cyan-400 mt-1 font-bold tracking-wider opacity-80 uppercase">Intelligent Core v5.0</p></div>
         </div>
         
+        {/* ... (Rest of sidebar content) ... */}
         <div className="px-4 pt-6">
             <button onClick={() => setIsCommandPaletteOpen(true)} className="w-full bg-white/5 border border-white/10 text-slate-300 hover:bg-white/10 hover:text-white rounded-xl p-3 flex items-center justify-between transition-all group backdrop-blur-sm shadow-inner hover:shadow-glow-blue hover:border-cyan-500/30">
                 <div className="flex items-center gap-3"><Search size={16} className="text-slate-400 group-hover:text-cyan-400 transition-colors" /><span className="text-xs font-bold">全局搜索 (⌘K)</span></div>
@@ -735,8 +833,8 @@ function App() {
             <button className="text-gray-300"><Menu /></button>
         </header>
 
-        {/* --- FIXED HEADER (Absolute Overlay) --- */}
-        <div className="hidden md:flex absolute top-0 left-0 right-0 flex-col md:flex-row md:items-end justify-between gap-6 px-8 py-6 bg-[#030712]/80 backdrop-blur-xl border-b border-white/5 z-30 transition-all duration-300 shadow-sm">
+        {/* --- FIXED HEADER (Flex Layout, No Overlap) --- */}
+        <div className="hidden md:flex flex-col md:flex-row md:items-end justify-between gap-6 px-8 py-6 bg-[#030712] border-b border-white/5 z-30 shadow-sm shrink-0">
             <div className="relative">
                 <div className="flex items-center gap-2 mb-1"><div className="w-1.5 h-1.5 bg-cyan-400 rounded-full shadow-neon animate-pulse"></div><span className="text-[10px] font-mono text-cyan-400 tracking-widest uppercase opacity-80">System Online</span></div>
                 <h2 className="text-4xl font-black text-white tracking-tight flex items-center gap-3 text-glow">
@@ -775,8 +873,8 @@ function App() {
             </div>
         </div>
 
-        {/* Main Content with Top Padding */}
-        <main className="flex-1 overflow-y-auto h-full pt-36 p-4 sm:p-6 lg:p-8 relative custom-scrollbar">
+        {/* Main Content with Normal Padding */}
+        <main className="flex-1 overflow-y-auto h-full p-4 sm:p-6 lg:p-8 relative custom-scrollbar">
           <ToastContainer toasts={toasts} removeToast={removeToast} />
           <div className="max-w-[1920px] w-full mx-auto pb-20">
              {renderContent()}

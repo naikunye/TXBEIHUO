@@ -36,7 +36,7 @@ import { ProductRDLab } from './components/ProductRDLab';
 import { GeoSalesCommand } from './components/GeoSalesCommand';
 import { ToastContainer, ToastMessage, ToastType } from './components/Toast'; 
 import { analyzeInventory, analyzeLogisticsChannels, generateFinancialReport } from './services/geminiService';
-import { getSupabase, isSupabaseConfigured } from './lib/supabaseClient';
+import { supabase, isSupabaseConfigured } from './lib/supabaseClient';
 import { fetchLingxingInventory, fetchLingxingSales } from './services/lingxingService';
 import { fetchMiaoshouInventory, fetchMiaoshouSales } from './services/miaoshouService';
 import { DataBackupModal } from './components/DataBackupModal'; 
@@ -55,11 +55,12 @@ const safeParse = (key: string, fallback: any) => {
 
 function App() {
   const [workspaceId, setWorkspaceId] = useState<string | null>(() => {
+      // 优先从 localStorage 读取，确保刷新后状态保留
       return localStorage.getItem('tanxing_current_workspace');
   });
   
   const [syncStatus, setSyncStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
-  const [clientVersion, setClientVersion] = useState(0); // Versioning to force effect re-run on config change
+  const [clientVersion, setClientVersion] = useState(0); // 用于强制重连 Supabase
   const [isCloudConfigOpen, setIsCloudConfigOpen] = useState(false); 
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('tanxing_theme') !== 'light'); 
   const [density, setDensity] = useState<'comfortable' | 'compact'>('comfortable');
@@ -163,9 +164,33 @@ function App() {
           return;
       }
       
-      // Explicitly get a fresh client instance. This is crucial if configuration changed.
-      const client = getSupabase();
+      const client = supabase;
       setSyncStatus('connecting');
+
+      // Function to load initial data
+      const loadCloudData = async () => {
+          try {
+              const { data, error } = await client
+                  .from('replenishment_data')
+                  .select('json_content')
+                  .eq('workspace_id', workspaceId);
+              
+              if (error) throw error;
+              
+              if (data) {
+                  const cloudRecords = data.map(row => row.json_content as ReplenishmentRecord);
+                  setRecords(cloudRecords);
+                  localStorage.setItem('tanxing_records', JSON.stringify(cloudRecords));
+                  // console.log("Loaded cloud records:", cloudRecords.length);
+              }
+          } catch (e) {
+              console.error("Cloud Fetch Error:", e);
+              addToast("同步失败: 无法拉取云端数据", 'error');
+          }
+      };
+
+      // Call initial load
+      loadCloudData();
       
       const channel = client
           .channel('realtime-replenishment')
@@ -177,12 +202,11 @@ function App() {
                       const newRecord = payload.new.json_content as ReplenishmentRecord;
                       setRecords(prev => {
                           const exists = prev.find(r => r.id === newRecord.id);
-                          // Prevent infinite loop if we are the one who updated it
                           const updated = exists ? prev.map(r => r.id === newRecord.id ? newRecord : r) : [...prev, newRecord];
                           localStorage.setItem('tanxing_records', JSON.stringify(updated));
                           return updated;
                       });
-                      addToast('数据已实时同步', 'info');
+                      // addToast('数据已实时同步', 'info');
                   } else if (payload.eventType === 'DELETE') {
                       const deletedId = payload.old.id;
                       setRecords(prev => {
@@ -198,9 +222,9 @@ function App() {
               console.log("Supabase Status:", status);
               if (status === 'SUBSCRIBED') {
                   setSyncStatus('connected');
+                  addToast('云端同步已连接', 'success');
               } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
                   setSyncStatus('disconnected');
-                  // Only warn if we expected to be connected
                   if (workspaceId) addToast('云端连接断开，正在重试...', 'error');
               }
           });
@@ -210,21 +234,14 @@ function App() {
 
   const syncItemToCloud = async (item: ReplenishmentRecord | Store) => {
       if (workspaceId && isSupabaseConfigured()) {
-        try { 
-            // Use getter to ensure we use current config
-            const client = getSupabase();
-            await client.from('replenishment_data').upsert({ id: item.id, workspace_id: workspaceId, json_content: item }); 
-        } 
+        try { await supabase.from('replenishment_data').upsert({ id: item.id, workspace_id: workspaceId, json_content: item }); } 
         catch (err) { console.error('Cloud Sync Error:', err); }
       }
   };
 
   const deleteItemFromCloud = async (id: string) => {
       if (workspaceId && isSupabaseConfigured()) {
-          try { 
-              const client = getSupabase();
-              await client.from('replenishment_data').delete().eq('id', id); 
-          } 
+          try { await supabase.from('replenishment_data').delete().eq('id', id); } 
           catch(err) { console.error('Cloud Delete Error:', err); }
       }
   };
@@ -656,6 +673,7 @@ function App() {
            <div><h1 className="font-black text-lg tracking-tight leading-none text-white text-glow">Tanxing.OS</h1><p className="text-[10px] text-cyan-400 mt-1 font-bold tracking-wider opacity-80 uppercase">Intelligent Core v5.0</p></div>
         </div>
         
+        {/* ... (Rest of sidebar content) ... */}
         <div className="px-4 pt-6">
             <button onClick={() => setIsCommandPaletteOpen(true)} className="w-full bg-white/5 border border-white/10 text-slate-300 hover:bg-white/10 hover:text-white rounded-xl p-3 flex items-center justify-between transition-all group backdrop-blur-sm shadow-inner hover:shadow-glow-blue hover:border-cyan-500/30">
                 <div className="flex items-center gap-3"><Search size={16} className="text-slate-400 group-hover:text-cyan-400 transition-colors" /><span className="text-xs font-bold">全局搜索 (⌘K)</span></div>
@@ -785,8 +803,8 @@ function App() {
             </div>
         </div>
 
-        {/* Main Content with Top Padding */}
-        <main className="flex-1 overflow-y-auto h-full pt-36 p-4 sm:p-6 lg:p-8 relative custom-scrollbar">
+        {/* Main Content with Top Padding - increased from pt-36 to pt-48 */}
+        <main className="flex-1 overflow-y-auto h-full pt-48 p-4 sm:p-6 lg:p-8 relative custom-scrollbar">
           <ToastContainer toasts={toasts} removeToast={removeToast} />
           <div className="max-w-[1920px] w-full mx-auto pb-20">
              {renderContent()}
