@@ -87,7 +87,7 @@ interface CloudConnectProps {
   onConnect: (workspaceId: string) => void;
   onDisconnect: () => void;
   isSyncing: boolean;
-  onConfigChange?: () => void;
+  onConfigChange?: () => void; // Callback to notify App.tsx
 }
 
 export const CloudConnect: React.FC<CloudConnectProps> = ({ 
@@ -163,6 +163,7 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
           setSaveSuccess(true); 
           setShowSql(true);
           
+          // Notify parent to re-init supabase client without reload
           if (onConfigChange) onConfigChange();
 
       } catch (err: any) {
@@ -181,7 +182,6 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
       e.preventDefault();
       const val = inputId.trim();
       if (val) {
-          // Force Save to LocalStorage immediately to prevent race conditions
           localStorage.setItem('tanxing_current_workspace', val);
           onConnect(val);
           onClose(); 
@@ -246,7 +246,7 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
                             </div>
                         </div>
                         <div>
-                            <h4 className="text-green-800 font-bold text-lg">连接配置已保存！</h4>
+                            <h4 className="text-green-800 font-bold text-lg">配置已更新！</h4>
                             <p className="text-green-700 text-sm mt-2">
                                 请复制下方的 SQL 初始化脚本并在 Supabase SQL Editor 中运行。
                             </p>

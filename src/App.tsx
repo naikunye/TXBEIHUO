@@ -60,7 +60,7 @@ function App() {
   });
   
   const [syncStatus, setSyncStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
-  const [clientVersion, setClientVersion] = useState(0); // 用于强制重连
+  const [clientVersion, setClientVersion] = useState(0); // 用于强制重连 Supabase
   const [isCloudConfigOpen, setIsCloudConfigOpen] = useState(false); 
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('tanxing_theme') !== 'light'); 
   const [density, setDensity] = useState<'comfortable' | 'compact'>('comfortable');
@@ -161,14 +161,13 @@ function App() {
   }, [isSimulationActive, appSettings.exchangeRate]);
 
   // --- 1. Real-time Subscription Setup ---
+  // 添加 clientVersion 依赖，确保配置改变时重连
   useEffect(() => {
-      // 依赖 clientVersion 来强制重启 effect (当用户更新配置时)
       if (!workspaceId || !isSupabaseConfigured()) {
           setSyncStatus('disconnected');
           return;
       }
       
-      // Optimistic set: UI shows connected immediately if config exists
       setSyncStatus('connected');
       
       const channel = supabase
@@ -198,13 +197,11 @@ function App() {
               }
           )
           .subscribe((status) => {
-              // Only log connection status, do NOT toggle syncStatus to avoid UI flicker.
-              // The UI is controlled by the presence of workspaceId & Config.
               console.log("Supabase Status:", status);
           });
           
       return () => { supabase.removeChannel(channel); };
-  }, [workspaceId, clientVersion]);
+  }, [workspaceId, clientVersion]); // <--- Added clientVersion dependency
 
   const syncItemToCloud = async (item: ReplenishmentRecord | Store) => {
       if (workspaceId && isSupabaseConfigured()) {

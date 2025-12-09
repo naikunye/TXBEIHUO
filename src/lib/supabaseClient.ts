@@ -37,6 +37,8 @@ export const getSupabaseConfig = () => {
 // 初始化 Client (使用 let 允许热替换)
 let currentConfig = getSupabaseConfig();
 
+// 默认导出的 client 实例，现在可以被 saveSupabaseConfig 更新
+// FIX: Changed from const to let to allow reassignment
 export let supabase = createClient(
     currentConfig.url || 'https://placeholder.supabase.co', 
     currentConfig.key || 'placeholder-key'
@@ -53,7 +55,8 @@ export const saveSupabaseConfig = (url: string, key: string) => {
     localStorage.setItem(STORAGE_KEY_URL, url);
     localStorage.setItem(STORAGE_KEY_KEY, key);
     
-    // FIX: 移除了清除 WORKSPACE ID 的代码，防止保存配置时丢失连接状态
+    // !!! CRITICAL FIX: 移除了 localStorage.removeItem(STORAGE_KEY_WORKSPACE); !!!
+    // 之前这行代码会导致每次保存配置时，工作区连接丢失。
     
     // 热更新客户端实例，无需刷新页面
     try {
