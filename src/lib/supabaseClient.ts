@@ -1,5 +1,5 @@
 
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { createClient } from '@supabase/supabase-js';
 
 // 定义存储 Key
 const STORAGE_KEY_URL = 'tanxing_supabase_url';
@@ -34,32 +34,37 @@ export const getSupabaseConfig = () => {
   };
 };
 
-// 初始化 Client (使用 let 允许重新赋值，实现热切换)
-const config = getSupabaseConfig();
+// 初始化 Client (使用 let 允许热替换)
+let currentConfig = getSupabaseConfig();
 
 export let supabase = createClient(
-    config.url || 'https://placeholder.supabase.co', 
-    config.key || 'placeholder-key'
+    currentConfig.url || 'https://placeholder.supabase.co', 
+    currentConfig.key || 'placeholder-key'
 );
 
-// 辅助函数：检查是否已配置
+// 辅助函数：检查是否已配置 (动态检查最新状态)
 export const isSupabaseConfigured = () => {
-    const currentConfig = getSupabaseConfig();
-    return !!(currentConfig.url && currentConfig.key && currentConfig.url !== 'https://placeholder.supabase.co');
+    const config = getSupabaseConfig();
+    return !!(config.url && config.key && config.url !== 'https://placeholder.supabase.co');
 };
 
-// 辅助函数：保存配置并重置 Client (不清除 workspace)
+// 辅助函数：保存配置
 export const saveSupabaseConfig = (url: string, key: string) => {
     localStorage.setItem(STORAGE_KEY_URL, url);
     localStorage.setItem(STORAGE_KEY_KEY, key);
-    // 关键修复：不再清除 workspace，保证刷新后依然连接
-    // localStorage.removeItem(STORAGE_KEY_WORKSPACE); 
     
-    // 立即重新初始化 client
-    supabase = createClient(url, key);
+    // FIX: 移除了清除 WORKSPACE ID 的代码，防止保存配置时丢失连接状态
+    
+    // 热更新客户端实例，无需刷新页面
+    try {
+        supabase = createClient(url, key);
+        console.log("Supabase client hot-swapped successfully.");
+    } catch (e) {
+        console.error("Failed to hot-swap supabase client", e);
+    }
 };
 
-// 辅助函数：清除配置 (完全重置)
+// 辅助函数：清除配置 (完全重置时才调用)
 export const clearSupabaseConfig = () => {
     localStorage.removeItem(STORAGE_KEY_URL);
     localStorage.removeItem(STORAGE_KEY_KEY);

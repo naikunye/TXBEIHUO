@@ -154,8 +154,6 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
           const tempClient = createClient(url, key);
           const { error } = await tempClient.from('replenishment_data').select('id').limit(1);
           
-          // Allow connection even if table is empty (PGRST100 is not auth error)
-          // Specific Auth errors: PGRST301 (JWT Expired/Invalid), 28P01 (Pwd Auth failed - unlikely for anon key but possible)
           if (error && (error.code === 'PGRST301' || error.message.includes('JWT') || error.code === '28P01')) {
                throw new Error("认证失败：API Key 无效");
           } 
@@ -175,15 +173,15 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
       }
   };
 
-  const handleReload = () => {
-      window.location.reload();
+  const handleDone = () => {
+      onClose();
   };
 
   const handleConnectWorkspace = (e: React.FormEvent) => {
       e.preventDefault();
       const val = inputId.trim();
       if (val) {
-          // FORCE SAVE to LocalStorage immediately
+          // Force Save to LocalStorage immediately to prevent race conditions
           localStorage.setItem('tanxing_current_workspace', val);
           onConnect(val);
           onClose(); 
@@ -268,11 +266,11 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
                         </div>
 
                         <button 
-                           onClick={handleReload}
+                           onClick={handleDone}
                            className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded-lg shadow-lg shadow-green-200 flex items-center justify-center gap-2"
                         >
-                           <RefreshCw size={18} />
-                           完成并重启
+                           <Check size={18} />
+                           完成设置
                         </button>
                      </div>
                  ) : currentWorkspaceId ? (

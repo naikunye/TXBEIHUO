@@ -750,8 +750,8 @@ function App() {
                 <div className="absolute -bottom-2 left-30 w-2 h-1 bg-white/20 rounded-full"></div>
             </div>
             <div className="flex items-center gap-6">
-                {/* --- PROMINENT CLOUD INDICATOR (Unconditional rendering if ID exists) --- */}
-                {workspaceId && isSupabaseConfigured() && (
+                {/* --- PROMINENT CLOUD INDICATOR (Always show if ID exists) --- */}
+                {workspaceId && (
                     <div className="flex items-center gap-2 bg-emerald-900/30 border border-emerald-500/50 px-3 py-1.5 rounded-full shadow-glow-green animate-fade-in group cursor-default" title={syncStatus === 'connected' ? "实时同步中" : "连接中..."}>
                         <div className="relative">
                             <Cloud className={`text-emerald-400 ${syncStatus !== 'connected' ? 'opacity-50' : ''}`} size={16} />
