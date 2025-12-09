@@ -36,7 +36,7 @@ import { ProductRDLab } from './components/ProductRDLab';
 import { GeoSalesCommand } from './components/GeoSalesCommand';
 import { ToastContainer, ToastMessage, ToastType } from './components/Toast'; 
 import { analyzeInventory, analyzeLogisticsChannels, generateFinancialReport } from './services/geminiService';
-import { getSupabase, isSupabaseConfigured } from './lib/supabaseClient';
+import { supabase, isSupabaseConfigured } from './lib/supabaseClient';
 import { fetchLingxingInventory, fetchLingxingSales } from './services/lingxingService';
 import { fetchMiaoshouInventory, fetchMiaoshouSales } from './services/miaoshouService';
 import { DataBackupModal } from './components/DataBackupModal'; 
@@ -52,8 +52,6 @@ const safeParse = (key: string, fallback: any) => {
         return fallback;
     }
 };
-
-const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 function App() {
   const [workspaceId, setWorkspaceId] = useState<string | null>(() => {
@@ -165,13 +163,11 @@ function App() {
           return;
       }
       
+      const client = supabase;
       setSyncStatus('connecting');
-      const client = getSupabase(); // Use Singleton
-      let isMounted = true;
 
-      const initCloudSync = async (retryCount = 0) => {
+      const loadCloudData = async () => {
           try {
-              // Fetch existing data
               const { data, error } = await client
                   .from('replenishment_data')
                   .select('json_content')
@@ -179,51 +175,18 @@ function App() {
               
               if (error) throw error;
               
-              if (!isMounted) return;
-
-              if (data && data.length > 0) {
-                  // Cloud has data: Download and overwrite local
+              if (data) {
                   const cloudRecords = data.map(row => row.json_content as ReplenishmentRecord);
                   setRecords(cloudRecords);
                   localStorage.setItem('tanxing_records', JSON.stringify(cloudRecords));
-                  addToast(`同步成功：拉取了 ${cloudRecords.length} 条云端数据`, 'success');
-              } else {
-                  // Cloud is empty: Check if we have local data to upload (First time init)
-                  const localDataStr = localStorage.getItem('tanxing_records');
-                  if (localDataStr) {
-                      const localData = JSON.parse(localDataStr) as ReplenishmentRecord[];
-                      if (localData.length > 0) {
-                          console.log("Cloud empty, uploading local data as init...");
-                          let successCount = 0;
-                          for (const item of localData) {
-                              const { error: upsertError } = await client
-                                  .from('replenishment_data')
-                                  .upsert({ id: item.id, workspace_id: workspaceId, json_content: item });
-                              if (!upsertError) successCount++;
-                          }
-                          addToast(`初始化成功：已上传 ${successCount} 条本地数据至云端`, 'success');
-                      }
-                  }
               }
-              setSyncStatus('connected');
-          } catch (e: any) {
-              console.error("Cloud Sync Error:", e);
-              
-              if (!isMounted) return;
-
-              if (retryCount < 3) {
-                  const waitTime = 2000 * Math.pow(1.5, retryCount); // ~2s, 3s, 4.5s
-                  console.log(`Sync retry ${retryCount + 1}/3 in ${waitTime}ms`);
-                  await delay(waitTime);
-                  if (isMounted) await initCloudSync(retryCount + 1);
-              } else {
-                  addToast("同步失败: 无法连接云端数据库", 'error');
-                  setSyncStatus('disconnected');
-              }
+          } catch (e) {
+              console.error("Cloud Fetch Error:", e);
+              addToast("同步失败: 无法拉取云端数据", 'error');
           }
       };
 
-      initCloudSync();
+      loadCloudData();
       
       const channel = client
           .channel('realtime-replenishment')
@@ -235,8 +198,6 @@ function App() {
                       const newRecord = payload.new.json_content as ReplenishmentRecord;
                       setRecords(prev => {
                           const exists = prev.find(r => r.id === newRecord.id);
-                          if (exists && JSON.stringify(exists) === JSON.stringify(newRecord)) return prev;
-                          
                           const updated = exists ? prev.map(r => r.id === newRecord.id ? newRecord : r) : [...prev, newRecord];
                           localStorage.setItem('tanxing_records', JSON.stringify(updated));
                           return updated;
@@ -248,71 +209,34 @@ function App() {
                           localStorage.setItem('tanxing_records', JSON.stringify(updated));
                           return updated;
                       });
-                      addToast('检测到云端删除操作', 'info');
+                      addToast('数据已远程删除', 'warning');
                   }
               }
           )
           .subscribe((status) => {
               if (status === 'SUBSCRIBED') {
-                  // We treat 'connected' status mainly from the initial successful fetch
+                  setSyncStatus('connected');
+                  addToast('云端同步已连接', 'success');
               } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-                  console.log(`Realtime status: ${status}`);
+                  setSyncStatus('disconnected');
+                  if (workspaceId) addToast('云端连接断开，正在重试...', 'error');
               }
           });
           
-      return () => { 
-          isMounted = false;
-          client.removeChannel(channel); 
-      };
+      return () => { client.removeChannel(channel); };
   }, [workspaceId, clientVersion]);
 
   const syncItemToCloud = async (item: ReplenishmentRecord | Store) => {
       if (workspaceId && isSupabaseConfigured()) {
-        const client = getSupabase();
-        let attempt = 0;
-        const maxRetries = 3;
-        
-        while (attempt < maxRetries) {
-            try { 
-                const { error } = await client.from('replenishment_data').upsert({ id: item.id, workspace_id: workspaceId, json_content: item }); 
-                if (error) throw error;
-                break; // Success
-            } 
-            catch (err) { 
-                console.error(`Cloud Sync Error (Attempt ${attempt + 1}):`, err);
-                attempt++;
-                if (attempt === maxRetries) {
-                    addToast('云端同步失败 (请检查网络)', 'error');
-                } else {
-                    await delay(1000 * attempt); // Backoff
-                }
-            }
-        }
+        try { await supabase.from('replenishment_data').upsert({ id: item.id, workspace_id: workspaceId, json_content: item }); } 
+        catch (err) { console.error('Cloud Sync Error:', err); }
       }
   };
 
   const deleteItemFromCloud = async (id: string) => {
       if (workspaceId && isSupabaseConfigured()) {
-          const client = getSupabase();
-          let attempt = 0;
-          const maxRetries = 3;
-
-          while (attempt < maxRetries) {
-              try { 
-                  const { error } = await client.from('replenishment_data').delete().eq('id', id); 
-                  if (error) throw error;
-                  break;
-              } 
-              catch(err) { 
-                  console.error(`Cloud Delete Error (Attempt ${attempt + 1}):`, err);
-                  attempt++;
-                  if (attempt === maxRetries) {
-                      addToast('云端删除失败 (请检查网络)', 'error');
-                  } else {
-                      await delay(1000 * attempt);
-                  }
-              }
-          }
+          try { await supabase.from('replenishment_data').delete().eq('id', id); } 
+          catch(err) { console.error('Cloud Delete Error:', err); }
       }
   };
 
@@ -834,7 +758,7 @@ function App() {
         </header>
 
         {/* --- FIXED HEADER (Flex Layout, No Overlap) --- */}
-        <div className="hidden md:flex flex-col md:flex-row md:items-end justify-between gap-6 px-8 py-6 bg-[#030712] border-b border-white/5 z-30 shadow-sm shrink-0">
+        <div className="hidden md:flex flex-col md:flex-row md:items-end justify-between gap-6 px-8 py-6 bg-[#030712] border-b border-white/5 z-30 shadow-sm shrink-0 relative">
             <div className="relative">
                 <div className="flex items-center gap-2 mb-1"><div className="w-1.5 h-1.5 bg-cyan-400 rounded-full shadow-neon animate-pulse"></div><span className="text-[10px] font-mono text-cyan-400 tracking-widest uppercase opacity-80">System Online</span></div>
                 <h2 className="text-4xl font-black text-white tracking-tight flex items-center gap-3 text-glow">
@@ -874,7 +798,7 @@ function App() {
         </div>
 
         {/* Main Content with Normal Padding */}
-        <main className="flex-1 overflow-y-auto h-full p-4 sm:p-6 lg:p-8 relative custom-scrollbar">
+        <main className="flex-1 overflow-y-auto min-h-0 p-4 sm:p-6 lg:p-8 relative custom-scrollbar">
           <ToastContainer toasts={toasts} removeToast={removeToast} />
           <div className="max-w-[1920px] w-full mx-auto pb-20">
              {renderContent()}
@@ -904,7 +828,7 @@ function App() {
       <DistributeModal isOpen={isDistributeModalOpen} onClose={() => setIsDistributeModalOpen(false)} sourceRecord={distributeSourceRecord} stores={stores} onConfirm={handleDistributeConfirm} />
       <CommandPalette isOpen={isCommandPaletteOpen} onClose={() => setIsCommandPaletteOpen(false)} records={activeRecords} onNavigate={(v) => setCurrentView(v)} onOpenRecord={(r) => { setEditingRecord(r); setIsModalOpen(true); }} onAction={()=>{}} />
       <AiChatModal isOpen={isAiChatOpen} onClose={() => setIsAiChatOpen(false)} records={activeRecords} onAction={handleAiAction} />
-      <MarketingModal isOpen={marketingModalOpen} onClose={() => setMarketingModalOpen(false)} content={marketingContent} productName={marketingRecord?.productName || ''} record={marketingRecord} initialTab={marketingInitialTab} initialChannel={marketingInitialChannel} />
+      <MarketingModal isOpen={marketingModalOpen} onClose={() => setMarketingModalOpen(false)} content={marketingContent} productName={marketingRecord?.productName || ''} record={marketingRecord} initialTab={marketingInitialTab} initialChannel={marketingInitialChannel} records={activeRecords} />
     </div>
   );
 }

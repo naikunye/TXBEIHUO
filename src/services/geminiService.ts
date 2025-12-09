@@ -1,4 +1,3 @@
-
 import { GoogleGenAI } from "@google/genai";
 import { ReplenishmentRecord, PurchaseOrder } from "../types";
 import { calculateMetrics } from "../utils/calculations";
@@ -187,6 +186,54 @@ export const analyzeLogisticsChannels = async (records: ReplenishmentRecord[]) =
     } catch (e) { return formatErrorHtml(e, "Logistics"); }
 };
 
+export const generateAdStrategy = async (records: ReplenishmentRecord[]) => {
+    try {
+    const ai = getAiClient();
+    const dataSummary = prepareDataContext(records);
+
+    const prompt = `
+      You are a TikTok Shop Ad Strategist.
+      Data: ${JSON.stringify(dataSummary)}
+      Task: Create "TikTok Shop Ad Strategy Report" (HTML).
+      Focus on Lifecycle (New/Growth/Stable/Clearance).
+      Output HTML with Tailwind CSS.
+    `;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: prompt,
+    });
+
+    return response.text;
+  } catch (error) {
+    return formatErrorHtml(error, "Ad Strategy");
+  }
+};
+
+export const generateSelectionStrategy = async (records: ReplenishmentRecord[]) => {
+    try {
+    const ai = getAiClient();
+    const dataSummary = prepareDataContext(records);
+
+    const prompt = `
+      You are a Chief Merchant.
+      Data: ${JSON.stringify(dataSummary)}
+      Task: Create "US Market Selection & Growth Strategy Report" (HTML).
+      Analyze Best-Seller DNA and suggest Vertical Expansion.
+      Output HTML with Tailwind CSS.
+    `;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: prompt,
+    });
+
+    return response.text;
+  } catch (error) {
+    return formatErrorHtml(error, "Selection Strategy");
+  }
+};
+
 export const generateFinancialReport = async (records: ReplenishmentRecord[], financialContext?: any) => {
     try {
         const ai = getAiClient();
@@ -303,5 +350,3 @@ export const analyzeCompetitor = async (record: ReplenishmentRecord) => {
 export const generateMarketingContent = async (record: ReplenishmentRecord) => {
     return generateCampaignStrategy(record);
 };
-export const generateAdStrategy = async () => "Ad Strategy Placeholder";
-export const generateSelectionStrategy = async () => "Selection Strategy Placeholder";

@@ -1,13 +1,14 @@
 
 import React, { useState, useEffect } from 'react';
-import { X, Copy, Wand2, Video, LayoutTemplate, Users, Image as ImageIcon, MessageSquare, Loader2, Play, Calendar, ShoppingBag, Instagram, Mail, Sparkles, Target, Megaphone } from 'lucide-react';
+import { X, Copy, Wand2, Video, LayoutTemplate, Users, Image as ImageIcon, MessageSquare, Loader2, Play, Calendar, ShoppingBag, Instagram, Mail, Sparkles, Target, Megaphone, TrendingUp } from 'lucide-react';
 import { ReplenishmentRecord } from '../types';
 import { 
     generateVisualDirectives, 
     analyzeReviewSentiment, 
     generateCampaignStrategy, 
     generateChannelContent, 
-    generateInfluencerBrief 
+    generateInfluencerBrief,
+    generateSelectionStrategy
 } from '../services/geminiService';
 
 interface MarketingModalProps {
@@ -18,9 +19,10 @@ interface MarketingModalProps {
   record?: ReplenishmentRecord | null;
   initialTab?: string;
   initialChannel?: string;
+  records?: ReplenishmentRecord[];
 }
 
-type Tab = 'strategy' | 'channels' | 'influencer' | 'visuals' | 'insights';
+type Tab = 'strategy' | 'channels' | 'influencer' | 'visuals' | 'insights' | 'selection';
 type ChannelType = 'TikTok' | 'Amazon' | 'Instagram' | 'Email';
 
 export const MarketingModal: React.FC<MarketingModalProps> = ({ 
@@ -30,7 +32,8 @@ export const MarketingModal: React.FC<MarketingModalProps> = ({
     productName, 
     record,
     initialTab,
-    initialChannel
+    initialChannel,
+    records
 }) => {
   const [activeTab, setActiveTab] = useState<Tab>('channels');
   const [activeChannel, setActiveChannel] = useState<ChannelType>('TikTok');
@@ -69,6 +72,7 @@ export const MarketingModal: React.FC<MarketingModalProps> = ({
   const handleGenerateChannel = () => runAiTask(`channel-${activeChannel}`, () => generateChannelContent(record, activeChannel));
   const handleGenerateInfluencer = () => runAiTask('influencer', () => generateInfluencerBrief(record));
   const handleGenerateVisuals = () => runAiTask('visuals', () => generateVisualDirectives(record));
+  const handleGenerateSelection = () => runAiTask('selection', () => generateSelectionStrategy(records || [record]));
   const handleAnalyzeReviews = () => {
       if (!reviewInput.trim()) return alert("请输入评论内容");
       runAiTask('insights', () => analyzeReviewSentiment(reviewInput, productName));
@@ -134,6 +138,7 @@ export const MarketingModal: React.FC<MarketingModalProps> = ({
                     { id: 'influencer', icon: Users, label: '达人建联' },
                     { id: 'visuals', icon: ImageIcon, label: '视觉创意' },
                     { id: 'insights', icon: MessageSquare, label: '舆情洞察' },
+                    { id: 'selection', icon: TrendingUp, label: '选品增长' },
                 ].map(item => (
                     <button key={item.id} onClick={() => setActiveTab(item.id as Tab)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === item.id ? 'bg-indigo-600 text-white' : 'hover:bg-white/5'}`}>
                         <item.icon size={18} /> {item.label}
@@ -152,6 +157,7 @@ export const MarketingModal: React.FC<MarketingModalProps> = ({
                     {activeTab === 'influencer' && '红人营销开发'}
                     {activeTab === 'visuals' && '视觉创意导演'}
                     {activeTab === 'insights' && '消费者舆情分析'}
+                    {activeTab === 'selection' && '选品与增长策略'}
                 </h2>
                 {activeTab === 'channels' && (
                     <div className="flex bg-slate-100 p-1 rounded-lg">
@@ -174,6 +180,8 @@ export const MarketingModal: React.FC<MarketingModalProps> = ({
                     
                     {activeTab === 'visuals' && renderContent('visuals', <ImageIcon size={40}/>, 'AI 视觉创意导演', '生成适用于 Midjourney / SD 的高质量提示词。', handleGenerateVisuals, '生成视觉提示词')}
                     
+                    {activeTab === 'selection' && renderContent('selection', <TrendingUp size={40}/>, 'AI 选品与增长策略', '深度分析现有爆品基因 (DNA)，结合美国市场趋势，推荐高潜力关联品类。', handleGenerateSelection, '生成增长报告')}
+
                     {activeTab === 'insights' && (
                         !results['insights'] ? (
                             <div className="flex-1 flex flex-col items-center justify-center py-10">
