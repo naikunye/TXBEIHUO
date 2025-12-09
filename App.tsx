@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
-  LayoutDashboard, Plus, Ship, Plane, DollarSign, TrendingUp, Package, BrainCircuit, Loader2, PieChart, List, Menu, ChevronRight, Edit, Box, Calculator, Search, Container, Truck, X, Download, Save, Home, Filter, CloudUpload, Settings, Database, Wifi, WifiOff, Zap, AlertTriangle, Hourglass, Sparkles, Bot, Megaphone, Compass, Wand2, FileJson, Store as StoreIcon, ChevronDown, ArrowRightLeft, ArrowUpDown, ArrowUp, ArrowDown, ChevronLeft, ChevronsLeft, ChevronsRight, UserCircle, Command, CopyPlus, MoreHorizontal, Trash2, Printer, CalendarClock, RefreshCw, Clock, ExternalLink, Target, CheckSquare, Square, FileText, Factory, ShoppingCart, ArrowRight, ArrowUpRight, Warehouse, ShoppingBag, Wallet, Sliders, Kanban as KanbanIcon, LayoutGrid, Moon, Sun, Maximize2, Minimize2, PlayCircle, StopCircle, Gauge, Activity, Cpu, Globe, CalendarDays, Beaker, MapPin
+  LayoutDashboard, Plus, Ship, Plane, DollarSign, TrendingUp, Package, BrainCircuit, Loader2, PieChart, List, Menu, ChevronRight, Edit, Box, Calculator, Search, Container, Truck, X, Download, Save, Home, Filter, CloudUpload, Settings, Database, Wifi, WifiOff, Zap, AlertTriangle, Hourglass, Sparkles, Bot, Megaphone, Compass, Wand2, FileJson, Store as StoreIcon, ChevronDown, ArrowRightLeft, ArrowUpDown, ArrowUp, ArrowDown, ChevronLeft, ChevronsLeft, ChevronsRight, UserCircle, Command, CopyPlus, MoreHorizontal, Trash2, Printer, CalendarClock, RefreshCw, Clock, ExternalLink, Target, CheckSquare, Square, FileText, Factory, ShoppingCart, ArrowRight, ArrowUpRight, Warehouse, ShoppingBag, Wallet, Sliders, Kanban as KanbanIcon, LayoutGrid, Moon, Sun, Maximize2, Minimize2, PlayCircle, StopCircle, Gauge, Activity, Cpu, Globe, CalendarDays, Beaker, MapPin, Cloud
 } from 'lucide-react';
 import { ReplenishmentRecord, Store, CalculatedMetrics, PurchaseOrder, AppSettings, InventoryLog, FinanceTransaction, Supplier } from './types';
 import { MOCK_DATA_INITIAL } from './constants';
@@ -36,7 +36,7 @@ import { ProductRDLab } from './components/ProductRDLab';
 import { GeoSalesCommand } from './components/GeoSalesCommand';
 import { ToastContainer, ToastMessage, ToastType } from './components/Toast'; 
 import { analyzeInventory, analyzeLogisticsChannels, generateFinancialReport } from './services/geminiService';
-import { supabase, isSupabaseConfigured } from './lib/supabaseClient';
+import { getSupabase, isSupabaseConfigured } from './lib/supabaseClient';
 import { fetchLingxingInventory, fetchLingxingSales } from './services/lingxingService';
 import { fetchMiaoshouInventory, fetchMiaoshouSales } from './services/miaoshouService';
 import { DataBackupModal } from './components/DataBackupModal'; 
@@ -54,8 +54,12 @@ const safeParse = (key: string, fallback: any) => {
 };
 
 function App() {
-  const [workspaceId, setWorkspaceId] = useState<string | null>(() => localStorage.getItem('tanxing_current_workspace'));
+  const [workspaceId, setWorkspaceId] = useState<string | null>(() => {
+      return localStorage.getItem('tanxing_current_workspace');
+  });
+  
   const [syncStatus, setSyncStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
+  const [clientVersion, setClientVersion] = useState(0); // Versioning to force effect re-run on config change
   const [isCloudConfigOpen, setIsCloudConfigOpen] = useState(false); 
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('tanxing_theme') !== 'light'); 
   const [density, setDensity] = useState<'comfortable' | 'compact'>('comfortable');
@@ -108,7 +112,6 @@ function App() {
   const [marketingModalOpen, setMarketingModalOpen] = useState(false);
   const [marketingContent, setMarketingContent] = useState<string | null>(null);
   const [marketingRecord, setMarketingRecord] = useState<ReplenishmentRecord | null>(null); 
-  // NEW: Marketing Deep Linking
   const [marketingInitialTab, setMarketingInitialTab] = useState<any>('strategy');
   const [marketingInitialChannel, setMarketingInitialChannel] = useState<any>('TikTok');
   const [searchQuery, setSearchQuery] = useState('');
@@ -141,20 +144,30 @@ function App() {
   }, []);
 
   useEffect(() => {
+      if (workspaceId) {
+          localStorage.setItem('tanxing_current_workspace', workspaceId);
+      }
+  }, [workspaceId]);
+
+  useEffect(() => {
       if (!isSimulationActive) {
           setSimulatedExchangeRate(appSettings.exchangeRate);
           setSimulatedFreightMarkup(0);
       }
   }, [isSimulationActive, appSettings.exchangeRate]);
 
-  // --- 1. Real-time Subscription Setup ---
+  // --- Real-time Subscription Setup ---
   useEffect(() => {
       if (!workspaceId || !isSupabaseConfigured()) {
           setSyncStatus('disconnected');
           return;
       }
-      setSyncStatus('connected');
-      const channel = supabase
+      
+      // Explicitly get a fresh client instance. This is crucial if configuration changed.
+      const client = getSupabase();
+      setSyncStatus('connecting');
+      
+      const channel = client
           .channel('realtime-replenishment')
           .on(
               'postgres_changes',
@@ -164,6 +177,7 @@ function App() {
                       const newRecord = payload.new.json_content as ReplenishmentRecord;
                       setRecords(prev => {
                           const exists = prev.find(r => r.id === newRecord.id);
+                          // Prevent infinite loop if we are the one who updated it
                           const updated = exists ? prev.map(r => r.id === newRecord.id ? newRecord : r) : [...prev, newRecord];
                           localStorage.setItem('tanxing_records', JSON.stringify(updated));
                           return updated;
@@ -180,20 +194,37 @@ function App() {
                   }
               }
           )
-          .subscribe();
-      return () => { supabase.removeChannel(channel); };
-  }, [workspaceId]);
+          .subscribe((status) => {
+              console.log("Supabase Status:", status);
+              if (status === 'SUBSCRIBED') {
+                  setSyncStatus('connected');
+              } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+                  setSyncStatus('disconnected');
+                  // Only warn if we expected to be connected
+                  if (workspaceId) addToast('云端连接断开，正在重试...', 'error');
+              }
+          });
+          
+      return () => { client.removeChannel(channel); };
+  }, [workspaceId, clientVersion]);
 
   const syncItemToCloud = async (item: ReplenishmentRecord | Store) => {
       if (workspaceId && isSupabaseConfigured()) {
-        try { await supabase.from('replenishment_data').upsert({ id: item.id, workspace_id: workspaceId, json_content: item }); } 
+        try { 
+            // Use getter to ensure we use current config
+            const client = getSupabase();
+            await client.from('replenishment_data').upsert({ id: item.id, workspace_id: workspaceId, json_content: item }); 
+        } 
         catch (err) { console.error('Cloud Sync Error:', err); }
       }
   };
 
   const deleteItemFromCloud = async (id: string) => {
       if (workspaceId && isSupabaseConfigured()) {
-          try { await supabase.from('replenishment_data').delete().eq('id', id); } 
+          try { 
+              const client = getSupabase();
+              await client.from('replenishment_data').delete().eq('id', id); 
+          } 
           catch(err) { console.error('Cloud Delete Error:', err); }
       }
   };
@@ -272,7 +303,6 @@ function App() {
 
   const deletedRecords = useMemo(() => records.filter(r => r.isDeleted), [records]);
   
-  // NEW: Updated Handler for Marketing Studio
   const handleMarketingGenerate = (record: ReplenishmentRecord, initialTab: string = 'strategy', initialChannel: string = 'TikTok') => {
       setMarketingRecord(record); 
       setMarketingContent(null);
@@ -537,7 +567,7 @@ function App() {
                         <div className="px-6 py-5 border-b border-white/10 flex flex-col md:flex-row justify-between items-center gap-4 bg-white/5">
                             <div className="flex items-center gap-4">
                                 <div className="flex items-center gap-2 text-sm font-bold text-white"><List size={18} className="text-cyan-400"/>库存清单<span className="bg-cyan-900/30 text-cyan-400 px-2 py-0.5 rounded-full text-xs border border-cyan-500/30">{activeRecords.length}</span></div>
-                                <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[10px] font-bold tracking-wide uppercase ${syncStatus === 'connected' ? 'bg-emerald-900/20 text-emerald-400 border-emerald-800' : 'bg-slate-800 text-slate-400 border-slate-700'}`}>{syncStatus === 'connected' ? <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shadow-glow-green"></div> : <WifiOff size={10} />}{syncStatus === 'connected' ? 'Live Sync' : 'Offline'}</div>
+                                <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[10px] font-bold tracking-wide uppercase ${syncStatus === 'connected' ? 'bg-emerald-900/20 text-emerald-400 border-emerald-800' : 'bg-slate-800 text-slate-400 border-slate-700'}`}>{syncStatus === 'connected' ? <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shadow-glow-green"></div> : <WifiOff size={10} />}{syncStatus === 'connected' ? 'Cloud Active' : 'Local Only'}</div>
                             </div>
                             <div className="flex items-center gap-2">
                                 <button onClick={() => setDensity(d => d === 'compact' ? 'comfortable' : 'compact')} className="hidden lg:flex items-center gap-2 px-3 py-2 bg-white/5 border border-white/10 text-slate-300 rounded-xl text-xs font-bold hover:text-cyan-400 transition-colors shadow-sm">{density === 'compact' ? <Maximize2 size={14}/> : <Minimize2 size={14}/>}</button>
@@ -710,47 +740,69 @@ function App() {
       </aside>
       
       <div className="flex-1 flex flex-col h-screen overflow-hidden relative">
-        <header className="bg-slate-900/80 backdrop-blur-md border-b border-white/10 p-4 flex justify-between items-center md:hidden z-40 sticky top-0 shadow-sm">
+        <header className="bg-slate-900/80 backdrop-blur-md border-b border-white/10 p-4 flex justify-between items-center md:hidden z-40 shrink-0">
             <div className="font-bold text-white text-glow">Tanxing.OS</div>
             <button className="text-gray-300"><Menu /></button>
         </header>
-        <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 relative custom-scrollbar">
+
+        {/* --- FIXED HEADER (Absolute Overlay) --- */}
+        <div className="hidden md:flex absolute top-0 left-0 right-0 flex-col md:flex-row md:items-end justify-between gap-6 px-8 py-6 bg-[#030712]/80 backdrop-blur-xl border-b border-white/5 z-30 transition-all duration-300 shadow-sm">
+            <div className="relative">
+                <div className="flex items-center gap-2 mb-1"><div className="w-1.5 h-1.5 bg-cyan-400 rounded-full shadow-neon animate-pulse"></div><span className="text-[10px] font-mono text-cyan-400 tracking-widest uppercase opacity-80">System Online</span></div>
+                <h2 className="text-4xl font-black text-white tracking-tight flex items-center gap-3 text-glow">
+                    {currentView === 'overview' ? 'COMMAND CENTER' : currentView === 'inventory' ? 'INVENTORY OPS' : currentView === 'purchasing' ? 'PROCUREMENT' : currentView === 'wms' ? 'WAREHOUSE WMS' : currentView === 'finance' ? 'FINANCE CORE' : currentView === 'analytics' ? 'DATA INTELLIGENCE' : currentView === 'marketing' ? 'AI MARKETING' : currentView === 'calculator' ? 'SIMULATION LAB' : currentView === 'logistics' ? 'LOGISTICS TRACKER' : currentView === 'suppliers' ? 'SUPPLIER CRM' : currentView === 'calendar' ? 'SUPPLY CHAIN TIMELINE' : currentView === 'rd_lab' ? 'R&D INNOVATION LAB' : currentView === 'geo_command' ? 'GEO STRATEGY COMMAND' : 'SYSTEM VIEW'}
+                </h2>
+                <div className="absolute -bottom-2 left-0 w-24 h-1 bg-cyan-500 rounded-full shadow-glow-cyan"></div>
+                <div className="absolute -bottom-2 left-26 w-2 h-1 bg-white/20 rounded-full"></div>
+                <div className="absolute -bottom-2 left-30 w-2 h-1 bg-white/20 rounded-full"></div>
+            </div>
+            <div className="flex items-center gap-6">
+                {/* --- PROMINENT CLOUD INDICATOR (Always show if ID exists) --- */}
+                {workspaceId && (
+                    <div className="flex items-center gap-2 bg-emerald-900/30 border border-emerald-500/50 px-3 py-1.5 rounded-full shadow-glow-green animate-fade-in group cursor-default" title={syncStatus === 'connected' ? "实时同步中" : "连接中..."}>
+                        <div className="relative">
+                            <Cloud className={`text-emerald-400 ${syncStatus !== 'connected' ? 'opacity-50' : ''}`} size={16} />
+                            <span className={`absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full border border-black transition-colors duration-500 ${syncStatus === 'connected' ? 'bg-green-400 animate-pulse' : 'bg-yellow-500'}`}></span>
+                        </div>
+                        <span className="text-xs font-bold text-emerald-300 tracking-wide uppercase">CLOUD CONNECTED</span>
+                    </div>
+                )}
+
+                <div onClick={() => setClockZone(prev => { if (prev === 'CN') return 'US_LA'; if (prev === 'US_LA') return 'US_NY'; return 'CN'; })} className="hidden lg:flex flex-col items-end border-r border-white/10 pr-6 cursor-pointer group select-none transition-opacity hover:opacity-80" title="点击切换时区 (CN / US-West / US-East)">
+                    <div className="flex items-center gap-2 mb-1"><span className={`text-[9px] font-bold px-1.5 py-0.5 rounded transition-colors ${clockZone.startsWith('US') ? 'bg-blue-500/20 text-blue-400 shadow-glow-blue' : 'text-slate-600 bg-white/5'}`}>US</span><RefreshCw size={10} className="text-slate-600 group-hover:text-cyan-400 transition-colors group-hover:rotate-180 duration-500" /><span className={`text-[9px] font-bold px-1.5 py-0.5 rounded transition-colors ${clockZone === 'CN' ? 'bg-red-500/20 text-red-400 shadow-glow-red' : 'text-slate-600 bg-white/5'}`}>CN</span></div>
+                    <span className="text-3xl font-mono font-bold text-white leading-none tracking-widest text-glow">
+                        {systemTime.toLocaleTimeString('en-US', { timeZone: clockZone === 'CN' ? 'Asia/Shanghai' : clockZone === 'US_LA' ? 'America/Los_Angeles' : 'America/New_York', hour: '2-digit', minute: '2-digit', hour12: false })}
+                    </span>
+                    <span className="text-[10px] text-slate-400 uppercase tracking-widest font-mono mt-1">{systemTime.toLocaleDateString('zh-CN', { timeZone: clockZone === 'CN' ? 'Asia/Shanghai' : clockZone === 'US_LA' ? 'America/Los_Angeles' : 'America/New_York', month: 'numeric', day: 'numeric', weekday: 'short' })} {clockZone === 'CN' ? 'Beijing' : clockZone === 'US_LA' ? 'Los Angeles' : 'New York'}</span>
+                </div>
+                {currentView === 'inventory' && (
+                    <div className="flex items-center gap-3 overflow-x-auto pb-1 md:pb-0">
+                        <button onClick={handleFinancialReport} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-slate-200 px-4 py-2.5 rounded-xl text-xs font-bold transition-all border border-white/10 shadow-sm whitespace-nowrap backdrop-blur-md group"><DollarSign size={14} className="text-emerald-400 group-hover:text-emerald-300"/> 财务分析</button>
+                        <button onClick={handleSmartAnalysis} className="flex items-center gap-2 bg-purple-500/20 hover:bg-purple-500/30 text-purple-200 px-4 py-2.5 rounded-xl text-xs font-bold transition-all border border-purple-500/30 shadow-glow-purple whitespace-nowrap group">{isAnalyzing ? <Loader2 className="animate-spin text-purple-400" size={14}/> : <BrainCircuit size={14} className="text-purple-400 group-hover:text-white"/>} 智能诊断</button>
+                        <button onClick={() => { setEditingRecord(null); setIsModalOpen(true); }} className="flex items-center gap-2 bg-cyan-500 text-black px-6 py-2.5 rounded-xl text-xs font-extrabold hover:bg-cyan-400 transition-all shadow-glow-cyan active:scale-95 whitespace-nowrap"><Plus size={16} strokeWidth={3} /> ADD ITEM</button>
+                    </div>
+                )}
+            </div>
+        </div>
+
+        {/* Main Content with Top Padding */}
+        <main className="flex-1 overflow-y-auto h-full pt-36 p-4 sm:p-6 lg:p-8 relative custom-scrollbar">
           <ToastContainer toasts={toasts} removeToast={removeToast} />
           <div className="max-w-[1920px] w-full mx-auto pb-20">
-             <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-8 animate-fade-in sticky top-0 z-30 py-4 -my-4 px-2 -mx-2 bg-gradient-to-b from-[#030712] to-transparent backdrop-blur-sm transition-all duration-300">
-                <div className="relative">
-                    <div className="flex items-center gap-2 mb-1"><div className="w-1.5 h-1.5 bg-cyan-400 rounded-full shadow-neon animate-pulse"></div><span className="text-[10px] font-mono text-cyan-400 tracking-widest uppercase opacity-80">System Online</span></div>
-                    <h2 className="text-4xl font-black text-white tracking-tight flex items-center gap-3 text-glow">
-                        {currentView === 'overview' ? 'COMMAND CENTER' : currentView === 'inventory' ? 'INVENTORY OPS' : currentView === 'purchasing' ? 'PROCUREMENT' : currentView === 'wms' ? 'WAREHOUSE WMS' : currentView === 'finance' ? 'FINANCE CORE' : currentView === 'analytics' ? 'DATA INTELLIGENCE' : currentView === 'marketing' ? 'AI MARKETING' : currentView === 'calculator' ? 'SIMULATION LAB' : currentView === 'logistics' ? 'LOGISTICS TRACKER' : currentView === 'suppliers' ? 'SUPPLIER CRM' : currentView === 'calendar' ? 'SUPPLY CHAIN TIMELINE' : currentView === 'rd_lab' ? 'R&D INNOVATION LAB' : currentView === 'geo_command' ? 'GEO STRATEGY COMMAND' : 'SYSTEM VIEW'}
-                    </h2>
-                    <div className="absolute -bottom-2 left-0 w-24 h-1 bg-cyan-500 rounded-full shadow-glow-cyan"></div>
-                    <div className="absolute -bottom-2 left-26 w-2 h-1 bg-white/20 rounded-full"></div>
-                    <div className="absolute -bottom-2 left-30 w-2 h-1 bg-white/20 rounded-full"></div>
-                </div>
-                <div className="flex items-center gap-6">
-                    <div onClick={() => setClockZone(prev => { if (prev === 'CN') return 'US_LA'; if (prev === 'US_LA') return 'US_NY'; return 'CN'; })} className="hidden lg:flex flex-col items-end border-r border-white/10 pr-6 cursor-pointer group select-none transition-opacity hover:opacity-80" title="点击切换时区 (CN / US-West / US-East)">
-                        <div className="flex items-center gap-2 mb-1"><span className={`text-[9px] font-bold px-1.5 py-0.5 rounded transition-colors ${clockZone.startsWith('US') ? 'bg-blue-500/20 text-blue-400 shadow-glow-blue' : 'text-slate-600 bg-white/5'}`}>US</span><RefreshCw size={10} className="text-slate-600 group-hover:text-cyan-400 transition-colors group-hover:rotate-180 duration-500" /><span className={`text-[9px] font-bold px-1.5 py-0.5 rounded transition-colors ${clockZone === 'CN' ? 'bg-red-500/20 text-red-400 shadow-glow-red' : 'text-slate-600 bg-white/5'}`}>CN</span></div>
-                        <span className="text-3xl font-mono font-bold text-white leading-none tracking-widest text-glow">
-                            {systemTime.toLocaleTimeString('en-US', { timeZone: clockZone === 'CN' ? 'Asia/Shanghai' : clockZone === 'US_LA' ? 'America/Los_Angeles' : 'America/New_York', hour: '2-digit', minute: '2-digit', hour12: false })}
-                        </span>
-                        <span className="text-[10px] text-slate-400 uppercase tracking-widest font-mono mt-1">{systemTime.toLocaleDateString('zh-CN', { timeZone: clockZone === 'CN' ? 'Asia/Shanghai' : clockZone === 'US_LA' ? 'America/Los_Angeles' : 'America/New_York', month: 'numeric', day: 'numeric', weekday: 'short' })} {clockZone === 'CN' ? 'Beijing' : clockZone === 'US_LA' ? 'Los Angeles' : 'New York'}</span>
-                    </div>
-                    {currentView === 'inventory' && (
-                        <div className="flex items-center gap-3 overflow-x-auto pb-1 md:pb-0">
-                            <button onClick={handleFinancialReport} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-slate-200 px-4 py-2.5 rounded-xl text-xs font-bold transition-all border border-white/10 shadow-sm whitespace-nowrap backdrop-blur-md group"><DollarSign size={14} className="text-emerald-400 group-hover:text-emerald-300"/> 财务分析</button>
-                            <button onClick={handleSmartAnalysis} className="flex items-center gap-2 bg-purple-500/20 hover:bg-purple-500/30 text-purple-200 px-4 py-2.5 rounded-xl text-xs font-bold transition-all border border-purple-500/30 shadow-glow-purple whitespace-nowrap group">{isAnalyzing ? <Loader2 className="animate-spin text-purple-400" size={14}/> : <BrainCircuit size={14} className="text-purple-400 group-hover:text-white"/>} 智能诊断</button>
-                            <button onClick={() => { setEditingRecord(null); setIsModalOpen(true); }} className="flex items-center gap-2 bg-cyan-500 text-black px-6 py-2.5 rounded-xl text-xs font-extrabold hover:bg-cyan-400 transition-all shadow-glow-cyan active:scale-95 whitespace-nowrap"><Plus size={16} strokeWidth={3} /> ADD ITEM</button>
-                        </div>
-                    )}
-                </div>
-             </div>
-            
              {renderContent()}
           </div>
         </main>
       </div>
       
-      <CloudConnect isOpen={isCloudConfigOpen} onClose={() => setIsCloudConfigOpen(false)} currentWorkspaceId={workspaceId} onConnect={setWorkspaceId} onDisconnect={() => setWorkspaceId(null)} isSyncing={syncStatus === 'connecting'} />
+      <CloudConnect 
+        isOpen={isCloudConfigOpen} 
+        onClose={() => setIsCloudConfigOpen(false)} 
+        currentWorkspaceId={workspaceId} 
+        onConnect={setWorkspaceId} 
+        onDisconnect={() => setWorkspaceId(null)} 
+        isSyncing={syncStatus === 'connecting'} 
+        onConfigChange={() => setClientVersion(v => v + 1)}
+      />
       <SettingsModal isOpen={isGlobalSettingsOpen} onClose={() => setIsGlobalSettingsOpen(false)} settings={appSettings} onSave={handleSaveSettings} />
       <StoreManagerModal isOpen={isStoreManagerOpen} onClose={() => setIsStoreManagerOpen(false)} stores={stores} onAddStore={handleAddStore} onDeleteStore={handleDeleteStore} />
       <RecordModal isOpen={isModalOpen} onClose={closeModal} onSave={handleSaveRecord} initialData={editingRecord} stores={stores} defaultStoreId={activeStoreId} />

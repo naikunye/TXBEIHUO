@@ -1,9 +1,9 @@
+
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 // 定义存储 Key
 const STORAGE_KEY_URL = 'tanxing_supabase_url';
 const STORAGE_KEY_KEY = 'tanxing_supabase_key';
-const STORAGE_KEY_WORKSPACE = 'tanxing_current_workspace';
 
 // 兼容 Vite (import.meta.env) 和 Webpack/Node (process.env) 的环境变量读取器
 const getEnv = (key: string) => {
@@ -19,6 +19,16 @@ const getEnv = (key: string) => {
   return undefined;
 };
 
+// 辅助函数：清洗 URL
+const cleanUrl = (url: string) => {
+    if (!url) return '';
+    let cleaned = url.trim().replace(/\/$/, ""); // Remove trailing slash
+    if (!cleaned.startsWith('http://') && !cleaned.startsWith('https://')) {
+        cleaned = `https://${cleaned}`;
+    }
+    return cleaned;
+};
+
 // 获取配置：优先 localStorage，其次环境变量
 export const getSupabaseConfig = () => {
   const localUrl = typeof window !== 'undefined' ? localStorage.getItem(STORAGE_KEY_URL) : null;
@@ -28,35 +38,72 @@ export const getSupabaseConfig = () => {
   const envKey = getEnv('SUPABASE_ANON_KEY') || getEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY');
 
   return {
-    url: localUrl || envUrl || '',
-    key: localKey || envKey || ''
+    url: cleanUrl(localUrl || envUrl || ''),
+    key: (localKey || envKey || '').trim()
   };
 };
 
-// 初始化 Client
-const config = getSupabaseConfig();
+// 单例持有者
+let currentClient: SupabaseClient | null = null;
 
-// 如果没有配置，这里可能会创建一个无效的 client，但在 UI 层我们会拦截并提示用户配置
-export const supabase = createClient(
-    config.url || 'https://placeholder.supabase.co', 
-    config.key || 'placeholder-key'
-);
+// 核心函数：获取当前 Client 实例
+// 每次调用都会检查是否有缓存，如果配置更新了 (currentClient set to null)，会重新创建
+export const getSupabase = () => {
+    if (currentClient) return currentClient;
+
+    const config = getSupabaseConfig();
+    // 使用占位符防止空参数报错，但 isSupabaseConfigured 会拦截实际请求
+    const url = config.url || 'https://placeholder.supabase.co';
+    const key = config.key || 'placeholder-key';
+
+    try {
+        currentClient = createClient(url, key, {
+            auth: {
+                persistSession: false, // 本系统为数据看板，暂不使用 Auth Session 避免复杂化
+                autoRefreshToken: false,
+            },
+            realtime: {
+                params: {
+                    eventsPerSecond: 10,
+                },
+            },
+        });
+    } catch (e) {
+        console.error("Failed to initialize Supabase client:", e);
+        // Return a dummy object if creation fails to prevent app crash
+        // (Though createClient usually doesn't throw on init)
+    }
+    return currentClient as SupabaseClient;
+};
+
+// 导出默认实例供简单场景使用 (但建议组件内使用 getSupabase())
+export const supabase = getSupabase();
 
 // 辅助函数：检查是否已配置
 export const isSupabaseConfigured = () => {
+    const config = getSupabaseConfig();
     return !!(config.url && config.key && config.url !== 'https://placeholder.supabase.co');
 };
 
-// 辅助函数：保存配置 (由调用者决定是否刷新)
+// 辅助函数：保存配置并重置 Client
 export const saveSupabaseConfig = (url: string, key: string) => {
-    localStorage.setItem(STORAGE_KEY_URL, url);
-    localStorage.setItem(STORAGE_KEY_KEY, key);
-    localStorage.removeItem(STORAGE_KEY_WORKSPACE); // 清除旧的工作区，防止错乱
+    const cleanedUrl = cleanUrl(url);
+    const cleanedKey = key.trim();
+    
+    localStorage.setItem(STORAGE_KEY_URL, cleanedUrl);
+    localStorage.setItem(STORAGE_KEY_KEY, cleanedKey);
+    
+    // 关键：置空当前实例，迫使下一次 getSupabase() 重新创建
+    currentClient = null;
+    
+    // 立即重新初始化以验证
+    getSupabase();
 };
 
-// 辅助函数：清除配置 (由调用者决定是否刷新)
+// 辅助函数：清除配置
 export const clearSupabaseConfig = () => {
     localStorage.removeItem(STORAGE_KEY_URL);
     localStorage.removeItem(STORAGE_KEY_KEY);
-    localStorage.removeItem(STORAGE_KEY_WORKSPACE);
+    localStorage.removeItem('tanxing_current_workspace');
+    currentClient = null;
 };

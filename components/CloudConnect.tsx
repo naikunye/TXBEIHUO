@@ -87,6 +87,7 @@ interface CloudConnectProps {
   onConnect: (workspaceId: string) => void;
   onDisconnect: () => void;
   isSyncing: boolean;
+  onConfigChange?: () => void; // Callback to notify App.tsx
 }
 
 export const CloudConnect: React.FC<CloudConnectProps> = ({ 
@@ -95,7 +96,8 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
   currentWorkspaceId, 
   onConnect, 
   onDisconnect, 
-  isSyncing
+  isSyncing,
+  onConfigChange
 }) => {
   const [mode, setMode] = useState<'connect' | 'config'>('connect'); 
   const [configUrl, setConfigUrl] = useState('');
@@ -147,6 +149,7 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
           const key = configKey.trim();
           
           if (!url || !key) throw new Error("请输入完整的 URL 和 Key");
+          if (!url.startsWith('http')) throw new Error("URL 必须以 https:// 开头");
           
           // Verify connection
           const tempClient = createClient(url, key);
@@ -159,7 +162,11 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
           saveSupabaseConfig(url, key);
           setIsConfigured(true);
           setSaveSuccess(true); 
-          setShowSql(true); 
+          setShowSql(true);
+          
+          // Notify parent to re-init supabase client without reload
+          if (onConfigChange) onConfigChange();
+
       } catch (err: any) {
           console.error(err);
           setErrorMsg(err.message || "验证失败，请检查配置");
@@ -168,16 +175,23 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
       }
   };
 
-  const handleReload = () => {
-      window.location.reload();
+  const handleDone = () => {
+      onClose();
   };
 
   const handleConnectWorkspace = (e: React.FormEvent) => {
       e.preventDefault();
-      if (inputId.trim()) {
-          onConnect(inputId.trim());
+      const val = inputId.trim();
+      if (val) {
+          localStorage.setItem('tanxing_current_workspace', val);
+          onConnect(val);
           onClose(); 
       }
+  };
+
+  const handleDisconnect = () => {
+      localStorage.removeItem('tanxing_current_workspace');
+      onDisconnect();
   };
 
   const handleCopyConfig = () => {
@@ -233,11 +247,9 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
                             </div>
                         </div>
                         <div>
-                            <h4 className="text-green-800 font-bold text-lg">连接验证成功！</h4>
+                            <h4 className="text-green-800 font-bold text-lg">配置已更新！</h4>
                             <p className="text-green-700 text-sm mt-2">
-                                请务必复制下方的 SQL 初始化脚本并在 Supabase SQL Editor 中运行。
-                                <br/>
-                                <span className="font-bold">该脚本包含“历史审计”功能，可防止数据意外丢失。</span>
+                                请复制下方的 SQL 初始化脚本并在 Supabase SQL Editor 中运行。
                             </p>
                         </div>
                         
@@ -255,11 +267,11 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
                         </div>
 
                         <button 
-                           onClick={handleReload}
+                           onClick={handleDone}
                            className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded-lg shadow-lg shadow-green-200 flex items-center justify-center gap-2"
                         >
-                           <RefreshCw size={18} />
-                           完成并重启系统
+                           <Check size={18} />
+                           完成设置
                         </button>
                      </div>
                  ) : currentWorkspaceId ? (
@@ -288,7 +300,7 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
                              </button>
                              <button 
                                 type="button"
-                                onClick={onDisconnect}
+                                onClick={handleDisconnect}
                                 className="text-red-400 text-sm hover:text-red-500 hover:bg-red-50 px-4 py-2 rounded-lg transition-colors"
                              >
                                  断开连接
