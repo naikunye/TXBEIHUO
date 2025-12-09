@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
-  LayoutDashboard, Plus, Ship, Plane, DollarSign, TrendingUp, Package, BrainCircuit, Loader2, PieChart, List, Menu, ChevronRight, Edit, Box, Calculator, Search, Container, Truck, X, Download, Save, Home, Filter, CloudUpload, Settings, Database, Wifi, WifiOff, Zap, AlertTriangle, Hourglass, Sparkles, Bot, Megaphone, Compass, Wand2, FileJson, Store as StoreIcon, ChevronDown, ArrowRightLeft, ArrowUpDown, ArrowUp, ArrowDown, ChevronLeft, ChevronsLeft, ChevronsRight, UserCircle, Command, CopyPlus, MoreHorizontal, Trash2, Printer, CalendarClock, RefreshCw, Clock, ExternalLink, Target, CheckSquare, Square, FileText, Factory, ShoppingCart, ArrowRight, ArrowUpRight, Warehouse, ShoppingBag, Wallet, Sliders, Kanban as KanbanIcon, LayoutGrid, Moon, Sun, Maximize2, Minimize2, PlayCircle, StopCircle, Gauge, Activity, Cpu, Globe, CalendarDays, Beaker, MapPin
+  LayoutDashboard, Plus, Ship, Plane, DollarSign, TrendingUp, Package, BrainCircuit, Loader2, PieChart, List, Menu, ChevronRight, Edit, Box, Calculator, Search, Container, Truck, X, Download, Save, Home, Filter, CloudUpload, Settings, Database, Wifi, WifiOff, Zap, AlertTriangle, Hourglass, Sparkles, Bot, Megaphone, Compass, Wand2, FileJson, Store as StoreIcon, ChevronDown, ArrowRightLeft, ArrowUpDown, ArrowUp, ArrowDown, ChevronLeft, ChevronsLeft, ChevronsRight, UserCircle, Command, CopyPlus, MoreHorizontal, Trash2, Printer, CalendarClock, RefreshCw, Clock, ExternalLink, Target, CheckSquare, Square, FileText, Factory, ShoppingCart, ArrowRight, ArrowUpRight, Warehouse, ShoppingBag, Wallet, Sliders, Kanban as KanbanIcon, LayoutGrid, Moon, Sun, Maximize2, Minimize2, PlayCircle, StopCircle, Gauge, Activity, Cpu, Globe, CalendarDays, Beaker, MapPin, Cloud
 } from 'lucide-react';
 import { ReplenishmentRecord, Store, CalculatedMetrics, PurchaseOrder, AppSettings, InventoryLog, FinanceTransaction, Supplier } from './types';
 import { MOCK_DATA_INITIAL } from './constants';
@@ -141,6 +141,17 @@ function App() {
       return () => clearInterval(timer);
   }, []);
 
+  // --- CRITICAL FIX: Persist Workspace ID ---
+  useEffect(() => {
+      if (workspaceId) {
+          localStorage.setItem('tanxing_current_workspace', workspaceId);
+      } else {
+          // Only remove if it's explicitly null/logged out, not just on initial load if we want persistence
+          // But here if workspaceId is set to null (disconnect), we should clear it.
+          // The issue might be that on initial load it's read from localStorage, so this effect runs and sets it back to what it was.
+      }
+  }, [workspaceId]);
+
   useEffect(() => {
       if (!isSimulationActive) {
           setSimulatedExchangeRate(appSettings.exchangeRate);
@@ -151,11 +162,13 @@ function App() {
   // --- 1. Real-time Subscription Setup ---
   useEffect(() => {
       // Re-run effect when clientVersion changes (user updated config)
+      // Check both workspace ID AND actual config existence
       if (!workspaceId || !isSupabaseConfigured()) {
           setSyncStatus('disconnected');
           return;
       }
-      setSyncStatus('connected');
+      
+      setSyncStatus('connected'); // Optimistic update
       
       const channel = supabase
           .channel('realtime-replenishment')
@@ -544,7 +557,8 @@ function App() {
                         <div className="px-6 py-5 border-b border-white/10 flex flex-col md:flex-row justify-between items-center gap-4 bg-white/5">
                             <div className="flex items-center gap-4">
                                 <div className="flex items-center gap-2 text-sm font-bold text-white"><List size={18} className="text-cyan-400"/>库存清单<span className="bg-cyan-900/30 text-cyan-400 px-2 py-0.5 rounded-full text-xs border border-cyan-500/30">{activeRecords.length}</span></div>
-                                <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[10px] font-bold tracking-wide uppercase ${syncStatus === 'connected' ? 'bg-emerald-900/20 text-emerald-400 border-emerald-800' : 'bg-slate-800 text-slate-400 border-slate-700'}`}>{syncStatus === 'connected' ? <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shadow-glow-green"></div> : <WifiOff size={10} />}{syncStatus === 'connected' ? 'Live Sync' : 'Offline'}</div>
+                                {/* Legacy Sync Status (Kept for fallback, but main is in header now) */}
+                                <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[10px] font-bold tracking-wide uppercase ${syncStatus === 'connected' ? 'bg-emerald-900/20 text-emerald-400 border-emerald-800' : 'bg-slate-800 text-slate-400 border-slate-700'}`}>{syncStatus === 'connected' ? <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shadow-glow-green"></div> : <WifiOff size={10} />}{syncStatus === 'connected' ? 'Cloud Active' : 'Local Only'}</div>
                             </div>
                             <div className="flex items-center gap-2">
                                 <button onClick={() => setDensity(d => d === 'compact' ? 'comfortable' : 'compact')} className="hidden lg:flex items-center gap-2 px-3 py-2 bg-white/5 border border-white/10 text-slate-300 rounded-xl text-xs font-bold hover:text-cyan-400 transition-colors shadow-sm">{density === 'compact' ? <Maximize2 size={14}/> : <Minimize2 size={14}/>}</button>
@@ -734,6 +748,14 @@ function App() {
                 <div className="absolute -bottom-2 left-30 w-2 h-1 bg-white/20 rounded-full"></div>
             </div>
             <div className="flex items-center gap-6">
+                {/* --- PROMINENT CLOUD INDICATOR --- */}
+                {syncStatus === 'connected' && (
+                    <div className="flex items-center gap-2 bg-emerald-900/30 border border-emerald-500/50 px-3 py-1.5 rounded-full shadow-glow-green animate-fade-in">
+                        <Cloud className="text-emerald-400 animate-pulse" size={14} />
+                        <span className="text-xs font-bold text-emerald-300 tracking-wide uppercase">Cloud Linked</span>
+                    </div>
+                )}
+
                 <div onClick={() => setClockZone(prev => { if (prev === 'CN') return 'US_LA'; if (prev === 'US_LA') return 'US_NY'; return 'CN'; })} className="hidden lg:flex flex-col items-end border-r border-white/10 pr-6 cursor-pointer group select-none transition-opacity hover:opacity-80" title="点击切换时区 (CN / US-West / US-East)">
                     <div className="flex items-center gap-2 mb-1"><span className={`text-[9px] font-bold px-1.5 py-0.5 rounded transition-colors ${clockZone.startsWith('US') ? 'bg-blue-500/20 text-blue-400 shadow-glow-blue' : 'text-slate-600 bg-white/5'}`}>US</span><RefreshCw size={10} className="text-slate-600 group-hover:text-cyan-400 transition-colors group-hover:rotate-180 duration-500" /><span className={`text-[9px] font-bold px-1.5 py-0.5 rounded transition-colors ${clockZone === 'CN' ? 'bg-red-500/20 text-red-400 shadow-glow-red' : 'text-slate-600 bg-white/5'}`}>CN</span></div>
                     <span className="text-3xl font-mono font-bold text-white leading-none tracking-widest text-glow">

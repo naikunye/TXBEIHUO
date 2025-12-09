@@ -52,7 +52,8 @@ export const isSupabaseConfigured = () => {
 export const saveSupabaseConfig = (url: string, key: string) => {
     localStorage.setItem(STORAGE_KEY_URL, url);
     localStorage.setItem(STORAGE_KEY_KEY, key);
-    localStorage.removeItem(STORAGE_KEY_WORKSPACE); 
+    // REMOVED: localStorage.removeItem(STORAGE_KEY_WORKSPACE); 
+    // Do not wipe workspace on config save to prevent "disappearing connection" bug.
     
     // Re-initialize the client instance immediately
     supabase = createClient(url, key);
