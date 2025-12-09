@@ -56,6 +56,7 @@ const safeParse = (key: string, fallback: any) => {
 function App() {
   const [workspaceId, setWorkspaceId] = useState<string | null>(() => localStorage.getItem('tanxing_current_workspace'));
   const [syncStatus, setSyncStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
+  const [clientVersion, setClientVersion] = useState(0); // Used to trigger re-connection
   const [isCloudConfigOpen, setIsCloudConfigOpen] = useState(false); 
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('tanxing_theme') !== 'light'); 
   const [density, setDensity] = useState<'comfortable' | 'compact'>('comfortable');
@@ -149,11 +150,13 @@ function App() {
 
   // --- 1. Real-time Subscription Setup ---
   useEffect(() => {
+      // Re-run effect when clientVersion changes (user updated config)
       if (!workspaceId || !isSupabaseConfigured()) {
           setSyncStatus('disconnected');
           return;
       }
       setSyncStatus('connected');
+      
       const channel = supabase
           .channel('realtime-replenishment')
           .on(
@@ -180,9 +183,13 @@ function App() {
                   }
               }
           )
-          .subscribe();
+          .subscribe((status) => {
+              if (status === 'SUBSCRIBED') setSyncStatus('connected');
+              if (status === 'CHANNEL_ERROR') setSyncStatus('disconnected');
+          });
+          
       return () => { supabase.removeChannel(channel); };
-  }, [workspaceId]);
+  }, [workspaceId, clientVersion]);
 
   const syncItemToCloud = async (item: ReplenishmentRecord | Store) => {
       if (workspaceId && isSupabaseConfigured()) {
@@ -753,7 +760,15 @@ function App() {
         </main>
       </div>
       
-      <CloudConnect isOpen={isCloudConfigOpen} onClose={() => setIsCloudConfigOpen(false)} currentWorkspaceId={workspaceId} onConnect={setWorkspaceId} onDisconnect={() => setWorkspaceId(null)} isSyncing={syncStatus === 'connecting'} />
+      <CloudConnect 
+        isOpen={isCloudConfigOpen} 
+        onClose={() => setIsCloudConfigOpen(false)} 
+        currentWorkspaceId={workspaceId} 
+        onConnect={setWorkspaceId} 
+        onDisconnect={() => setWorkspaceId(null)} 
+        isSyncing={syncStatus === 'connecting'} 
+        onConfigChange={() => setClientVersion(v => v + 1)}
+      />
       <SettingsModal isOpen={isGlobalSettingsOpen} onClose={() => setIsGlobalSettingsOpen(false)} settings={appSettings} onSave={handleSaveSettings} />
       <StoreManagerModal isOpen={isStoreManagerOpen} onClose={() => setIsStoreManagerOpen(false)} stores={stores} onAddStore={handleAddStore} onDeleteStore={handleDeleteStore} />
       <RecordModal isOpen={isModalOpen} onClose={closeModal} onSave={handleSaveRecord} initialData={editingRecord} stores={stores} defaultStoreId={activeStoreId} />
