@@ -87,7 +87,7 @@ interface CloudConnectProps {
   onConnect: (workspaceId: string) => void;
   onDisconnect: () => void;
   isSyncing: boolean;
-  onConfigChange?: () => void; // New prop to signal config update
+  onConfigChange?: () => void;
 }
 
 export const CloudConnect: React.FC<CloudConnectProps> = ({ 
@@ -154,6 +154,8 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
           const tempClient = createClient(url, key);
           const { error } = await tempClient.from('replenishment_data').select('id').limit(1);
           
+          // Allow connection even if table is empty (PGRST100 is not auth error)
+          // Specific Auth errors: PGRST301 (JWT Expired/Invalid), 28P01 (Pwd Auth failed - unlikely for anon key but possible)
           if (error && (error.code === 'PGRST301' || error.message.includes('JWT') || error.code === '28P01')) {
                throw new Error("认证失败：API Key 无效");
           } 
@@ -163,7 +165,6 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
           setSaveSuccess(true); 
           setShowSql(true);
           
-          // Notify parent app to reload client
           if (onConfigChange) onConfigChange();
 
       } catch (err: any) {
@@ -174,12 +175,24 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
       }
   };
 
+  const handleReload = () => {
+      window.location.reload();
+  };
+
   const handleConnectWorkspace = (e: React.FormEvent) => {
       e.preventDefault();
-      if (inputId.trim()) {
-          onConnect(inputId.trim());
+      const val = inputId.trim();
+      if (val) {
+          // FORCE SAVE to LocalStorage immediately
+          localStorage.setItem('tanxing_current_workspace', val);
+          onConnect(val);
           onClose(); 
       }
+  };
+
+  const handleDisconnect = () => {
+      localStorage.removeItem('tanxing_current_workspace');
+      onDisconnect();
   };
 
   const handleCopyConfig = () => {
@@ -237,7 +250,7 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
                         <div>
                             <h4 className="text-green-800 font-bold text-lg">连接配置已保存！</h4>
                             <p className="text-green-700 text-sm mt-2">
-                                请复制下方的 SQL 初始化脚本并在 Supabase SQL Editor 中运行，以启用历史审计与实时同步功能。
+                                请复制下方的 SQL 初始化脚本并在 Supabase SQL Editor 中运行。
                             </p>
                         </div>
                         
@@ -255,11 +268,11 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
                         </div>
 
                         <button 
-                           onClick={onClose}
+                           onClick={handleReload}
                            className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded-lg shadow-lg shadow-green-200 flex items-center justify-center gap-2"
                         >
-                           <Check size={18} />
-                           完成设置
+                           <RefreshCw size={18} />
+                           完成并重启
                         </button>
                      </div>
                  ) : currentWorkspaceId ? (
@@ -288,7 +301,7 @@ export const CloudConnect: React.FC<CloudConnectProps> = ({
                              </button>
                              <button 
                                 type="button"
-                                onClick={onDisconnect}
+                                onClick={handleDisconnect}
                                 className="text-red-400 text-sm hover:text-red-500 hover:bg-red-50 px-4 py-2 rounded-lg transition-colors"
                              >
                                  断开连接

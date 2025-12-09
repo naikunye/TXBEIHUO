@@ -34,7 +34,7 @@ export const getSupabaseConfig = () => {
   };
 };
 
-// 初始化 Client (Use 'let' to allow re-initialization)
+// 初始化 Client (使用 let 允许重新赋值，实现热切换)
 const config = getSupabaseConfig();
 
 export let supabase = createClient(
@@ -48,20 +48,22 @@ export const isSupabaseConfigured = () => {
     return !!(currentConfig.url && currentConfig.key && currentConfig.url !== 'https://placeholder.supabase.co');
 };
 
-// 辅助函数：保存配置并重置 Client
+// 辅助函数：保存配置并重置 Client (不清除 workspace)
 export const saveSupabaseConfig = (url: string, key: string) => {
     localStorage.setItem(STORAGE_KEY_URL, url);
     localStorage.setItem(STORAGE_KEY_KEY, key);
-    // REMOVED: localStorage.removeItem(STORAGE_KEY_WORKSPACE); 
-    // Do not wipe workspace on config save to prevent "disappearing connection" bug.
+    // 关键修复：不再清除 workspace，保证刷新后依然连接
+    // localStorage.removeItem(STORAGE_KEY_WORKSPACE); 
     
-    // Re-initialize the client instance immediately
+    // 立即重新初始化 client
     supabase = createClient(url, key);
 };
 
-// 辅助函数：清除配置
+// 辅助函数：清除配置 (完全重置)
 export const clearSupabaseConfig = () => {
     localStorage.removeItem(STORAGE_KEY_URL);
     localStorage.removeItem(STORAGE_KEY_KEY);
     localStorage.removeItem(STORAGE_KEY_WORKSPACE);
+    // 重置为占位符
+    supabase = createClient('https://placeholder.supabase.co', 'placeholder-key');
 };

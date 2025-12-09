@@ -54,9 +54,13 @@ const safeParse = (key: string, fallback: any) => {
 };
 
 function App() {
-  const [workspaceId, setWorkspaceId] = useState<string | null>(() => localStorage.getItem('tanxing_current_workspace'));
+  const [workspaceId, setWorkspaceId] = useState<string | null>(() => {
+      // 优先从 localStorage 读取，确保刷新后状态保留
+      return localStorage.getItem('tanxing_current_workspace');
+  });
+  
   const [syncStatus, setSyncStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
-  const [clientVersion, setClientVersion] = useState(0); // Used to trigger re-connection
+  const [clientVersion, setClientVersion] = useState(0); // 用于强制重连
   const [isCloudConfigOpen, setIsCloudConfigOpen] = useState(false); 
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('tanxing_theme') !== 'light'); 
   const [density, setDensity] = useState<'comfortable' | 'compact'>('comfortable');
@@ -141,14 +145,11 @@ function App() {
       return () => clearInterval(timer);
   }, []);
 
-  // --- CRITICAL FIX: Persist Workspace ID ---
+  // --- CRITICAL FIX: Workspace Persistence ---
+  // 当 workspaceId 变化时，立即写入 localStorage
   useEffect(() => {
       if (workspaceId) {
           localStorage.setItem('tanxing_current_workspace', workspaceId);
-      } else {
-          // Only remove if it's explicitly null/logged out, not just on initial load if we want persistence
-          // But here if workspaceId is set to null (disconnect), we should clear it.
-          // The issue might be that on initial load it's read from localStorage, so this effect runs and sets it back to what it was.
       }
   }, [workspaceId]);
 
@@ -161,14 +162,14 @@ function App() {
 
   // --- 1. Real-time Subscription Setup ---
   useEffect(() => {
-      // Re-run effect when clientVersion changes (user updated config)
-      // Check both workspace ID AND actual config existence
+      // 依赖 clientVersion 来强制重启 effect (当用户更新配置时)
       if (!workspaceId || !isSupabaseConfigured()) {
           setSyncStatus('disconnected');
           return;
       }
       
-      setSyncStatus('connected'); // Optimistic update
+      // Optimistic set: UI shows connected immediately if config exists
+      setSyncStatus('connected');
       
       const channel = supabase
           .channel('realtime-replenishment')
@@ -197,8 +198,9 @@ function App() {
               }
           )
           .subscribe((status) => {
-              if (status === 'SUBSCRIBED') setSyncStatus('connected');
-              if (status === 'CHANNEL_ERROR') setSyncStatus('disconnected');
+              // Only log connection status, do NOT toggle syncStatus to avoid UI flicker.
+              // The UI is controlled by the presence of workspaceId & Config.
+              console.log("Supabase Status:", status);
           });
           
       return () => { supabase.removeChannel(channel); };
@@ -748,11 +750,14 @@ function App() {
                 <div className="absolute -bottom-2 left-30 w-2 h-1 bg-white/20 rounded-full"></div>
             </div>
             <div className="flex items-center gap-6">
-                {/* --- PROMINENT CLOUD INDICATOR --- */}
-                {syncStatus === 'connected' && (
-                    <div className="flex items-center gap-2 bg-emerald-900/30 border border-emerald-500/50 px-3 py-1.5 rounded-full shadow-glow-green animate-fade-in">
-                        <Cloud className="text-emerald-400 animate-pulse" size={14} />
-                        <span className="text-xs font-bold text-emerald-300 tracking-wide uppercase">Cloud Linked</span>
+                {/* --- PROMINENT CLOUD INDICATOR (Unconditional rendering if ID exists) --- */}
+                {workspaceId && isSupabaseConfigured() && (
+                    <div className="flex items-center gap-2 bg-emerald-900/30 border border-emerald-500/50 px-3 py-1.5 rounded-full shadow-glow-green animate-fade-in group cursor-default" title={syncStatus === 'connected' ? "实时同步中" : "连接中..."}>
+                        <div className="relative">
+                            <Cloud className={`text-emerald-400 ${syncStatus !== 'connected' ? 'opacity-50' : ''}`} size={16} />
+                            <span className={`absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full border border-black transition-colors duration-500 ${syncStatus === 'connected' ? 'bg-green-400 animate-pulse' : 'bg-yellow-500'}`}></span>
+                        </div>
+                        <span className="text-xs font-bold text-emerald-300 tracking-wide uppercase">CLOUD CONNECTED</span>
                     </div>
                 )}
 
