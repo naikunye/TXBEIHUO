@@ -570,6 +570,61 @@ export const generateSelectionStrategy = async (records: ReplenishmentRecord[]) 
   }
 };
 
+export const generateCampaignStrategy = async (record: ReplenishmentRecord) => {
+    try {
+        const ai = getAiClient();
+        const m = calculateMetrics(record);
+        const context = {
+            product: record.productName,
+            lifecycle: record.lifecycle || 'New',
+            sales: record.dailySales,
+            profit: m.estimatedProfitUSD.toFixed(2),
+            margin: m.marginRate.toFixed(1) + '%'
+        };
+        const prompt = `
+            You are a Chief Marketing Officer (CMO).
+            Create a "4-Week Marketing Campaign Calendar" for the following product:
+            ${JSON.stringify(context)}
+            
+            Output HTML with Tailwind CSS.
+            Structure:
+            1. **Executive Summary**: Campaign Theme & Goals.
+            2. **Week 1-4 Cards**: Specific activities for each week (e.g. Teaser, Launch, Sustaining, Retargeting).
+               - Include Channel mix and estimated budget allocation.
+            
+            Style: Professional, Strategic, Clean.
+        `;
+        const response = await ai.models.generateContent({ model: 'gemini-2.5-flash', contents: prompt });
+        return response.text;
+    } catch (e) { return formatErrorHtml(e, "Campaign Strategy"); }
+};
+
+export const generateChannelContent = async (record: ReplenishmentRecord, channel: string) => {
+    try {
+        const ai = getAiClient();
+        const prompt = `
+            Act as a Copywriter for ${channel}. Product: ${record.productName}.
+            Task: Generate content optimized for ${channel} (e.g. Script for TikTok, Bullets for Amazon).
+            Output HTML with Tailwind.
+        `;
+        const response = await ai.models.generateContent({ model: 'gemini-2.5-flash', contents: prompt });
+        return response.text;
+    } catch (e) { return formatErrorHtml(e, "Channel Content"); }
+};
+
+export const generateInfluencerBrief = async (record: ReplenishmentRecord) => {
+    try {
+        const ai = getAiClient();
+        const prompt = `
+            Act as Influencer Manager. Product: ${record.productName}.
+            Generate: 1. Outreach DM (Short/Punchy). 2. Creative Brief (Do's/Don'ts).
+            Output HTML with Tailwind.
+        `;
+        const response = await ai.models.generateContent({ model: 'gemini-2.5-flash', contents: prompt });
+        return response.text;
+    } catch (e) { return formatErrorHtml(e, "Influencer Brief"); }
+};
+
 export const generateMarketingContent = async (record: ReplenishmentRecord) => {
     try {
         const ai = getAiClient();

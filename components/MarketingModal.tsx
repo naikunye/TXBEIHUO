@@ -1,242 +1,197 @@
 
 import React, { useState, useEffect } from 'react';
-import { X, Copy, Wand2, Video, FileText, Mic, Image as ImageIcon, MessageSquare, Loader2, Play } from 'lucide-react';
+import { X, Copy, Wand2, Video, LayoutTemplate, Users, Image as ImageIcon, MessageSquare, Loader2, Play, Calendar, ShoppingBag, Instagram, Mail, Sparkles, Target, Megaphone } from 'lucide-react';
 import { ReplenishmentRecord } from '../types';
-import { generateVisualDirectives, analyzeReviewSentiment } from '../services/geminiService';
+import { 
+    generateVisualDirectives, 
+    analyzeReviewSentiment, 
+    generateCampaignStrategy, 
+    generateChannelContent, 
+    generateInfluencerBrief 
+} from '../services/geminiService';
 
 interface MarketingModalProps {
   isOpen: boolean;
   onClose: () => void;
-  content: string | null; // The initial Copy content
+  content: string | null; 
   productName: string;
-  record?: ReplenishmentRecord | null; // Now accepts full record for advanced features
+  record?: ReplenishmentRecord | null;
+  initialTab?: string;
+  initialChannel?: string;
 }
 
-type Tab = 'copy' | 'visuals' | 'insights';
+type Tab = 'strategy' | 'channels' | 'influencer' | 'visuals' | 'insights';
+type ChannelType = 'TikTok' | 'Amazon' | 'Instagram' | 'Email';
 
-export const MarketingModal: React.FC<MarketingModalProps> = ({ isOpen, onClose, content, productName, record }) => {
-  const [activeTab, setActiveTab] = useState<Tab>('copy');
-  
-  // Visuals State
-  const [visualContent, setVisualContent] = useState<string | null>(null);
-  const [isVisualLoading, setIsVisualLoading] = useState(false);
-
-  // Insights State
+export const MarketingModal: React.FC<MarketingModalProps> = ({ 
+    isOpen, 
+    onClose, 
+    content, // Legacy content prop, used as fallback for 'channels' tab
+    productName, 
+    record,
+    initialTab,
+    initialChannel
+}) => {
+  const [activeTab, setActiveTab] = useState<Tab>('channels');
+  const [activeChannel, setActiveChannel] = useState<ChannelType>('TikTok');
+  const [loading, setLoading] = useState<Record<string, boolean>>({});
+  const [results, setResults] = useState<Record<string, string | null>>({});
   const [reviewInput, setReviewInput] = useState('');
-  const [insightContent, setInsightContent] = useState<string | null>(null);
-  const [isInsightLoading, setIsInsightLoading] = useState(false);
 
-  // Initial Content Sync
-  const [localCopyContent, setLocalCopyContent] = useState<string | null>(null);
-
+  // Initial Data Sync
   useEffect(() => {
       if (isOpen) {
-          setLocalCopyContent(content);
-          setActiveTab('copy');
-          // Reset other tabs
-          setVisualContent(null);
-          setInsightContent(null);
+          // If we passed in legacy 'content' (from App.tsx generation), put it in the cache for TikTok
+          if (content) {
+              setResults(prev => ({ ...prev, 'channel-TikTok': content }));
+          }
+          setActiveTab((initialTab as Tab) || 'channels');
+          setActiveChannel((initialChannel as ChannelType) || 'TikTok');
           setReviewInput('');
       }
-  }, [isOpen, content]);
+  }, [isOpen, content, initialTab, initialChannel]);
 
-  if (!isOpen) return null;
+  if (!isOpen || !record) return null;
 
-  const handleCopy = (text: string | null) => {
+  const runAiTask = async (key: string, taskFn: () => Promise<string>) => {
+      setLoading(prev => ({ ...prev, [key]: true }));
+      try {
+          const res = await taskFn();
+          setResults(prev => ({ ...prev, [key]: res }));
+      } catch (e) {
+          console.error(e);
+      } finally {
+          setLoading(prev => ({ ...prev, [key]: false }));
+      }
+  };
+
+  const handleGenerateStrategy = () => runAiTask('strategy', () => generateCampaignStrategy(record));
+  const handleGenerateChannel = () => runAiTask(`channel-${activeChannel}`, () => generateChannelContent(record, activeChannel));
+  const handleGenerateInfluencer = () => runAiTask('influencer', () => generateInfluencerBrief(record));
+  const handleGenerateVisuals = () => runAiTask('visuals', () => generateVisualDirectives(record));
+  const handleAnalyzeReviews = () => {
+      if (!reviewInput.trim()) return alert("请输入评论内容");
+      runAiTask('insights', () => analyzeReviewSentiment(reviewInput, productName));
+  };
+
+  const handleCopy = (key: string) => {
+      const text = results[key];
       if (text) {
-        const tempDiv = document.createElement('div');
-        tempDiv.innerHTML = text;
-        navigator.clipboard.writeText(tempDiv.innerText);
-        alert('内容已复制到剪贴板');
+          const tempDiv = document.createElement('div');
+          tempDiv.innerHTML = text;
+          navigator.clipboard.writeText(tempDiv.innerText);
+          alert('内容已复制');
       }
   };
 
-  const handleGenerateVisuals = async () => {
-      if (!record) return;
-      setIsVisualLoading(true);
-      const res = await generateVisualDirectives(record);
-      setVisualContent(res);
-      setIsVisualLoading(false);
-  };
-
-  const handleAnalyzeReviews = async () => {
-      if (!reviewInput.trim()) {
-          alert("请先粘贴竞品评论");
-          return;
+  const renderContent = (key: string, emptyIcon: any, emptyTitle: string, emptyDesc: string, btnAction: any, btnText: string) => {
+      if (!results[key]) {
+          return (
+              <div className="text-center py-20">
+                  <div className="w-20 h-20 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-6 text-slate-500">
+                      {emptyIcon}
+                  </div>
+                  <h3 className="text-2xl font-bold text-slate-800 mb-2">{emptyTitle}</h3>
+                  <p className="text-slate-500 max-w-md mx-auto mb-8">{emptyDesc}</p>
+                  <button onClick={btnAction} disabled={loading[key]} className="bg-slate-900 text-white px-8 py-3 rounded-xl font-bold hover:bg-slate-800 transition-all flex items-center gap-2 mx-auto disabled:opacity-50">
+                      {loading[key] ? <Loader2 className="animate-spin"/> : <Sparkles />}
+                      {loading[key] ? 'Generating...' : btnText}
+                  </button>
+              </div>
+          );
       }
-      setIsInsightLoading(true);
-      const res = await analyzeReviewSentiment(reviewInput, productName);
-      setInsightContent(res);
-      setIsInsightLoading(false);
+      return (
+          <div className="space-y-4">
+              <div className="flex justify-between items-center mb-4">
+                  <button onClick={btnAction} className="text-xs text-indigo-600 hover:underline">重新生成</button>
+                  <button onClick={() => handleCopy(key)} className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-800"><Copy size={12}/> 复制</button>
+              </div>
+              <div className="prose max-w-none bg-white p-8 rounded-2xl shadow-sm border border-slate-100 marketing-content-wrapper" dangerouslySetInnerHTML={{ __html: results[key] || '' }} />
+          </div>
+      );
   };
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black bg-opacity-60 backdrop-blur-sm p-4 animate-fade-in">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[90vh] overflow-hidden flex flex-col relative">
-        
-        {/* Header */}
-        <div className="bg-gradient-to-r from-indigo-900 to-purple-900 p-5 flex justify-between items-center text-white shrink-0">
-            <div className="flex items-center gap-3">
-                <div className="bg-white/10 p-2 rounded-lg backdrop-blur-sm">
-                    <Wand2 size={24} className="text-purple-300" />
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-md p-4 animate-fade-in">
+      <div className="bg-slate-50 w-full max-w-6xl h-[90vh] rounded-3xl shadow-2xl flex overflow-hidden border border-slate-200">
+        {/* Sidebar */}
+        <div className="w-64 bg-slate-900 text-slate-300 flex flex-col shrink-0">
+            <div className="p-6 border-b border-white/10">
+                <div className="flex items-center gap-3 text-white mb-1">
+                    <div className="bg-gradient-to-br from-indigo-500 to-purple-600 p-2 rounded-lg shadow-lg"><Megaphone size={20} /></div>
+                    <span className="font-bold text-lg">营销工坊</span>
                 </div>
-                <div>
-                    <h2 className="text-xl font-bold tracking-wide">AI 营销指挥中心</h2>
-                    <p className="text-indigo-200 text-xs opacity-90">{productName}</p>
+                <p className="text-[10px] text-slate-500 uppercase tracking-widest mt-2">Marketing OS v3.0</p>
+            </div>
+            <div className="p-4 border-b border-white/10 bg-white/5">
+                <div className="font-bold text-white truncate">{record.productName}</div>
+                <div className="text-xs text-slate-500 font-mono">{record.sku}</div>
+            </div>
+            <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
+                {[
+                    { id: 'strategy', icon: Target, label: '全案策划' },
+                    { id: 'channels', icon: LayoutTemplate, label: '渠道内容' },
+                    { id: 'influencer', icon: Users, label: '达人建联' },
+                    { id: 'visuals', icon: ImageIcon, label: '视觉创意' },
+                    { id: 'insights', icon: MessageSquare, label: '舆情洞察' },
+                ].map(item => (
+                    <button key={item.id} onClick={() => setActiveTab(item.id as Tab)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === item.id ? 'bg-indigo-600 text-white' : 'hover:bg-white/5'}`}>
+                        <item.icon size={18} /> {item.label}
+                    </button>
+                ))}
+            </nav>
+            <div className="p-4 border-t border-white/10"><button onClick={onClose} className="w-full flex justify-center gap-2 text-slate-400 hover:text-white py-2"><X size={16} /> 关闭</button></div>
+        </div>
+
+        {/* Main Content */}
+        <div className="flex-1 flex flex-col bg-white overflow-hidden relative">
+            <div className="h-16 border-b border-slate-100 flex items-center justify-between px-8 bg-white shrink-0">
+                <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                    {activeTab === 'strategy' && '营销战役规划'}
+                    {activeTab === 'channels' && '多渠道内容矩阵'}
+                    {activeTab === 'influencer' && '红人营销开发'}
+                    {activeTab === 'visuals' && '视觉创意导演'}
+                    {activeTab === 'insights' && '消费者舆情分析'}
+                </h2>
+                {activeTab === 'channels' && (
+                    <div className="flex bg-slate-100 p-1 rounded-lg">
+                        {[{id: 'TikTok', icon: Video}, {id: 'Amazon', icon: ShoppingBag}, {id: 'Instagram', icon: Instagram}, {id: 'Email', icon: Mail}].map(c => (
+                            <button key={c.id} onClick={() => setActiveChannel(c.id as any)} className={`px-3 py-1.5 rounded-md text-xs font-bold flex items-center gap-2 transition-all ${activeChannel === c.id ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
+                                <c.icon size={14}/> {c.id}
+                            </button>
+                        ))}
+                    </div>
+                )}
+            </div>
+
+            <div className="flex-1 overflow-y-auto custom-scrollbar p-8 bg-slate-50/50">
+                <div className="max-w-4xl mx-auto">
+                    {activeTab === 'strategy' && renderContent('strategy', <Target size={40}/>, '制定 4 周营销战役', 'AI 将根据产品生命周期，为您规划从预热、爆发到长尾的完整营销节奏。', handleGenerateStrategy, '生成全案计划')}
+                    
+                    {activeTab === 'channels' && renderContent(`channel-${activeChannel}`, <LayoutTemplate size={40}/>, `生成 ${activeChannel} 内容`, '生成针对特定渠道优化的文案、脚本或邮件。', handleGenerateChannel, '开始生成')}
+                    
+                    {activeTab === 'influencer' && renderContent('influencer', <Users size={40}/>, '红人建联开发', '自动生成专业的合作开发信 (Outreach DM) 以及创作简报。', handleGenerateInfluencer, '生成开发信 & 简报')}
+                    
+                    {activeTab === 'visuals' && renderContent('visuals', <ImageIcon size={40}/>, 'AI 视觉创意导演', '生成适用于 Midjourney / SD 的高质量提示词。', handleGenerateVisuals, '生成视觉提示词')}
+                    
+                    {activeTab === 'insights' && (
+                        !results['insights'] ? (
+                            <div className="flex-1 flex flex-col items-center justify-center py-10">
+                                <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mb-4 text-amber-600"><MessageSquare size={32} /></div>
+                                <h3 className="text-xl font-bold text-slate-800 mb-6">竞品舆情分析 (VOC)</h3>
+                                <div className="w-full max-w-xl bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                                    <textarea className="w-full h-32 p-4 rounded-xl border border-slate-200 text-sm focus:ring-2 focus:ring-amber-200 outline-none resize-none mb-4 bg-slate-50" placeholder="请粘贴 5-10 条竞品评论..." value={reviewInput} onChange={(e) => setReviewInput(e.target.value)}></textarea>
+                                    <button onClick={handleAnalyzeReviews} disabled={loading['insights'] || !reviewInput.trim()} className="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold py-3 rounded-xl transition-colors flex items-center justify-center gap-2 shadow-lg disabled:opacity-50">
+                                        {loading['insights'] ? <Loader2 className="animate-spin" /> : <Play size={18} fill="currentColor" />}
+                                        {loading['insights'] ? '分析中...' : '开始挖掘痛点'}
+                                    </button>
+                                </div>
+                            </div>
+                        ) : renderContent('insights', null, '', '', handleAnalyzeReviews, '')
+                    )}
                 </div>
             </div>
-            <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full transition-colors text-white">
-                <X size={24} />
-            </button>
         </div>
-
-        {/* Tabs */}
-        <div className="flex border-b border-gray-200 bg-white">
-            <button 
-                onClick={() => setActiveTab('copy')}
-                className={`flex-1 py-4 text-sm font-bold flex items-center justify-center gap-2 border-b-2 transition-all ${activeTab === 'copy' ? 'border-purple-600 text-purple-600 bg-purple-50/50' : 'border-transparent text-gray-500 hover:bg-gray-50'}`}
-            >
-                <FileText size={16} /> 文案生成 (Copy)
-            </button>
-            <button 
-                onClick={() => setActiveTab('visuals')}
-                className={`flex-1 py-4 text-sm font-bold flex items-center justify-center gap-2 border-b-2 transition-all ${activeTab === 'visuals' ? 'border-pink-600 text-pink-600 bg-pink-50/50' : 'border-transparent text-gray-500 hover:bg-gray-50'}`}
-            >
-                <ImageIcon size={16} /> 视觉导演 (Visuals)
-            </button>
-            <button 
-                onClick={() => setActiveTab('insights')}
-                className={`flex-1 py-4 text-sm font-bold flex items-center justify-center gap-2 border-b-2 transition-all ${activeTab === 'insights' ? 'border-amber-600 text-amber-600 bg-amber-50/50' : 'border-transparent text-gray-500 hover:bg-gray-50'}`}
-            >
-                <MessageSquare size={16} /> 舆情洞察 (VOC)
-            </button>
-        </div>
-
-        {/* Content Area */}
-        <div className="flex-1 overflow-hidden relative bg-gray-50">
-            
-            {/* Tab 1: Copy */}
-            {activeTab === 'copy' && (
-                <div className="h-full overflow-y-auto p-8 custom-scrollbar">
-                    {localCopyContent ? (
-                        <div 
-                            className="prose max-w-none marketing-content-wrapper"
-                            dangerouslySetInnerHTML={{ __html: localCopyContent }} 
-                        />
-                    ) : (
-                        <div className="h-full flex flex-col items-center justify-center text-gray-400">
-                            <Wand2 size={48} className="mb-4 animate-pulse text-indigo-300" />
-                            <p>正在生成文案...</p>
-                        </div>
-                    )}
-                </div>
-            )}
-
-            {/* Tab 2: Visuals */}
-            {activeTab === 'visuals' && (
-                <div className="h-full overflow-y-auto p-8 custom-scrollbar bg-gray-900 text-white">
-                    {!visualContent ? (
-                        <div className="h-full flex flex-col items-center justify-center">
-                            <ImageIcon size={64} className="mb-6 text-pink-500 opacity-50" />
-                            <h3 className="text-xl font-bold mb-2">AI 视觉创意导演</h3>
-                            <p className="text-gray-400 text-sm max-w-md text-center mb-8">
-                                基于产品特性，生成适用于 Midjourney / Stable Diffusion 的专业提示词 (Prompts)。
-                                <br/>包含生活场景图、白底电商图及创意概念图。
-                            </p>
-                            <button 
-                                onClick={handleGenerateVisuals}
-                                disabled={isVisualLoading}
-                                className="bg-pink-600 hover:bg-pink-700 text-white px-8 py-3 rounded-full font-bold flex items-center gap-2 transition-all shadow-lg shadow-pink-900/50"
-                            >
-                                {isVisualLoading ? <Loader2 className="animate-spin" /> : <Wand2 />}
-                                {isVisualLoading ? '构思画面中...' : '生成视觉提示词'}
-                            </button>
-                        </div>
-                    ) : (
-                        <div className="max-w-3xl mx-auto">
-                            <div className="flex justify-between items-center mb-6 border-b border-gray-800 pb-4">
-                                <h3 className="text-xl font-bold text-pink-400">视觉创意方案</h3>
-                                <button onClick={() => setVisualContent(null)} className="text-xs text-gray-500 hover:text-white underline">重新生成</button>
-                            </div>
-                            <div 
-                                className="prose max-w-none prose-invert marketing-content-wrapper"
-                                dangerouslySetInnerHTML={{ __html: visualContent }} 
-                            />
-                        </div>
-                    )}
-                </div>
-            )}
-
-            {/* Tab 3: Insights (VOC) */}
-            {activeTab === 'insights' && (
-                <div className="h-full flex flex-col">
-                    {!insightContent ? (
-                        <div className="flex-1 p-8 flex flex-col items-center justify-center bg-amber-50/30">
-                            <div className="w-full max-w-2xl bg-white p-6 rounded-2xl shadow-sm border border-amber-100">
-                                <div className="text-center mb-6">
-                                    <div className="inline-flex bg-amber-100 p-3 rounded-full text-amber-600 mb-3">
-                                        <MessageSquare size={24} />
-                                    </div>
-                                    <h3 className="text-lg font-bold text-gray-800">竞品舆情分析 (VOC)</h3>
-                                    <p className="text-sm text-gray-500 mt-1">
-                                        粘贴竞品评论 (Reviews)，AI 将自动挖掘用户痛点与机会点。
-                                    </p>
-                                </div>
-                                <textarea 
-                                    className="w-full h-40 p-4 rounded-xl border border-gray-200 bg-gray-50 text-sm focus:ring-2 focus:ring-amber-200 focus:border-amber-400 outline-none resize-none mb-4"
-                                    placeholder="请在此粘贴 5-10 条有代表性的竞品评论..."
-                                    value={reviewInput}
-                                    onChange={(e) => setReviewInput(e.target.value)}
-                                ></textarea>
-                                <button 
-                                    onClick={handleAnalyzeReviews}
-                                    disabled={isInsightLoading || !reviewInput.trim()}
-                                    className="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold py-3 rounded-xl transition-colors flex items-center justify-center gap-2 shadow-lg shadow-amber-100"
-                                >
-                                    {isInsightLoading ? <Loader2 className="animate-spin" /> : <Play size={18} fill="currentColor" />}
-                                    {isInsightLoading ? '正在分析舆情...' : '开始挖掘痛点'}
-                                </button>
-                            </div>
-                        </div>
-                    ) : (
-                        <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
-                             <div className="max-w-3xl mx-auto">
-                                <div className="flex justify-between items-center mb-6 border-b border-gray-200 pb-4">
-                                    <h3 className="text-xl font-bold text-amber-700">VOC 洞察报告</h3>
-                                    <button onClick={() => setInsightContent(null)} className="text-xs text-gray-400 hover:text-gray-600 underline">分析新数据</button>
-                                </div>
-                                <div 
-                                    className="prose max-w-none marketing-content-wrapper"
-                                    dangerouslySetInnerHTML={{ __html: insightContent }} 
-                                />
-                            </div>
-                        </div>
-                    )}
-                </div>
-            )}
-
-        </div>
-        
-        {/* Footer Actions (Context Aware) */}
-        <div className="bg-white border-t border-gray-100 p-4 flex justify-between items-center text-xs text-gray-500 shrink-0">
-             <div className="flex items-center gap-4">
-                 {activeTab === 'copy' && <span className="flex items-center gap-1"><Video size={12}/> TikTok 脚本</span>}
-                 {activeTab === 'visuals' && <span className="flex items-center gap-1"><ImageIcon size={12}/> Midjourney / SD</span>}
-                 {activeTab === 'insights' && <span className="flex items-center gap-1"><MessageSquare size={12}/> 痛点挖掘</span>}
-             </div>
-             
-             <button 
-                onClick={() => {
-                    if (activeTab === 'copy') handleCopy(localCopyContent);
-                    if (activeTab === 'visuals') handleCopy(visualContent);
-                    if (activeTab === 'insights') handleCopy(insightContent);
-                }} 
-                className="flex items-center gap-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-bold transition-colors"
-            >
-                <Copy size={16} /> 复制当前内容
-            </button>
-        </div>
-
       </div>
     </div>
   );

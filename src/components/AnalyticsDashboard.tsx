@@ -2,7 +2,7 @@
 import React, { useMemo, useState } from 'react';
 import { ReplenishmentRecord } from '../types';
 import { calculateMetrics, formatCurrency } from '../utils/calculations';
-import { TrendingUp, Activity, Package, Zap, LineChart, BarChart2, AlertTriangle, PieChart, BrainCircuit } from 'lucide-react';
+import { TrendingUp, Activity, Package, Zap, LineChart, BarChart2, AlertTriangle, PieChart, BrainCircuit, DollarSign, Layers } from 'lucide-react';
 
 interface AnalyticsDashboardProps {
   records: ReplenishmentRecord[];
@@ -239,11 +239,116 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ records 
       );
   };
 
+  // --- NEW: Unit Economics Breakdown Chart ---
+  const renderUnitEconomics = () => {
+      // Focus on active products with sales
+      const items = records
+          .filter(r => r.lifecycle !== 'Clearance')
+          .slice(0, 5); // Top 5
+
+      return (
+          <div className="space-y-6">
+              {items.map(r => {
+                  const m = calculateMetrics(r);
+                  // Breakdown Components
+                  const c_product = m.productCostUSD;
+                  const c_firstLeg = m.singleHeadHaulCostUSD;
+                  const c_lastMile = r.lastMileCostUSD;
+                  const c_commission = m.platformFeeUSD + m.affiliateCommissionUSD + (r.additionalFixedFeeUSD || 0);
+                  const c_ads = r.adCostUSD;
+                  
+                  const totalCost = c_product + c_firstLeg + c_lastMile + c_commission + c_ads;
+                  
+                  // Calculate percentages for bar width
+                  const total = Math.max(totalCost, 0.01);
+                  const p_product = (c_product / total) * 100;
+                  const p_firstLeg = (c_firstLeg / total) * 100;
+                  const p_lastMile = (c_lastMile / total) * 100;
+                  const p_commission = (c_commission / total) * 100;
+                  const p_ads = (c_ads / total) * 100;
+
+                  return (
+                      <div key={r.id} className="group">
+                          <div className="flex justify-between items-end mb-2">
+                              <div>
+                                  <div className="font-bold text-slate-800 dark:text-white text-sm">{r.productName}</div>
+                                  <div className="text-[10px] text-slate-500 font-mono mt-0.5">{r.sku}</div>
+                              </div>
+                              <div className="text-right">
+                                  <div className="text-xs text-slate-400">总成本</div>
+                                  <div className="text-sm font-bold font-mono text-slate-700 dark:text-slate-200">${totalCost.toFixed(2)}</div>
+                              </div>
+                          </div>
+                          
+                          {/* Stacked Bar */}
+                          <div className="h-6 w-full rounded-lg overflow-hidden flex bg-slate-800 relative">
+                              {/* Product (Blue) */}
+                              <div style={{width: `${p_product}%`}} className="h-full bg-blue-500 hover:bg-blue-400 transition-colors flex items-center justify-center group/seg relative">
+                                  {p_product > 10 && <span className="text-[9px] text-white font-bold">货</span>}
+                                  <div className="absolute bottom-full mb-2 bg-slate-900 text-white text-[10px] px-2 py-1 rounded opacity-0 group-hover/seg:opacity-100 whitespace-nowrap pointer-events-none z-10 border border-white/10">
+                                      货值: ${c_product.toFixed(2)}
+                                  </div>
+                              </div>
+                              {/* First Leg (Orange) */}
+                              <div style={{width: `${p_firstLeg}%`}} className="h-full bg-orange-500 hover:bg-orange-400 transition-colors flex items-center justify-center group/seg relative">
+                                  {p_firstLeg > 8 && <span className="text-[9px] text-white font-bold">头</span>}
+                                  <div className="absolute bottom-full mb-2 bg-slate-900 text-white text-[10px] px-2 py-1 rounded opacity-0 group-hover/seg:opacity-100 whitespace-nowrap pointer-events-none z-10 border border-white/10">
+                                      头程: ${c_firstLeg.toFixed(2)}
+                                  </div>
+                              </div>
+                              {/* Last Mile (Purple) */}
+                              <div style={{width: `${p_lastMile}%`}} className="h-full bg-purple-500 hover:bg-purple-400 transition-colors flex items-center justify-center group/seg relative">
+                                  {p_lastMile > 8 && <span className="text-[9px] text-white font-bold">尾</span>}
+                                  <div className="absolute bottom-full mb-2 bg-slate-900 text-white text-[10px] px-2 py-1 rounded opacity-0 group-hover/seg:opacity-100 whitespace-nowrap pointer-events-none z-10 border border-white/10">
+                                      尾程: ${c_lastMile.toFixed(2)}
+                                  </div>
+                              </div>
+                              {/* Commission (Pink) */}
+                              <div style={{width: `${p_commission}%`}} className="h-full bg-pink-500 hover:bg-pink-400 transition-colors flex items-center justify-center group/seg relative">
+                                  {p_commission > 8 && <span className="text-[9px] text-white font-bold">佣</span>}
+                                  <div className="absolute bottom-full mb-2 bg-slate-900 text-white text-[10px] px-2 py-1 rounded opacity-0 group-hover/seg:opacity-100 whitespace-nowrap pointer-events-none z-10 border border-white/10">
+                                      佣金: ${c_commission.toFixed(2)}
+                                  </div>
+                              </div>
+                              {/* Ads (Grey) */}
+                              <div style={{width: `${p_ads}%`}} className="h-full bg-slate-500 hover:bg-slate-400 transition-colors flex items-center justify-center group/seg relative">
+                                  {p_ads > 8 && <span className="text-[9px] text-white font-bold">广</span>}
+                                  <div className="absolute bottom-full mb-2 bg-slate-900 text-white text-[10px] px-2 py-1 rounded opacity-0 group-hover/seg:opacity-100 whitespace-nowrap pointer-events-none z-10 border border-white/10">
+                                      广告: ${c_ads.toFixed(2)}
+                                  </div>
+                              </div>
+                          </div>
+                      </div>
+                  );
+              })}
+              
+              {/* Legend */}
+              <div className="flex flex-wrap gap-4 justify-center mt-4 pt-4 border-t border-gray-100 dark:border-white/5">
+                  <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+                      <div className="w-2.5 h-2.5 rounded-full bg-blue-500"></div> 货值 (Product)
+                  </div>
+                  <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+                      <div className="w-2.5 h-2.5 rounded-full bg-orange-500"></div> 头程 (Freight)
+                  </div>
+                  <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+                      <div className="w-2.5 h-2.5 rounded-full bg-purple-500"></div> 尾程 (Delivery)
+                  </div>
+                  <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+                      <div className="w-2.5 h-2.5 rounded-full bg-pink-500"></div> 平台/达人佣金
+                  </div>
+                  <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+                      <div className="w-2.5 h-2.5 rounded-full bg-slate-500"></div> 广告 (Ads)
+                  </div>
+              </div>
+          </div>
+      );
+  };
+
   return (
     <div className="space-y-8 animate-fade-in pb-10">
       
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          
+          {/* ... (Lifecycle & Structure Charts remain the same) ... */}
           {/* 1. Lifecycle HUD (Left) */}
           <div className="lg:col-span-2 glass-panel p-6 rounded-3xl border border-white/5 relative overflow-hidden">
              <div className="absolute top-0 right-0 w-64 h-64 bg-purple-500/10 rounded-full blur-[80px]"></div>
@@ -284,7 +389,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ records 
               </div>
           </div>
 
-          {/* 2. Inventory Structure Hologram (Right) - NEW FEATURE */}
+          {/* 2. Inventory Structure Hologram (Right) */}
           <div className="glass-panel p-6 rounded-3xl border border-white/5 relative overflow-hidden bg-slate-900/50">
               <div className="flex justify-between items-start mb-4 relative z-10">
                   <h3 className="text-lg font-bold text-white flex items-center gap-2 text-glow">
@@ -313,7 +418,6 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ records 
                   {renderStructureChart()}
               </div>
           </div>
-
       </div>
 
       {/* 3. Predictive Chart (Sci-Fi) */}
@@ -331,14 +435,27 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ records 
           </div>
           
           <div className="h-64 w-full bg-slate-900/50 rounded-xl border border-white/5 relative">
-              {/* Scanline Effect */}
               <div className="absolute inset-0 bg-gradient-to-b from-transparent via-cyan-500/5 to-transparent h-[10%] w-full animate-scan pointer-events-none"></div>
               {renderPredictiveChart()}
           </div>
       </div>
 
+      {/* 4. NEW: Cost Structure Breakdown (Restored) */}
+      <div className="glass-panel p-6 rounded-3xl border border-white/5 bg-white dark:bg-slate-800/80 shadow-sm transition-all hover:shadow-md">
+          <div className="flex justify-between items-center mb-6">
+              <h3 className="text-lg font-bold text-gray-800 dark:text-white flex items-center gap-2">
+                  <DollarSign className="text-blue-500 h-5 w-5" />
+                  $ TikTok 成本结构拆解 (Unit Economics)
+              </h3>
+              <div className="text-xs text-gray-400 border border-gray-200 dark:border-slate-600 px-2 py-1 rounded bg-gray-50 dark:bg-slate-700">
+                  Top Products
+              </div>
+          </div>
+          {renderUnitEconomics()}
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        {/* 4. Profit Landscape */}
+        {/* 5. Profit Landscape */}
         <div className="glass-panel p-6 rounded-3xl border border-white/5">
           <h3 className="text-lg font-bold text-white mb-6 flex items-center gap-2 text-glow">
             <TrendingUp className="text-emerald-400 h-5 w-5" />
@@ -376,7 +493,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ records 
           </div>
         </div>
 
-        {/* 5. Logistics Hologram */}
+        {/* 6. Logistics Hologram */}
         <div className="glass-panel p-6 rounded-3xl border border-white/5 relative overflow-hidden bg-grid-pattern">
            <h3 className="text-lg font-bold text-white mb-6 flex items-center gap-2 text-glow">
             <Package className="text-blue-400 h-5 w-5" />
